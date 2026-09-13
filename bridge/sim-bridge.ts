@@ -146,6 +146,8 @@ function trainState(t: any) {
       x1: r3(a.p.x), y1: r3(a.p.y),               // front coupler in world XY
       x2: r3(b.p.x), y2: r3(b.p.y),               // rear coupler in world XY
       seg2: b.segId, s2: r3(b.s),                 // rear coupler on the track
+      t1: r3(Math.atan2(a.tan.y, a.tan.x)),        // track tangent angle at each coupler (sway curvature, §7.5)
+      t2: r3(Math.atan2(b.tan.y, b.tan.x)),
     });
   }
   const sm = world.graph.sampleAt(t.front.segId, t.front.s);
@@ -160,6 +162,7 @@ function trainState(t: any) {
     delay: Math.round(t.telatKini?.(session.clock) ?? t.delaySec ?? 0),
     nextStop: stop ? stop.trackmark : null,
     tungguS40: !!t.tungguS40, s40Siap: !!t.s40Siap, s40Diberi: !!t.s40Diberi,
+    istirahat: !!t.istirahat?.(session.clock),   // parked consist (lights off, doors closed)
     vehicles,
   };
 }

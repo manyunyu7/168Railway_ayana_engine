@@ -30,13 +30,14 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
 | Consist from timetable, per-car placement (§7.4) | ✅ | `engine/world/train_visual.cpp` |
 | Body/bogie/coupling GLBs, normalisation (§7.3) | ✅ | `rolling_stock.cpp`; lokos downloaded from R2 |
 | Multi-UV, wrap modes, emissive strength, linear MR maps, texture transform | ✅ | `gltf.cpp`, EMOD v4 (`tools/glbinfo` to audit) |
+| glTF animation clips (node TRS, LINEAR/STEP; CUBICSPLINE as LINEAR) | ✅ | `gltf.cpp`, EMOD v7, `scrubAnimation`/`computeWorld`, `ModelRenderer::draw(..., worldOverride)`; `glbinfo` lists clips |
 | Box fallback for missing models | ✅ | |
 | **Last KRL cab flipped** (`krl-8` last car: yaw+π, −roll, −pitch) | ❌ | small fix in `train_visual.cpp` |
-| **Door animation** (`pintu-kiri/kanan` clips scrubbed by dwell) | ❌ | needs glTF animation parsing → EMOD → node player |
-| Pantograph clips frozen at last frame | ❌ | same as above |
-| Body sway (§7.5), cant roll | ❌ | `uji3dGoyang.ts` |
-| Head/tail lights at night, Semboyan 21 tail marker | ❌ | `Konst:398-446` |
-| Resting trains lights off (`istirahat`) | ❌ | bridge already has state |
+| Door animation (`pintu-kiri/kanan` clips scrubbed by dwell) | ✅ | `train_visual.cpp`: `tPintu` runs in sim time (clock delta), opens while `dwell` and not `istirahat`, both clips at the same time as `setelPintu` (the reference opens both sides; there is no platform-side selection). Only the JR205 set carries the clips (`glbinfo`); `traintest ENG_DOORS=1` forces dwell |
+| Pantograph clips frozen at last frame | ✅ | `rolling_stock.cpp` `restLocal/restWorld` (`panto-*` at `duration`) |
+| Body sway (§7.5), cant roll | ✅ | `engine/world/sway.h` (`hitungGoyang`, `medan`, `kurvaRel`, `skalaLaju`; `tests/test_sway.cpp`); curvature from the bridge's coupler tangents `t1/t2`; roll into the YZX Euler, naik/geser at the coupler points. Longitudinal `aksel` (cab pitch only) not tracked |
+| Head/tail lights at night, Semboyan 21 tail marker | ✅ | light nodes per `peranLampu` (+ outer-third tail filter, headlight copy, `lampuKarangan` fallback); additive coronas (`KORONA_PX 7`, directional opacity) only at night (clock < 6 or ≥ 18; the reference also shows them dimmer by day). S21: day red plate / night lantern (red glass rear, green front) at `x = −(L/2 − 0.38), y = 1.54, z = ±W/2`. Tunnel switch not done |
+| Resting trains lights off (`istirahat`) | ✅ | bridge `istirahat` (`train.ts`); also closes doors and hides S21, as the reference |
 | Freight `gd/gk` as GLB vs box per `SLOT_BALOK` | 🟡 | verify against `Konst:490-533` |
 
 ## Track, signals, points

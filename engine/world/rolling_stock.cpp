@@ -13,6 +13,22 @@ std::string flatNodeName(const std::string& s) {
   return r;
 }
 
+bool lightRole(const std::string& nodeName, LightRole& role) {
+  std::string k; for (unsigned char c : nodeName) k += (char)std::tolower(c);
+  if (!k.empty() && k[0] == 'a') { size_t n = k.size() > 1 && (k[1] == '.' || k[1] == '_') ? 2 : 1; k = k.substr(n); }
+  auto starts = [&](const char* pfx) { return k.compare(0, std::strlen(pfx), pfx) == 0; };
+  auto digitAfter = [&](const char* pfx) { size_t n = std::strlen(pfx); return starts(pfx) && k.size() > n && std::isdigit((unsigned char)k[n]); };
+  if (digitAfter("light")) { role = LightRole::Sorot; return true; }
+  if (starts("ditch_white")) { role = LightRole::Muka; return true; }
+  if (starts("ditch_red") || starts("s21-") || starts("s21_") || digitAfter("red") || starts("coronacenter")) { role = LightRole::Akhiran; return true; }
+  return false;
+}
+
+std::vector<LightPoint> fallbackLights(vec3 sz) {
+  float x = sz.x / 2 * 0.97f, y = sz.y * 0.41f, z = sz.z / 2 * 0.64f;
+  return {{LightRole::Sorot, 1, {x, y, z}}, {LightRole::Sorot, 1, {x, y, -z}}, {LightRole::Akhiran, -1, {-x, y, 0}}};
+}
+
 namespace {
 
 bool isAttachName(const std::string& flat, const char* prefix, int& index) {
@@ -97,7 +113,34 @@ const VehicleProto* RollingStock::proto(const std::string& slotId) {
     p.parts.push_back({part, local});
     p.bounds.expand(transformedBounds(part->bounds, local));
   }
-  std::printf("[stock] %s: panjang %.2f m, size %.2f x %.2f x %.2f, %zu parts\n", slotId.c_str(), p.panjang, p.size.x, p.size.y, p.size.z, p.parts.size());
+  // light attach points (sarana3d.ts muatSatu): tail points not in the outer third are dropped (third-party
+  // `a.s21` nodes sit at one fixed coordinate for the whole pack); no tail point left -> copy the headlights
+  for (size_t i = 0; i < body->nodes.size(); ++i) {
+    LightRole role;
+    if (!lightRole(body->nodes[i].name, role)) continue;
+    vec3 wp = (p.normalize * body->world[i]).transformPoint({0, 0, 0});
+    p.lights.push_back({role, wp.x >= 0 ? 1 : -1, wp});
+  }
+  float edge = p.size.x / 2 * 0.66f;
+  for (size_t i = p.lights.size(); i-- > 0;) if (p.lights[i].role == LightRole::Akhiran && std::fabs(p.lights[i].pos.x) < edge) p.lights.erase(p.lights.begin() + (long)i);
+  bool hasTail = false; for (const LightPoint& l : p.lights) if (l.role == LightRole::Akhiran) hasTail = true;
+  if (!p.lights.empty() && !hasTail) { size_t n = p.lights.size(); for (size_t i = 0; i < n; ++i) if (p.lights[i].role == LightRole::Sorot) p.lights.push_back({LightRole::Akhiran, p.lights[i].end, p.lights[i].pos}); }
+  p.lightsFromModel = !p.lights.empty();
+  if (p.lights.empty()) p.lights = fallbackLights(p.size);
+
+  // clips: doors (`pintu-kiri|kanan`) are scrubbed per frame; pantographs (`panto-*`) baked folded are
+  // frozen at the last frame (a KRL in service is always on the wire)
+  if (!body->animations.empty()) {
+    restPose(body->nodes, p.restLocal);
+    for (size_t i = 0; i < body->animations.size(); ++i) {
+      const Animation& a = body->animations[i];
+      if (a.name == "pintu-kiri" || a.name == "pintu-kanan") { p.doorClips.push_back((int)i); p.doorDuration = std::fmax(p.doorDuration, a.duration); }
+      else if (a.name.rfind("panto-", 0) == 0) scrubAnimation(body->nodes, a, a.duration, p.restLocal);
+    }
+    computeWorld(body->nodes, body->roots, p.restLocal, p.restWorld);
+  }
+  std::printf("[stock] %s: panjang %.2f m, size %.2f x %.2f x %.2f, %zu parts, %zu lights%s, %zu door clips%s\n", slotId.c_str(), p.panjang, p.size.x, p.size.y, p.size.z, p.parts.size(),
+              p.lights.size(), p.lightsFromModel ? "" : " (synthetic)", p.doorClips.size(), p.restWorld.empty() ? "" : ", animated");
   protos_[slotId] = p;
   return &protos_[slotId];
 }

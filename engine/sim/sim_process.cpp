@@ -236,6 +236,7 @@ void SimProcess::parseState(const Json& j) {
     tr.heading = (float)t["heading"].numberOr(0); tr.length = (float)t["len"].numberOr(0);
     tr.dir = t["dir"].intOr(1);
     tr.tungguS40 = t["tungguS40"].boolOr(false); tr.s40Siap = t["s40Siap"].boolOr(false);
+    tr.istirahat = t["istirahat"].boolOr(false);
     for (const Json& v : t["vehicles"].arr) {
       SimVehicle vh;
       vh.model = v["model"].stringOr(""); vh.kind = v["kind"].stringOr("");
@@ -245,6 +246,7 @@ void SimProcess::parseState(const Json& j) {
       vh.s = (float)v["s"].numberOr(0); vh.s2 = (float)v["s2"].numberOr(vh.s);
       vh.x1 = v["x1"].numberOr(vh.x); vh.y1 = v["y1"].numberOr(vh.y);
       vh.x2 = v["x2"].numberOr(vh.x); vh.y2 = v["y2"].numberOr(vh.y);
+      vh.t1 = (float)v["t1"].numberOr(vh.heading); vh.t2 = (float)v["t2"].numberOr(vh.heading);
       tr.vehicles.push_back(std::move(vh));
     }
     st.trains.push_back(std::move(tr));

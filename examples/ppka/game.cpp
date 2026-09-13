@@ -120,7 +120,14 @@ void Game::applySimState() {
   for (const SimPoint& p : st.points) points_.setState(p.id, p.setting, !p.lockedBy.empty());
   signals_.animate();
   routes_.update(st);
-  trains_.update(st, origin_, &profile_);
+  trains_.update(st, origin_, &profile_, timeScale_);
+  if (const char* f = std::getenv("ENG_FOLLOW")) {   // debug: orbit target tracks a train (number) every frame; ENG_FOLLOW_TAIL = its last car
+    for (size_t i = 0; i < trains_.labels().size(); ++i) {
+      const TrainLabel& l = trains_.labels()[i]; if (l.no != f && l.id != f) continue;
+      orbit_.target = l.anchor - vec3{0, 3.f, 0};
+      if (std::getenv("ENG_FOLLOW_TAIL")) { size_t n = 0; for (const SimTrain& t : st.trains) { if (t.no == f || t.id == f) { orbit_.target = trains_.vehicles()[n + t.vehicles.size() - 1].centre + vec3{0, 1.5f, 0}; break; } n += t.vehicles.size(); } }
+    }
+  }
   jpl_.setState(st.jpl);
 }
 
@@ -402,7 +409,8 @@ void Game::render(Window& win) {
   trees_.draw(renderer_, eye, &frustum);
   rails_.draw(renderer_, &frustum);
   for (const Placed& p : scenery_) if (frustum.contains(p.bounds)) renderer_.draw(*p.model, p.xf, &frustum);
-  { double hh = std::fmod(sim_.state().clock / 3600.0, 24.0); signals_.setView(useFly_ ? fly_.fovY : orbit_.fovY, h, hh < 6 || hh >= 18); }
+  { double hh = std::fmod(sim_.state().clock / 3600.0, 24.0); bool night = hh < 6 || hh >= 18;
+    signals_.setView(useFly_ ? fly_.fovY : orbit_.fovY, h, night); trains_.setView(useFly_ ? fly_.fovY : orbit_.fovY, h, night); }
   signals_.draw(renderer_, eye, &frustum);
   points_.draw(renderer_, &frustum);
   boards_.draw(renderer_, &frustum);

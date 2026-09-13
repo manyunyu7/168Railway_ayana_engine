@@ -67,8 +67,9 @@ Response = the **dynamic state**:
     seg, s, dir,             front of train: segment id, metres from node a, travel direction
     x, y, heading,           front of train in world XY, heading = atan2 of travel tangent
     hold, holdSignal, delay (s), nextStop (trackmark name),
+    istirahat,               parked consist waiting for a later departure (train.ts istirahat: lights off)
     vehicles: [{model, sarana, kind:"loco"|"car", len, x, y, heading, seg, s,
-                x1, y1, x2, y2, seg2, s2}]                                        front to rear
+                x1, y1, x2, y2, seg2, s2, t1, t2}]                                front to rear
   }],
   points:  [{id, setting:0|1, locked:<routeId>|null}],
   signals: [{id, aspect:"red"|"yellow"|"green"}],
@@ -81,7 +82,8 @@ Response = the **dynamic state**:
 ```
 Vehicle `x,y` is the midpoint between its two couplers (both projected on the track, so consists bend on
 curves); `heading` is front-minus-rear. `(x1,y1)` / `seg,s` is the vehicle's front coupler and `(x2,y2)` / `seg2,s2`
-its rear coupler, so the 3D layer can place each car exactly between its two couplers (§7.4). `model` is the 3D model id resolved the same way the web 3D layer
+its rear coupler, so the 3D layer can place each car exactly between its two couplers (§7.4); `t1`/`t2` are the
+track tangent angles (`atan2(tan.y, tan.x)`, world XY) at those couplers for the sway curvature (§7.5). `model` is the 3D model id resolved the same way the web 3D layer
 does it (`src/tiga/armada.ts`: fleet by train number / per-slot override), falling back to the `sarana`
 catalogue id. `{"cmd":"state"}` returns the same object without advancing.
 

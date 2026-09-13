@@ -15,6 +15,7 @@ struct SimVehicle {
   double x = 0, y = 0;            // midpoint between the couplers
   double x1 = 0, y1 = 0, x2 = 0, y2 = 0;   // front / rear coupler (world XY)
   float heading = 0, length = 0, s = 0, s2 = 0;
+  float t1 = 0, t2 = 0;           // track tangent angle (world XY) at the front / rear coupler
 };
 struct SimTrain {
   std::string id, no, name, consist, state, hold, seg;
@@ -23,6 +24,7 @@ struct SimTrain {
   float speed = 0, s = 0, heading = 0, length = 0;
   int dir = 1;
   bool tungguS40 = false, s40Siap = false;   // Semboyan 40 gate: waiting / button may be offered
+  bool istirahat = false;                    // parked consist waiting for a later departure (lights off)
   std::vector<SimVehicle> vehicles;
 };
 struct SimPoint { std::string id, lockedBy; int setting = 0; };

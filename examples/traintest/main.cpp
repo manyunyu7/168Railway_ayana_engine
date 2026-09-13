@@ -14,6 +14,7 @@
 #include "engine/world/rolling_stock.h"
 #include "engine/world/train_visual.h"
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -74,9 +75,15 @@ int main(int argc, char** argv) {
     double dt = std::chrono::duration<double>(tNow - tPrev).count(); tPrev = tNow;
     if (capture) dt = 1.0 / 30;                                     // deterministic captures
     if (!sim.step(std::min(0.1, dt) * 5)["ok"].boolOr(false)) { std::fprintf(stderr, "step failed: %s\n", sim.error().c_str()); break; }
-    const SimState& st = sim.state();
-    trains.update(st, origin, nullptr);                             // no rail profile yet: y = 0
-    if (!trains.labels().empty()) cam.target = trains.labels()[0].anchor - vec3{0, 3.0f, 0};
+    SimState st = sim.state();
+    if (std::getenv("ENG_DOORS")) for (SimTrain& t : st.trains) { t.state = "dwell"; t.istirahat = false; }   // debug: every consist dwelling (doors open)
+    trains.update(st, origin, nullptr, 5);                          // no rail profile yet: y = 0
+    // ENG_TRAIN=<train no> follows that train (default: the first); ENG_NIGHT=1 forces the night switch
+    size_t follow = 0;
+    if (const char* want = std::getenv("ENG_TRAIN")) for (size_t i = 0; i < trains.labels().size(); ++i) if (trains.labels()[i].no == want) follow = i;
+    if (!trains.labels().empty()) cam.target = trains.labels()[follow].anchor - vec3{0, 3.0f, 0};
+    { double hh = std::fmod(st.clock / 3600.0, 24.0); int w0, h0; win.framebufferSize(w0, h0);
+      trains.setView(cam.fovY, h0, std::getenv("ENG_NIGHT") ? true : (hh < 6 || hh >= 18)); }
 
     int w, h; win.framebufferSize(w, h);
     rhi::setViewport(w, h);
@@ -95,8 +102,8 @@ int main(int argc, char** argv) {
     text.rect(8, 8, text.measure(hud) + 16, text.lineHeight() * 2 + 12, {0, 0, 0, 0.5f});
     text.draw(hud, 16, 12);
     if (!trains.labels().empty()) {
-      const TrainLabel& l = trains.labels()[0];
-      std::snprintf(hud, sizeof hud, "KA %s %s  %s  %.0f km/h", l.no.c_str(), l.name.c_str(), l.state.c_str(), l.speed * 3.6f);
+      const TrainLabel& l = trains.labels()[follow];
+      std::snprintf(hud, sizeof hud, "KA %s %s  %s  %.0f km/h  doors %.2f s  lights %zu", l.no.c_str(), l.name.c_str(), l.state.c_str(), l.speed * 3.6f, trains.doorTime(l.id), trains.lights().size());
       text.draw(hud, 16, 12 + text.lineHeight());
     }
     text.flush(w, h);
