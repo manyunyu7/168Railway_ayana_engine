@@ -14,6 +14,7 @@ add_library(engine STATIC
   engine/asset/emod.cpp
   engine/render/model_renderer.cpp
   engine/render/text.cpp
+  engine/render/sky.cpp
 )
 target_include_directories(engine PUBLIC ${CMAKE_SOURCE_DIR})
 

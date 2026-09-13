@@ -3,6 +3,7 @@
 #include "engine/core/orbit_camera.h"
 #include "engine/core/window.h"
 #include "engine/render/model_renderer.h"
+#include "engine/render/sky.h"
 #include "engine/render/text.h"
 #include <chrono>
 #include <cstdio>
@@ -26,7 +27,7 @@ int main(int argc, char** argv) {
 
   ModelRenderer renderer; renderer.init();
   TextRenderer text; if (!text.load("assets/font.efnt", err)) std::fprintf(stderr, "font: %s\n", err.c_str());
-  Lighting light;
+  Lighting light; Sky sky; sky.init(); sky.sunDir = light.sunDir;
   OrbitCamera cam;
   cam.target = gpu.bounds.center();
   cam.distance = length(gpu.bounds.extent()) * 1.8f;
@@ -43,8 +44,10 @@ int main(int argc, char** argv) {
 
     int w, h; win.framebufferSize(w, h);
     rhi::setViewport(w, h);
-    rhi::clear(0.55f, 0.65f, 0.8f, 1);
-    renderer.beginFrame(cam.projection((float)w / (float)h) * cam.view(), cam.position(), light);
+    rhi::clear(0, 0, 0, 1);
+    mat4 vp = cam.projection((float)w / (float)h) * cam.view();
+    sky.draw(vp.inverse(), cam.position());
+    renderer.beginFrame(vp, cam.position(), light);
     renderer.draw(gpu);
     renderer.flushTransparent();
     char hud[128]; std::snprintf(hud, sizeof hud, "%s  draws %u  culled %u", argv[1], renderer.drawCalls, renderer.culled);
@@ -58,6 +61,6 @@ int main(int argc, char** argv) {
     }
     win.swapBuffers();
   }
-  gpu.destroy(); renderer.shutdown(); text.shutdown(); win.close();
+  gpu.destroy(); renderer.shutdown(); text.shutdown(); sky.shutdown(); win.close();
   return 0;
 }
