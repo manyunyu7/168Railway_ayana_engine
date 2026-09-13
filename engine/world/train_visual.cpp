@@ -43,7 +43,8 @@ void TrainVisuals::update(const SimState& st, const WorldOrigin& origin, const R
   vehicles_.clear(); labels_.clear();
   for (const SimTrain& t : st.trains) {
     bool first = true;
-    for (const SimVehicle& v : t.vehicles) {
+    for (size_t vi = 0; vi < t.vehicles.size(); ++vi) {
+      const SimVehicle& v = t.vehicles[vi];
       // §7.4: a = front coupler, b = rear coupler (scene XZ), heights from the rail profile.
       vec3 a = origin.toScene(v.x1, v.y1, 0), b = origin.toScene(v.x2, v.y2, 0);
       float hA = rail ? rail->railHeight(v.seg.c_str(), v.s) : 0.f;
@@ -52,6 +53,8 @@ void TrainVisuals::update(const SimState& st, const WorldOrigin& origin, const R
       float L = std::sqrt(dx * dx + dz * dz);
       if (L < 1e-3f) { dx = std::cos(v.heading); dz = -std::sin(v.heading); L = 1; }
       float yaw = std::atan2(-dz, dx), pitch = std::atan2(hA - hB, L), roll = 0;
+      // §7.4: the trailing KRL cab car faces backwards (cab at the rear of the consist)
+      if (v.model == "nryJr205KuhaBadan" && vi + 1 == t.vehicles.size()) { yaw += PI; pitch = -pitch; roll = -roll; }
       VehicleInstance inst;
       inst.len = v.length; inst.loco = v.kind == "loco";
       inst.centre = {(a.x + b.x) * 0.5f, (hA + hB) * 0.5f, (a.z + b.z) * 0.5f};
