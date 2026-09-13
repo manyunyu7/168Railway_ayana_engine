@@ -7,13 +7,19 @@ inline const char* PBR_VS = R"(
 layout(location=0) in vec3 aPos;
 layout(location=1) in vec3 aNormal;
 layout(location=2) in vec2 aUV;
+layout(location=3) in vec4 aInst0;   // per-instance model matrix columns (rhi::attachInstances)
+layout(location=4) in vec4 aInst1;
+layout(location=5) in vec4 aInst2;
+layout(location=6) in vec4 aInst3;
 uniform mat4 uViewProj, uModel;
+uniform int uInstanced;              // 1: model = uModel * instance matrix
 out vec3 vNormal, vWorldPos;
 out vec2 vUV;
 void main() {
-  vec4 wp = uModel * vec4(aPos, 1.0);
+  mat4 model = uInstanced == 1 ? uModel * mat4(aInst0, aInst1, aInst2, aInst3) : uModel;
+  vec4 wp = model * vec4(aPos, 1.0);
   vWorldPos = wp.xyz;
-  vNormal = mat3(uModel) * aNormal;   // fine for uniform scale; use inverse-transpose later
+  vNormal = mat3(model) * aNormal;   // fine for uniform scale; use inverse-transpose later
   vUV = aUV;
   gl_Position = uViewProj * wp;
 })";

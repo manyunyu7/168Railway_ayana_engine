@@ -6,9 +6,12 @@
 //               u32 nLayers { i32 zoom tx0 ty0 nx ny n;  u8 present[nx*ny];  f32 h[nx*ny*n*n] }
 //               layer 0 = fine (z13, track bbox ± 5 km), layer 1 = far (z10, bbox ± 2 km);
 //               heights are raw Terrarium metres a.s.l., n×n samples per tile, row-major, tiles row-major.
-//   <map>.sat   magic "ESAT" u32 version(1)
-//               u32 nLayers { i32 zoom tx0 ty0 nx ny px;  per tile: u8 present, RGB8[px*px] (sRGB, row 0 = north) }
-//               layer 0 = near ground tiles (z14, bbox ± 2.5 km), layer 1 = far layer (z10..12, bbox ± 2 km).
+//   <map>.sat   magic "ESAT" u32 version(2)
+//               u32 nLayers { i32 zoom tx0 ty0 nx ny px;  u8 present[nx*ny];  RGB8[px*px] per PRESENT tile,
+//               tiles row-major (sRGB, row 0 = north) }
+//               layer 0 = near ground tiles (z14, bbox ± 2.5 km), layer 1 = far layer (z10..12, bbox ± 2 km),
+//               layers 2.. = detail (z16/z17 around the track and stations, spec DETAIL_TANAH); the ground
+//               mesh textures every 153 m block with the finest present layer covering it.
 #pragma once
 #include "engine/math/geometry.h"
 #include "engine/render/model_renderer.h"
@@ -33,7 +36,10 @@ constexpr float BALLAST_FOOT = -0.580f;                      // BALAS_KAKI
 constexpr float PLATEAU_OFFSET = BALLAST_FOOT - 0.04f;       // plateau below the rail head
 constexpr float GRID_CELL = 64;                              // SEL_GRID (rail hash grid)
 constexpr float CHORD_MAX = 20;                              // consecutive RailSamples further apart start a new chord
-constexpr float BLOCK = 128, CELL_NEAR = 8, CELL_MID = 30, CELL_FAR = 60;   // BLOK_TANAH, SEL_TANAH_*
+// BLOK_TANAH is 128 m in the reference (19 per tile); 16 per tile (152.9 m) keeps blocks aligned with the
+// z16 (4×4) and z17 (2×2) detail tile grids so every block has exactly one texture.
+constexpr int BLOCKS_PER_TILE = 16;
+constexpr float CELL_NEAR = 8, CELL_MID = 30, CELL_FAR = 60;   // SEL_TANAH_*
 constexpr float BLOCK_MARGIN = CARVE_OUTER + 8, MID_MARGIN = 500;           // MARGIN_BLOK, MARGIN_SEDANG
 constexpr float SKIRT_MIN = 4, SKIRT_FACTOR = 0.45f;                        // ROK_MIN, ROK_FAKTOR
 constexpr int FAR_CELLS_PER_TILE = 6;                                       // SEL_JAUH_PER_UBIN
@@ -65,19 +71,24 @@ public:
 
 struct SatLayer {
   int zoom = 0, tx0 = 0, ty0 = 0, nx = 0, ny = 0, px = 0;
-  std::vector<uint8_t> present, rgb;
+  double ts = 0, mpp = 0;                      // tile size (m) and metres per pixel
+  std::vector<uint8_t> present, rgb;           // rgb: present tiles only, packed
+  std::vector<int32_t> slot;                   // per tile: index into rgb (-1 = absent)
   bool has(int tx, int ty) const;
-  const uint8_t* tile(int tx, int ty) const;   // RGB8 px*px
+  bool covers(double wx, double wy) const;     // a present tile contains the point
+  const uint8_t* tile(int tx, int ty) const;   // RGB8 px*px (caller checks has())
 };
 
 struct SatImage {
   bool load(const std::string& path, std::string& error);
   std::vector<SatLayer> layers;
+  std::vector<int> detail;                     // indices of layers finer than the near layer, finest first
+  float meanBrightness = 0.4f;                 // mean max(R,G,B) of the near layer (vegetation mask)
 };
 
 class Terrain {
 public:
-  struct Stats { size_t vertices = 0, triangles = 0; int nearTiles = 0, farTiles = 0; double loadMs = 0, buildMs = 0; };
+  struct Stats { size_t vertices = 0, triangles = 0; int nearTiles = 0, farTiles = 0, patches = 0, detailPatches = 0; double loadMs = 0, buildMs = 0; };
 
   // Reads the two data files; the world origin becomes the track-node bbox centre.
   bool load(const std::string& demPath, const std::string& satPath, std::string& error);
@@ -90,7 +101,18 @@ public:
 
   float groundHeight(double wx, double wy) const;    // carved ground, scene y (tanahTerukir)
   float rawHeight(double wx, double wy) const { return dem_.rawHeight(wx, wy); }
+  // Distance (m) from a scene xz position to the nearest registered at-grade rail chord; 1e30 when
+  // farther than CARVE_OUTER.
+  float railDistance(float x, float z) const;
+  // Is any rail chord inside the world box (cx, cy, side) grown by margin?
+  bool railInBox(double cx, double cy, double side, double margin) const;
+  // Mean sRGB colour (0..1) of the finest satellite imagery in a ±radius m window around a world point;
+  // false when no imagery covers it.
+  bool satColor(double wx, double wy, float radius, float rgb[3]) const;
+  // Finest satellite layer covering a world point (index into sat().layers; -1 = none).
+  int finestLayerAt(double wx, double wy) const;
   const Dem& dem() const { return dem_; }
+  const SatImage& sat() const { return sat_; }
   const WorldOrigin& origin() const { return origin_; }
   Stats stats;
 
@@ -101,9 +123,8 @@ private:
 
   void addChord(vec3 a, vec3 b, float ba, float bb);
   bool nearestRail(float x, float z, Nearest& out) const;
-  bool railInBox(double cx, double cy, double side, double margin) const;
   float carveBase(const Nearest& n) const;
-  Tile buildNearTile(int tx, int ty);
+  void buildNearTile(int tx, int ty);
   Tile buildFarTile(const SatLayer& far, int tx, int ty);
   void upload(Tile& t, MeshBuilder& mb, const SatLayer* layer, int tx, int ty, vec3 pos);
 

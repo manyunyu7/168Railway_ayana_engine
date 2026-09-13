@@ -17,6 +17,7 @@
 #include "engine/world/terrain.h"
 #include "engine/world/track_graph.h"
 #include "engine/world/train_visual.h"
+#include "engine/world/vegetation.h"
 #include <deque>
 #include <string>
 
@@ -62,6 +63,7 @@ private:
   AssetCatalog catalog_; RollingStock stock_; TrainVisuals trains_;
   struct Placed { GpuModel* model; mat4 xf; AABB bounds; };
   std::vector<Placed> scenery_;      // hiasan objects (station building etc.)
+  Vegetation trees_;
   std::string hoverId_;
 };
 

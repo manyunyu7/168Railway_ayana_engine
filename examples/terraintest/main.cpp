@@ -1,14 +1,18 @@
 // Example: terrain test. `terraintest [map]` — loads assets/terrain/<map>.dem/.sat, carves the rail
 // corridor from a synthetic rail sample list (node chords of world.graph polylined at 12 m, rail height =
 // DEM smoothed along the chord) and orbits the station. Drag to orbit, scroll to zoom, WASD to pan.
-// Env: ENG_DIST/ENG_PITCH/ENG_YAW camera, ENG_AT_CARVE=1 targets the strongest carve, ENG_CAPTURE=file.ppm.
+// Trees are scattered from the satellite green mask (Vegetation) with the catalog's `vegetasi` models.
+// Env: ENG_DIST/ENG_PITCH/ENG_YAW camera, ENG_AT_CARVE=1 targets the strongest carve, ENG_CAPTURE=file.ppm,
+// ENG_NO_TREES=1 skips vegetation.
 #include "engine/core/json.h"
 #include "engine/core/orbit_camera.h"
 #include "engine/core/window.h"
 #include "engine/render/model_renderer.h"
 #include "engine/render/sky.h"
 #include "engine/render/text.h"
+#include "engine/world/asset_catalog.h"
 #include "engine/world/terrain.h"
+#include "engine/world/vegetation.h"
 #include <GLFW/glfw3.h>
 #include <chrono>
 #include <cmath>
@@ -28,6 +32,7 @@ int main(int argc, char** argv) {
   Window win;
   if (!win.open(1280, 800, "engine — terrain")) return 1;
   rhi::init();
+  rhi::setAnisotropy(8);
 
   auto t0 = std::chrono::steady_clock::now();
   Terrain terrain; std::string err;
@@ -70,8 +75,8 @@ int main(int argc, char** argv) {
   terrain.build();
   double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   const Terrain::Stats& s = terrain.stats;
-  std::printf("built in %.0f ms (load %.0f, build %.0f): %d near + %d far tiles, %zu vertices, %zu triangles, %zu rail samples\n",
-              ms, s.loadMs, s.buildMs, s.nearTiles, s.farTiles, s.vertices, s.triangles, rails.size());
+  std::printf("built in %.0f ms (load %.0f, build %.0f): %d near + %d far tiles, %d patches (%d detail), %zu vertices, %zu triangles, %zu rail samples\n",
+              ms, s.loadMs, s.buildMs, s.nearTiles, s.farTiles, s.patches, s.detailPatches, s.vertices, s.triangles, rails.size());
 
   {  // carving check: carved ground must sit 0.62 m under the rail head, and differ from the raw DEM somewhere
     float maxDelta = 0, worst = 0; size_t k = 0; double wxBest = 0, wyBest = 0;
@@ -88,6 +93,12 @@ int main(int argc, char** argv) {
   }
 
   ModelRenderer renderer; renderer.init();
+  AssetCatalog catalog; Vegetation trees;
+  if (!std::getenv("ENG_NO_TREES")) {
+    if (!catalog.load()) std::fprintf(stderr, "catalog: %s\n", catalog.error().c_str());
+    trees.build(terrain, catalog);
+    std::printf("vegetation: %zu trees in %d cells, %d models, %.0f ms\n", trees.stats.trees, trees.stats.cells, trees.stats.models, trees.stats.buildMs);
+  }
   TextRenderer text; if (!text.load(root + "/assets/font.efnt", err)) std::fprintf(stderr, "font: %s\n", err.c_str());
   Lighting light; light.fogDensity = 1.f / 9000; Sky sky; sky.init(); sky.sunDir = light.sunDir;
   light.fogColor = {0.79f, 0.86f, 0.93f};
@@ -123,10 +134,11 @@ int main(int argc, char** argv) {
     sky.draw(vp.inverse(), cam.position());
     renderer.beginFrame(vp, cam.position(), light);
     terrain.draw(renderer, &fr);
+    trees.draw(renderer, cam.position(), &fr);
     renderer.flushTransparent();
     char hud[256];
-    std::snprintf(hud, sizeof hud, "%s  tiles %d+%d  verts %zu  tris %zu  draws %u culled %u  target (%.0f, %.0f) h %.1f", map.c_str(),
-                  s.nearTiles, s.farTiles, s.vertices, s.triangles, renderer.drawCalls, renderer.culled, wx, wy, cam.target.y);
+    std::snprintf(hud, sizeof hud, "%s  tiles %d+%d  patches %d  verts %zu  tris %zu  draws %u culled %u  trees %u/%zu  target (%.0f, %.0f) h %.1f", map.c_str(),
+                  s.nearTiles, s.farTiles, s.patches, s.vertices, s.triangles, renderer.drawCalls, renderer.culled, trees.stats.drawn, trees.stats.trees, wx, wy, cam.target.y);
     text.rect(8, 8, text.measure(hud) + 16, text.lineHeight() + 8, {0, 0, 0, 0.5f});
     text.draw(hud, 16, 12);
     text.flush(w, h);
@@ -137,6 +149,6 @@ int main(int argc, char** argv) {
     }
     win.swapBuffers();
   }
-  terrain.destroy(); renderer.shutdown(); text.shutdown(); sky.shutdown(); win.close();
+  trees.destroy(); catalog.destroy(); terrain.destroy(); renderer.shutdown(); text.shutdown(); sky.shutdown(); win.close();
   return 0;
 }

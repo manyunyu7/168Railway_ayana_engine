@@ -1,6 +1,7 @@
 // Offline terrain fetcher: map name -> assets/terrain/<map>.dem + <map>.sat (see engine/world/terrain.h
 // for the formats). Downloads Terrarium DEM tiles (z13 core, z10 far) and satellite tiles (z14 near
-// composed from --sat-detail sub-tiles, plus one coarse far layer) with curl, decodes with stb_image.
+// composed from --sat-detail sub-tiles, one coarse far layer, and z16/z17 detail layers along the track
+// and around stations) with curl, decodes with stb_image.
 //   fetch_tiles <map> [--maps DIR] [--out DIR] [--cache DIR] [--sat-detail 15] [--sat-size 512]
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_HDR
@@ -20,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -60,6 +62,28 @@ static bool fetch(const std::vector<std::string>& urls, const fs::path& cached, 
     fs::remove(cached, ec);
   }
   return false;
+}
+
+struct Pt { double x, y; };
+
+// Tiles at zoom z whose box lies within `radius` of any point: bounding range + present mask.
+static bool selectTiles(int z, const std::vector<Pt>& pts, double radius, TileRange& r, std::vector<uint8_t>& present) {
+  if (pts.empty()) return false;
+  Bbox b{1e30, 1e30, -1e30, -1e30};
+  for (const Pt& p : pts) { b.x0 = std::min(b.x0, p.x); b.y0 = std::min(b.y0, p.y); b.x1 = std::max(b.x1, p.x); b.y1 = std::max(b.y1, p.y); }
+  r = rangeFor(b, radius, z);
+  const double ts = slippy::tileSizeMeter(z);
+  present.assign((size_t)r.nx() * r.ny(), 0);
+  int count = 0;
+  for (int ty = r.ty0; ty <= r.ty1; ++ty)
+    for (int tx = r.tx0; tx <= r.tx1; ++tx) {
+      double x0 = slippy::tileOriginX(tx, z), y0 = slippy::tileOriginY(ty, z);
+      for (const Pt& p : pts) {
+        double dx = std::max({x0 - p.x, 0.0, p.x - (x0 + ts)}), dy = std::max({y0 - p.y, 0.0, p.y - (y0 + ts)});
+        if (dx * dx + dy * dy <= radius * radius) { present[(size_t)(ty - r.ty0) * r.nx() + (tx - r.tx0)] = 1; ++count; break; }
+      }
+    }
+  return count > 0;
 }
 
 static void put32(std::ofstream& f, int32_t v) { f.write((const char*)&v, 4); }
@@ -136,26 +160,45 @@ int main(int argc, char** argv) {
   }
   dem.close();
 
-  // ---- satellite: near z14 (bbox ± 2500) composed from z<satDetail> sub-tiles, far z10..12 (bbox ± 2000) ----
+  // ---- satellite (ESAT v2, sparse): near z14 (bbox ± 2500) composed from z<satDetail> sub-tiles, far z10..12
+  // (bbox ± 2000), then detail layers (spec DETAIL_TANAH): z16 @256 within 1500 m of any track node,
+  // z16 @512 (4× z17) within 1500 m of a station, z17 @512 (4× z18) within 450 m of a station.
   int zFar = 10;
   for (int z = 12; z > 10; --z) { TileRange r = rangeFor(bb, 2000, z); if (r.nx() * r.ny() <= 40) { zFar = z; break; } }
-  TileRange satRanges[2] = {rangeFor(bb, 2500, 14), rangeFor(bb, 2000, zFar)};
+  std::vector<Pt> trackPts, stationPts;
+  for (const Json& n : nodes.arr) trackPts.push_back({n["x"].numberOr(0), n["y"].numberOr(0)});
+  for (const Json& sc : doc["world"]["scenery"].arr)
+    if (sc["kind"].stringOr("") == "station") stationPts.push_back({sc["pos"]["x"].numberOr(0), sc["pos"]["y"].numberOr(0)});
+  struct LayerSpec { TileRange r; std::vector<uint8_t> present; int sub, px; };
+  std::vector<LayerSpec> layers;
+  {
+    TileRange r = rangeFor(bb, 2500, 14);
+    layers.push_back({r, std::vector<uint8_t>((size_t)r.nx() * r.ny(), 1), std::max(0, satDetail - 14), std::min(256 << std::max(0, satDetail - 14), satSize)});
+    r = rangeFor(bb, 2000, zFar);
+    layers.push_back({r, std::vector<uint8_t>((size_t)r.nx() * r.ny(), 1), 0, 256});
+    LayerSpec d;
+    if (selectTiles(16, trackPts, 1500, d.r, d.present)) { d.sub = 0; d.px = 256; layers.push_back(d); }
+    if (selectTiles(16, stationPts, 1500, d.r, d.present)) { d.sub = 1; d.px = 512; layers.push_back(d); }
+    if (selectTiles(17, stationPts, 450, d.r, d.present)) { d.sub = 1; d.px = 512; layers.push_back(d); }
+  }
   std::ofstream sat(outDir + "/" + map + ".sat", std::ios::binary);
-  sat.write("ESAT", 4); put32(sat, 1); put32(sat, 2);
-  for (int li = 0; li < 2; ++li) {
-    const TileRange& r = satRanges[li];
-    int sub = li == 0 ? std::max(0, satDetail - 14) : 0;   // sub-tile zoom levels below the layer zoom
-    int k = 1 << sub, srcPx = 256 * k, px = li == 0 ? std::min(srcPx, satSize) : 256;
+  sat.write("ESAT", 4); put32(sat, 2); put32(sat, (int32_t)layers.size());
+  for (const LayerSpec& L : layers) {
+    const TileRange& r = L.r;
+    int k = 1 << L.sub, srcPx = 256 * k, px = L.px;
     put32(sat, r.z); put32(sat, r.tx0); put32(sat, r.ty0); put32(sat, r.nx()); put32(sat, r.ny()); put32(sat, px);
+    sat.write((const char*)L.present.data(), (std::streamsize)L.present.size());
     std::vector<unsigned char> img((size_t)srcPx * srcPx * 3), out((size_t)px * px * 3);
-    int ok = 0;
+    int ok = 0, want = 0;
     for (int ty = r.ty0; ty <= r.ty1; ++ty)
       for (int tx = r.tx0; tx <= r.tx1; ++tx) {
+        if (!L.present[(size_t)(ty - r.ty0) * r.nx() + (tx - r.tx0)]) continue;
+        ++want;
         std::fill(img.begin(), img.end(), 0x60);
         bool any = false;
         for (int sy = 0; sy < k; ++sy)
           for (int sx = 0; sx < k; ++sx) {
-            int z = r.z + sub, x = tx * k + sx, y = ty * k + sy;
+            int z = r.z + L.sub, x = tx * k + sx, y = ty * k + sy;
             std::string zs = std::to_string(z), xs = std::to_string(x), ys = std::to_string(y);
             fs::path file = cache / "satellite" / (zs + "_" + xs + "_" + ys + ".img");
             if (!fetch({std::string(TILE_168) + "/satellite/" + zs + "/" + xs + "/" + ys + ".png",
@@ -176,14 +219,13 @@ int main(int argc, char** argv) {
             stbi_image_free(p);
             any = true;
           }
-        unsigned char present = any ? 1 : 0;
-        sat.write((const char*)&present, 1);
         if (px != srcPx) stbir_resize_uint8_srgb(img.data(), srcPx, srcPx, 0, out.data(), px, px, 0, STBIR_RGB);
         else out = img;
         sat.write((const char*)out.data(), (std::streamsize)out.size());
         ok += any;
       }
-    std::printf("satellite z%d: %dx%d tiles @ %d px (%d with imagery)\n", r.z, r.nx(), r.ny(), px, ok);
+    std::printf("satellite z%d @ %d px (%.2f m/px): %d/%d tiles in a %dx%d range (%d with imagery), %.1f MB\n", r.z, px,
+                slippy::tileSizeMeter(r.z) / px, want, r.nx() * r.ny(), r.nx(), r.ny(), ok, (double)want * px * px * 3 / 1e6);
   }
   sat.close();
 

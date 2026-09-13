@@ -41,16 +41,19 @@ public:
   void draw(const GpuModel& model, const mat4& transform = mat4::identity(), const Frustum* frustum = nullptr);
   // Procedural geometry: one mesh, one material, optional single base-color texture.
   void drawMesh(const rhi::Mesh& mesh, const Material& mat, rhi::Texture baseTex, const mat4& transform);
+  // Instanced: every primitive of the model must have had an instance buffer attached
+  // (rhi::attachInstances); draws `count` copies, world = transform * node * instance.
+  void drawInstanced(const GpuModel& model, const mat4& transform, uint32_t count);
   void flushTransparent();   // call after all draws of the frame
   unsigned drawCalls = 0, culled = 0;   // per-frame stats (reset in beginFrame)
 private:
-  struct DrawItem { const rhi::Mesh* mesh; const Material* material; const std::vector<rhi::Texture>* textures; rhi::Texture baseTex; mat4 world; float depth; };
+  struct DrawItem { const rhi::Mesh* mesh; const Material* material; const std::vector<rhi::Texture>* textures; rhi::Texture baseTex; mat4 world; float depth; uint32_t instances = 0; };
   void drawItem(const DrawItem& d);
   void submit(DrawItem d);
   rhi::Program prog_;
   rhi::Texture white_;   // 1x1 fallback so every sampler unit has a texture
   struct { int viewProj, model, eye, sunDir, sunColor, skyColor, groundColor, baseColor, emissive, metallic, roughness,
-           alphaCutoff, hasBase, hasMR, hasEmissive, alphaMode, fogColor, fogDensity; } u_{};
+           alphaCutoff, hasBase, hasMR, hasEmissive, alphaMode, fogColor, fogDensity, instanced; } u_{};
   std::vector<DrawItem> transparent_;
   vec3 eye_;
 };

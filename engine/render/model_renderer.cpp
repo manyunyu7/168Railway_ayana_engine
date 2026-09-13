@@ -36,7 +36,7 @@ void ModelRenderer::init() {
   auto L = [&](const char* n) { return rhi::uniformLocation(prog_, n); };
   u_ = {L("uViewProj"), L("uModel"), L("uEye"), L("uSunDir"), L("uSunColor"), L("uSkyColor"), L("uGroundColor"),
         L("uBaseColor"), L("uEmissive"), L("uMetallic"), L("uRoughness"), L("uAlphaCutoff"),
-        L("uHasBaseTex"), L("uHasMRTex"), L("uHasEmissiveTex"), L("uAlphaMode"), L("uFogColor"), L("uFogDensity")};
+        L("uHasBaseTex"), L("uHasMRTex"), L("uHasEmissiveTex"), L("uAlphaMode"), L("uFogColor"), L("uFogDensity"), L("uInstanced")};
   rhi::useProgram(prog_);
   rhi::setUniform(L("uBaseTex"), 0); rhi::setUniform(L("uMRTex"), 1); rhi::setUniform(L("uEmissiveTex"), 2);
   const uint8_t px[4] = {255, 255, 255, 255};
@@ -90,7 +90,8 @@ void ModelRenderer::drawItem(const DrawItem& d) {
     rhi::setUniform(u_.hasEmissive, 0); rhi::bindTexture(2, white_);
   }
   rhi::setCullFace(!mt.doubleSided);
-  rhi::drawMesh(*d.mesh);
+  rhi::setUniform(u_.instanced, d.instances ? 1 : 0);
+  if (d.instances) rhi::drawMeshInstanced(*d.mesh, d.instances); else rhi::drawMesh(*d.mesh);
   ++drawCalls;
 }
 
@@ -110,6 +111,19 @@ void ModelRenderer::draw(const GpuModel& model, const mat4& transform, const Fru
       if (frustum && !frustum->contains(p.bounds.transformed(w))) { ++culled; continue; }
       const Material& mt = p.material >= 0 ? model.materials[(size_t)p.material] : DEFAULT;
       submit({&p.mesh, &mt, &model.textures, {}, w, 0});
+    }
+  }
+}
+
+void ModelRenderer::drawInstanced(const GpuModel& model, const mat4& transform, uint32_t count) {
+  static const Material DEFAULT;
+  if (!count) return;
+  for (size_t n = 0; n < model.nodes.size(); ++n) {
+    int mi = model.nodes[n].mesh; if (mi < 0) continue;
+    mat4 w = transform * model.world[n];
+    for (const GpuPrimitive& p : model.meshes[(size_t)mi].primitives) {
+      const Material& mt = p.material >= 0 ? model.materials[(size_t)p.material] : DEFAULT;
+      submit({&p.mesh, &mt, &model.textures, {}, w, 0, count});
     }
   }
 }

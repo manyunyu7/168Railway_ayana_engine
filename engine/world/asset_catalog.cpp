@@ -81,6 +81,12 @@ const CatalogEntry* AssetCatalog::find(const std::string& id) const {
   return it == entries_.end() ? nullptr : &it->second;
 }
 
+std::vector<std::string> AssetCatalog::idsByCategory(const std::string& kategori) const {
+  std::vector<std::string> out;
+  for (const auto& [id, e] : entries_) if (e.kategori == kategori) out.push_back(id);
+  return out;
+}
+
 std::string AssetCatalog::glbPath(const CatalogEntry& e) {
   if (e.berkas.empty() || e.prosedural) return "";
   std::error_code ec;

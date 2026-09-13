@@ -1,5 +1,7 @@
 #include "engine/rhi/rhi.h"
 #include <cstdio>
+#include <cstring>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -11,9 +13,22 @@
   static const char* SHADER_HEADER = "#version 300 es\nprecision highp float;\n";
 #endif
 
+#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
+#define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
+#endif
+
 namespace eng::rhi {
 
+static float g_maxAniso = 0, g_aniso = 1;   // 0 = extension absent
+
 void init() {
+  g_maxAniso = 0; g_aniso = 1;
+  GLint n = 0; glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+  for (GLint i = 0; i < n; ++i) {
+    const char* e = (const char*)glGetStringi(GL_EXTENSIONS, (GLuint)i);
+    if (e && !std::strcmp(e, "GL_EXT_texture_filter_anisotropic")) glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &g_maxAniso);
+  }
   glEnable(GL_DEPTH_TEST);
   glEnable(GL_CULL_FACE);
   glCullFace(GL_BACK);
@@ -30,6 +45,7 @@ void clear(float r, float g, float b, float a, bool depth) {
 void setDepthWrite(bool on) { glDepthMask(on ? GL_TRUE : GL_FALSE); }
 void setBlend(bool on) { if (on) glEnable(GL_BLEND); else glDisable(GL_BLEND); }
 void setCullFace(bool on) { if (on) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE); }
+void setDepthTestEnabled(bool on) { if (on) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST); }
 
 Buffer createBuffer(BufferKind kind, std::span<const std::byte> data) {
   GLenum target = kind == BufferKind::Vertex ? GL_ARRAY_BUFFER : GL_ELEMENT_ARRAY_BUFFER;
@@ -64,6 +80,31 @@ void destroyMesh(Mesh& m) {
 void drawMesh(const Mesh& m) {
   glBindVertexArray(m.vao);
   glDrawElements(GL_TRIANGLES, (GLsizei)m.indexCount, GL_UNSIGNED_INT, nullptr);
+}
+
+Buffer createDynamicBuffer(size_t bytes) {
+  Buffer b; glGenBuffers(1, &b.id);
+  glBindBuffer(GL_ARRAY_BUFFER, b.id);
+  glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)bytes, nullptr, GL_DYNAMIC_DRAW);
+  return b;
+}
+void updateBuffer(Buffer b, std::span<const std::byte> data) {
+  glBindBuffer(GL_ARRAY_BUFFER, b.id);
+  glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)data.size(), data.data());
+}
+void attachInstances(const Mesh& m, Buffer instances) {
+  glBindVertexArray(m.vao);
+  glBindBuffer(GL_ARRAY_BUFFER, instances.id);
+  for (int c = 0; c < 4; ++c) {
+    glEnableVertexAttribArray(3 + c);
+    glVertexAttribPointer(3 + c, 4, GL_FLOAT, GL_FALSE, 64, (const void*)(intptr_t)(c * 16));
+    glVertexAttribDivisor(3 + c, 1);
+  }
+  glBindVertexArray(0);
+}
+void drawMeshInstanced(const Mesh& m, uint32_t count) {
+  glBindVertexArray(m.vao);
+  glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)m.indexCount, GL_UNSIGNED_INT, nullptr, (GLsizei)count);
 }
 
 static GLuint compile(GLenum kind, std::string_view src) {
@@ -104,6 +145,11 @@ void setUniform(int loc, float x, float y, float z, float w) { glUniform4f(loc, 
 void setUniform(int loc, float v) { glUniform1f(loc, v); }
 void setUniform(int loc, int v) { glUniform1i(loc, v); }
 
+float setAnisotropy(float level) {
+  g_aniso = g_maxAniso > 0 ? std::min(std::max(level, 1.f), g_maxAniso) : 1.f;
+  return g_aniso;
+}
+
 Texture createTexture(int w, int h, Format f, std::span<const std::byte> pixels, bool mipmap, bool srgb) {
   GLenum fmt = f == Format::RGBA8 ? GL_RGBA : f == Format::RGB8 ? GL_RGB : f == Format::RG8 ? GL_RG : GL_RED;
   GLint internal = f == Format::RGBA8 ? (srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8)
@@ -118,6 +164,7 @@ Texture createTexture(int w, int h, Format f, std::span<const std::byte> pixels,
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, mipmap ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
   if (mipmap) glGenerateMipmap(GL_TEXTURE_2D);
+  if (mipmap && g_aniso > 1) glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, g_aniso);
   return t;
 }
 void destroyTexture(Texture t) { if (t.id) glDeleteTextures(1, &t.id); }

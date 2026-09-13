@@ -10,6 +10,7 @@ namespace eng {
 bool Game::init(Window& win, const GameOptions& opt) {
   win_ = &win; opt_ = opt;
   rhi::init();
+  rhi::setAnisotropy(8);
   renderer_.init(); sky_.init();
   std::string err;
   if (!text_.load("assets/font.efnt", err)) std::fprintf(stderr, "font: %s\n", err.c_str());
@@ -77,14 +78,25 @@ bool Game::buildWorld() {
     mat4 xf = mat4::translation(p) * mat4::rotationY(yaw) * mat4::scale({sc, sc, sc}) * norm;
     scenery_.push_back({m, xf, m->bounds.transformed(xf)});
   }
+  // trees from the satellite green mask, kept out of the hiasan footprints (§4.4)
+  std::vector<AABB> footprints;
+  for (const Placed& p : scenery_) footprints.push_back(p.bounds);
+  trees_.build(terrain_, catalog_, footprints);
   // camera height follows the ground at the station
   float gy = terrain_.groundHeight(stationScene_.x + origin_.ox, stationScene_.z + origin_.oz);
   stationScene_.y = gy; orbit_.target = stationScene_; fly_.position.y = gy + 30;
   double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-  char m[200];
-  std::snprintf(m, sizeof m, "world built in %.0f ms: %.1f km track, %d points, %zu signals, rails %u tris, terrain %zu tris, %zu hiasan",
-                ms, graph_.totalLength() / 1000, graph_.pointCount(), signals_.signals().size(), rails_.stats().tris, terrain_.stats.triangles, scenery_.size());
+  char m[240];
+  std::snprintf(m, sizeof m, "world built in %.0f ms: %.1f km track, %d points, %zu signals, rails %u tris, terrain %zu tris, %zu hiasan, %zu trees",
+                ms, graph_.totalLength() / 1000, graph_.pointCount(), signals_.signals().size(), rails_.stats().tris, terrain_.stats.triangles, scenery_.size(), trees_.stats.trees);
   pushMessage(m);
+  if (std::getenv("ENG_TERRAIN_DEBUG")) {
+    double wx, wy; origin_.toWorld(stationScene_, wx, wy);
+    int li = terrain_.finestLayerAt(wx, wy);
+    std::printf("origins: game (%.1f, %.1f) terrain (%.1f, %.1f) graph (%.1f, %.1f)\n", origin_.ox, origin_.oz, terrain_.origin().ox, terrain_.origin().oz, graph_.origin().ox, graph_.origin().oz);
+    std::printf("terrain: %d patches (%d detail); station (%.0f, %.0f) on layer %d (z%d @ %.2f m/px)\n", terrain_.stats.patches, terrain_.stats.detailPatches,
+                wx, wy, li, li >= 0 ? terrain_.sat().layers[(size_t)li].zoom : 0, li >= 0 ? terrain_.sat().layers[(size_t)li].mpp : 0.0);
+  }
   return true;
 }
 
@@ -96,7 +108,7 @@ void Game::applySimState() {
 }
 
 void Game::shutdown() {
-  sim_.stop(); trains_.shutdown(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy();
+  sim_.stop(); trains_.shutdown(); trees_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy();
   renderer_.shutdown(); sky_.shutdown(); text_.shutdown();
 }
 
@@ -187,6 +199,7 @@ void Game::render(Window& win) {
   renderer_.beginFrame(viewProj_, eye, light_);
   Frustum frustum(viewProj_);
   terrain_.draw(renderer_, &frustum);
+  trees_.draw(renderer_, eye, &frustum);
   rails_.draw(renderer_, &frustum);
   for (const Placed& p : scenery_) if (frustum.contains(p.bounds)) renderer_.draw(*p.model, p.xf, &frustum);
   signals_.draw(renderer_, eye, &frustum);

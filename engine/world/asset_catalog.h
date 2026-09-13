@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace eng {
 
@@ -34,6 +35,7 @@ public:
   const Options& options() const { return opt_; }
 
   const CatalogEntry* find(const std::string& id) const;
+  std::vector<std::string> idsByCategory(const std::string& kategori) const;   // sorted by id
   // Path to a ready `.emod` for the id ("" if unavailable). Downloads/converts as needed.
   std::string emodPath(const std::string& id);
   std::string glbPath(const CatalogEntry& e);   // local or cached GLB ("" if unavailable)

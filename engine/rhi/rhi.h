@@ -24,6 +24,7 @@ void clear(float r, float g, float b, float a, bool depth = true);
 void setDepthWrite(bool on);
 void setBlend(bool on);
 void setCullFace(bool on);
+void setDepthTestEnabled(bool on);
 
 Buffer createBuffer(BufferKind kind, std::span<const std::byte> data);
 void   destroyBuffer(Buffer b);
@@ -32,6 +33,13 @@ Mesh   createMesh(std::span<const std::byte> vertices, std::span<const Attribute
                   std::span<const uint32_t> indices);
 void   destroyMesh(Mesh& m);
 void   drawMesh(const Mesh& m);
+
+// Instancing: a dynamic vertex buffer of per-instance mat4 (column-major, 64 B) attached to a mesh's
+// VAO at attribute locations 3..6 with divisor 1; drawMeshInstanced draws `count` copies.
+Buffer createDynamicBuffer(size_t bytes);                      // vertex buffer, contents undefined
+void   updateBuffer(Buffer b, std::span<const std::byte> data); // rewrites from offset 0 (≤ created size)
+void   attachInstances(const Mesh& m, Buffer instances);
+void   drawMeshInstanced(const Mesh& m, uint32_t count);
 
 Program createProgram(std::string_view vs, std::string_view fs);  // GLSL source without #version
 void    destroyProgram(Program p);
@@ -44,6 +52,9 @@ void    setUniform(int loc, float x, float y, float z, float w);
 void    setUniform(int loc, float v);
 void    setUniform(int loc, int v);
 
+// Anisotropic filtering level applied to textures created afterwards (clamped to the hardware maximum;
+// no-op when GL_EXT_texture_filter_anisotropic is missing). Returns the level in effect.
+float   setAnisotropy(float level);
 Texture createTexture(int w, int h, Format f, std::span<const std::byte> pixels, bool mipmap = true, bool srgb = false);
 void    destroyTexture(Texture t);
 void    bindTexture(int slot, Texture t);

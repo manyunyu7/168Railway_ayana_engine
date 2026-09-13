@@ -93,26 +93,67 @@ bool SatLayer::has(int tx, int ty) const {
   int i = tx - tx0, j = ty - ty0;
   return i >= 0 && j >= 0 && i < nx && j < ny && present[(size_t)j * nx + i];
 }
+bool SatLayer::covers(double wx, double wy) const {
+  return has(slippy::worldToTileX(wx, zoom), slippy::worldToTileY(wy, zoom));
+}
 const uint8_t* SatLayer::tile(int tx, int ty) const {
-  return rgb.data() + ((size_t)(ty - ty0) * nx + (tx - tx0)) * px * px * 3;
+  return rgb.data() + (size_t)slot[(size_t)(ty - ty0) * nx + (tx - tx0)] * px * px * 3;
 }
 
 bool SatImage::load(const std::string& path, std::string& error) {
   Reader r(path);
   if (!r.ok) { error = "cannot open " + path; return false; }
-  if (!r.magic("ESAT") || r.i32() != 1) { error = path + ": not an ESAT v1 file"; return false; }
+  if (!r.magic("ESAT")) { error = path + ": not an ESAT file"; return false; }
+  int ver = r.i32();
+  if (ver != 2) { error = path + ": ESAT v" + std::to_string(ver) + " is not supported (v2 expected; re-run fetch_tiles)"; return false; }
   int nl = r.i32();
-  if (!r.ok || nl < 1 || nl > 8) { error = path + ": bad header"; return false; }
+  if (!r.ok || nl < 1 || nl > 16) { error = path + ": bad header"; return false; }
   layers.resize((size_t)nl);
   for (SatLayer& L : layers) {
     L.zoom = r.i32(); L.tx0 = r.i32(); L.ty0 = r.i32(); L.nx = r.i32(); L.ny = r.i32(); L.px = r.i32();
-    if (!r.ok || L.nx < 1 || L.ny < 1 || L.px < 1 || L.px > 4096 || L.nx * L.ny > 4096) { error = path + ": bad layer"; return false; }
+    if (!r.ok || L.nx < 1 || L.ny < 1 || L.px < 1 || L.px > 4096 || L.nx * L.ny > 65536) { error = path + ": bad layer"; return false; }
+    L.ts = slippy::tileSizeMeter(L.zoom); L.mpp = L.ts / L.px;
     L.present.resize((size_t)L.nx * L.ny);
-    L.rgb.resize((size_t)L.nx * L.ny * L.px * L.px * 3);
-    for (size_t t = 0; t < L.present.size(); ++t) {
-      if (!r.bytes(&L.present[t], 1) || !r.bytes(L.rgb.data() + t * L.px * L.px * 3, (size_t)L.px * L.px * 3)) { error = path + ": truncated"; return false; }
-    }
+    if (!r.bytes(L.present.data(), L.present.size())) { error = path + ": truncated"; return false; }
+    L.slot.assign(L.present.size(), -1);
+    int32_t count = 0;
+    for (size_t t = 0; t < L.present.size(); ++t) if (L.present[t]) L.slot[t] = count++;
+    L.rgb.resize((size_t)count * L.px * L.px * 3);
+    if (!r.bytes(L.rgb.data(), L.rgb.size())) { error = path + ": truncated"; return false; }
   }
+  detail.clear();
+  for (int i = 0; i < nl; ++i) if (layers[(size_t)i].zoom > TILE_Z) detail.push_back(i);
+  std::sort(detail.begin(), detail.end(), [&](int a, int b) { return layers[(size_t)a].mpp < layers[(size_t)b].mpp; });
+  // mean brightness of the near layer (vegetation mask reference, vegetasi.ts terRata), subsampled
+  double sum = 0; size_t n = 0;
+  for (const SatLayer& L : layers) {
+    if (L.zoom != TILE_Z) continue;
+    for (size_t i = 0; i + 2 < L.rgb.size(); i += 3 * 16) { sum += std::max({L.rgb[i], L.rgb[i + 1], L.rgb[i + 2]}); ++n; }
+  }
+  meanBrightness = n ? (float)(sum / n / 255.0) : 0.4f;
+  return true;
+}
+
+int Terrain::finestLayerAt(double wx, double wy) const {
+  for (int i : sat_.detail) if (sat_.layers[(size_t)i].covers(wx, wy)) return i;
+  if (!sat_.layers.empty() && sat_.layers[0].covers(wx, wy)) return 0;
+  return -1;
+}
+
+bool Terrain::satColor(double wx, double wy, float radius, float rgb[3]) const {
+  int li = finestLayerAt(wx, wy);
+  if (li < 0) return false;
+  const SatLayer* L = &sat_.layers[(size_t)li];
+  int tx = slippy::worldToTileX(wx, L->zoom), ty = slippy::worldToTileY(wy, L->zoom);
+  const uint8_t* t = L->tile(tx, ty);
+  double fx = (wx - slippy::tileOriginX(tx, L->zoom)) / L->ts * L->px, fy = (wy - slippy::tileOriginY(ty, L->zoom)) / L->ts * L->px;
+  int r = std::max(0, (int)(radius / L->mpp));
+  int x0 = std::clamp((int)fx - r, 0, L->px - 1), x1 = std::clamp((int)fx + r, 0, L->px - 1);
+  int y0 = std::clamp((int)fy - r, 0, L->px - 1), y1 = std::clamp((int)fy + r, 0, L->px - 1);
+  double acc[3] = {0, 0, 0}; int n = 0;
+  for (int y = y0; y <= y1; ++y)
+    for (int x = x0; x <= x1; ++x) { const uint8_t* p = t + ((size_t)y * L->px + x) * 3; acc[0] += p[0]; acc[1] += p[1]; acc[2] += p[2]; ++n; }
+  for (int c = 0; c < 3; ++c) rgb[c] = (float)(acc[c] / n / 255.0);
   return true;
 }
 
@@ -175,6 +216,11 @@ float Terrain::carveBase(const Nearest& n) const {
   return n.y - std::min(diff, LOW_MAX_DROP) * smoothstep01(t);
 }
 
+float Terrain::railDistance(float x, float z) const {
+  Nearest n;
+  return nearestRail(x, z, n) ? n.d : 1e30f;
+}
+
 float Terrain::groundHeight(double wx, double wy) const {
   float h = dem_.heightScene(wx, wy);
   if (railGrid_.empty()) return h;
@@ -207,7 +253,6 @@ bool Terrain::railInBox(double cx, double cy, double side, double margin) const 
 
 // ------------------------------------------------------------------ meshes
 void Terrain::upload(Tile& t, MeshBuilder& mb, const SatLayer* layer, int tx, int ty, vec3 pos) {
-  mb.computeSmoothNormals();
   t.mesh = mb.upload();
   t.xf = mat4::translation(pos);
   t.bounds = mb.bounds.transformed(t.xf);
@@ -222,12 +267,14 @@ void Terrain::upload(Tile& t, MeshBuilder& mb, const SatLayer* layer, int tx, in
 }
 
 // Ground mesh of one z14 tile (dunia3d.ts geoTanah): K×K blocks, cell size by tier (near rails / near
-// a near block / far), UVs from position over the tile's satellite texture, skirts at density seams
-// and tile edges.
-Terrain::Tile Terrain::buildNearTile(int tx, int ty) {
+// a near block / far). Each block is textured by the finest present satellite layer whose tile contains
+// it (z17 > z16 > z14) and appended to the patch mesh of that texture tile, so one draw per texture.
+// UVs from position over the texture tile; normals from central differences of the carved height field
+// (consistent across patch seams); skirts at density seams and z14 tile edges.
+void Terrain::buildNearTile(int tx, int ty) {
   const double ts = slippy::tileSizeMeter(TILE_Z);
   const double cx = slippy::tileOriginX(tx, TILE_Z) + ts / 2, cy = slippy::tileOriginY(ty, TILE_Z) + ts / 2;
-  const int K = std::max(1, (int)std::lround(ts / BLOCK));
+  const int K = BLOCKS_PER_TILE;
   const double bs = ts / K;
   const float cellOf[3] = {CELL_NEAR, CELL_MID, CELL_FAR};
   const int R = (int)std::ceil(MID_MARGIN / bs), W = K + 2 * R;
@@ -250,22 +297,46 @@ Terrain::Tile Terrain::buildNearTile(int tx, int ty) {
     }
   auto cellsOf = [&](int b) { return std::max(1, (int)std::lround(bs / cellOf[tier[(size_t)b]])); };
 
-  const int texPx = sat_.layers.empty() ? 0 : sat_.layers[0].px;
-  MeshBuilder mb;
-  auto node = [&](double lx, double lz, float y, float drop) {
-    float u = (float)((lx + ts / 2) / ts), v = (float)((lz + ts / 2) / ts);   // row 0 of the image = north = small lz
-    if (texPx > 0) { u = (0.5f + u * (texPx - 1)) / texPx; v = (0.5f + v * (texPx - 1)) / texPx; }
-    return mb.vertex({(float)lx, y - drop, (float)lz}, {0, 1, 0}, {u, v});
+  // texture source per block: (layer index, tile) of the finest detail layer containing the block centre
+  struct Key { int layer, tx, ty; bool operator==(const Key& o) const { return layer == o.layer && tx == o.tx && ty == o.ty; } };
+  struct Patch { Key key; MeshBuilder mb; };
+  std::vector<Patch> patches;
+  auto patchFor = [&](double wx, double wy) -> Patch& {
+    Key k{0, tx, ty};
+    for (int li : sat_.detail) {
+      const SatLayer& L = sat_.layers[(size_t)li];
+      int dx = slippy::worldToTileX(wx, L.zoom), dy = slippy::worldToTileY(wy, L.zoom);
+      if (L.has(dx, dy)) { k = {li, dx, dy}; break; }
+    }
+    for (Patch& p : patches) if (p.key == k) return p;
+    patches.push_back({k, {}});
+    return patches.back();
   };
+
   for (int bz = 0; bz < K; ++bz)
     for (int bx = 0; bx < K; ++bx) {
       const int b = bz * K + bx, n = cellsOf(b);
-      const double x0 = -ts / 2 + bx * bs, z0 = -ts / 2 + bz * bs;
+      const double x0 = -ts / 2 + bx * bs, z0 = -ts / 2 + bz * bs, cs = bs / n;
+      Patch& P = patchFor(cx + x0 + bs / 2, cy + z0 + bs / 2);
+      const SatLayer& L = sat_.layers[(size_t)P.key.layer];
+      const double ux0 = slippy::tileOriginX(P.key.tx, L.zoom) - cx, uz0 = slippy::tileOriginY(P.key.ty, L.zoom) - cy;
+      MeshBuilder& mb = P.mb;
+      // heights with a one-cell halo for central-difference normals
+      const int H = n + 3;
+      std::vector<float> hg((size_t)H * H);
+      for (int j = 0; j < H; ++j)
+        for (int i = 0; i < H; ++i) hg[(size_t)j * H + i] = groundHeight(cx + x0 + cs * (i - 1), cy + z0 + cs * (j - 1));
+      auto node = [&](double lx, double lz, float y, vec3 nrm, float drop) {
+        float u = (float)((lx - ux0) / L.ts), v = (float)((lz - uz0) / L.ts);   // row 0 of the image = north = small lz
+        u = (0.5f + u * (L.px - 1)) / L.px; v = (0.5f + v * (L.px - 1)) / L.px;
+        return mb.vertex({(float)lx, y - drop, (float)lz}, nrm, {u, v});
+      };
       const uint32_t base = (uint32_t)mb.vertices.size();
       for (int j = 0; j <= n; ++j)
         for (int i = 0; i <= n; ++i) {
-          double lx = x0 + bs * i / n, lz = z0 + bs * j / n;
-          node(lx, lz, groundHeight(cx + lx, cy + lz), 0);
+          auto h = [&](int a, int c) { return hg[(size_t)(c + 1) * H + (a + 1)]; };
+          vec3 nrm = normalize(vec3{(h(i - 1, j) - h(i + 1, j)) / (float)(2 * cs), 1.f, (h(i, j - 1) - h(i, j + 1)) / (float)(2 * cs)});
+          node(x0 + cs * i, z0 + cs * j, h(i, j), nrm, 0);
         }
       for (int j = 0; j < n; ++j)
         for (int i = 0; i < n; ++i) {
@@ -276,7 +347,8 @@ Terrain::Tile Terrain::buildNearTile(int tx, int ty) {
       auto at = [&](int i, int j) { return mb.vertices[base + (size_t)(j * (n + 1) + i)].pos; };
       auto wall = [&](vec3 a, vec3 c, float ox, float oz, float depth) {
         if (-(c.z - a.z) * ox + (c.x - a.x) * oz < 0) std::swap(a, c);   // front face outward
-        uint32_t t0 = node(a.x, a.z, a.y, 0); node(c.x, c.z, c.y, 0); node(a.x, a.z, a.y, depth); node(c.x, c.z, c.y, depth);
+        vec3 nrm{ox, 0, oz};
+        uint32_t t0 = node(a.x, a.z, a.y, nrm, 0); node(c.x, c.z, c.y, nrm, 0); node(a.x, a.z, a.y, nrm, depth); node(c.x, c.z, c.y, nrm, depth);
         mb.triangle(t0, t0 + 2, t0 + 1); mb.triangle(t0 + 1, t0 + 2, t0 + 3);
       };
       auto skirtDepth = [&](int dx, int dz) -> float {
@@ -294,9 +366,12 @@ Terrain::Tile Terrain::buildNearTile(int tx, int ty) {
         if (sE > 0) wall(at(n, i), at(n, i + 1), 1, 0, sE);
       }
     }
-  Tile t{};
-  upload(t, mb, sat_.layers.empty() ? nullptr : &sat_.layers[0], tx, ty, origin_.toScene(cx, cy, 0));
-  return t;
+  for (Patch& P : patches) {
+    Tile t{};
+    upload(t, P.mb, &sat_.layers[(size_t)P.key.layer], P.key.tx, P.key.ty, origin_.toScene(cx, cy, 0));
+    near_.push_back(t);
+    ++stats.patches; if (P.key.layer != 0) ++stats.detailPatches;
+  }
 }
 
 // Far layer: one coarse tile, uncarved DEM, cells aligned with the z14 grid, holes where near tiles exist.
@@ -307,6 +382,7 @@ Terrain::Tile Terrain::buildFarTile(const SatLayer& far, int tx, int ty) {
   const double bs = ts / N;
   const SatLayer& nearL = sat_.layers[0];
   MeshBuilder mb;
+  Tile t{};
   for (int j = 0; j <= N; ++j)
     for (int i = 0; i <= N; ++i) {
       double lx = -ts / 2 + ts * i / N, lz = -ts / 2 + ts * j / N;
@@ -321,19 +397,18 @@ Terrain::Tile Terrain::buildFarTile(const SatLayer& far, int tx, int ty) {
       uint32_t a = (uint32_t)(j * (N + 1) + i);
       mb.triangle(a, a + N + 1, a + 1); mb.triangle(a + 1, a + N + 1, a + N + 2);
     }
-  Tile t{};
-  if (!mb.empty()) upload(t, mb, &far, tx, ty, origin_.toScene(cx, cy, 0));
+  if (!mb.empty()) { mb.computeSmoothNormals(); upload(t, mb, &far, tx, ty, origin_.toScene(cx, cy, 0)); }
   return t;
 }
 
 void Terrain::build() {
   auto t0 = std::chrono::steady_clock::now();
   destroy();
-  stats.vertices = stats.triangles = 0; stats.nearTiles = stats.farTiles = 0;
+  stats.vertices = stats.triangles = 0; stats.nearTiles = stats.farTiles = stats.patches = stats.detailPatches = 0;
   if (sat_.layers.empty()) return;
   const SatLayer& nearL = sat_.layers[0];
   for (int ty = nearL.ty0; ty < nearL.ty0 + nearL.ny; ++ty)
-    for (int tx = nearL.tx0; tx < nearL.tx0 + nearL.nx; ++tx) { near_.push_back(buildNearTile(tx, ty)); ++stats.nearTiles; }
+    for (int tx = nearL.tx0; tx < nearL.tx0 + nearL.nx; ++tx) { buildNearTile(tx, ty); ++stats.nearTiles; }
   if (sat_.layers.size() > 1) {
     const SatLayer& farL = sat_.layers[1];
     for (int ty = farL.ty0; ty < farL.ty0 + farL.ny; ++ty)
