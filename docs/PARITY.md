@@ -45,7 +45,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
 | Feature | Status | Notes |
 |---|---|---|
 | Bézier track, arc-length LUT, vertical profile, rails/ballast, bridges (deck+piers), tunnels | ✅ | `track_graph`, `rail_profile`, `rail_builder` |
-| Warren truss bridges, viaduct columns | ❌ | `uji3dJembatan.ts` |
+| Warren truss bridges, viaduct columns | ✅ | `rail_builder.cpp`: shape `jenisJembatan ?? bentukJembatan(chain span, deck height)`; truss members (8 m panels, diagonals, verticals, top bracing, portals) in a steel mesh per chunk replacing the parapets; piers every 28 m at the structure centre (84 m under a truss), twin columns 1.3 m in from the edges for a viaduct. `railtest` draws the real terrain when tiles exist (`ENG_TARGET=bridge:n\|tunnel:n`) |
 | Profile step 3 (parallel roadbed pairing) | ❌ | heights of parallel tracks may differ slightly |
 | Colour-light signal geometry (§6.2), coronas, LOD sphere | ✅ | `signal_visual.cpp` |
 | Signal plate textures (bolts, number text, "3" strips), lit "angka" overlay | ❌ | |
@@ -63,13 +63,13 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
 |---|---|---|
 | DEM z13/z10, satellite z14 + detail z16/z17, corridor carving | ✅ | `terrain.cpp`, `tools/fetch_tiles` |
 | Streaming/eviction by distance (`ubinStream.ts`) | ❌ | everything loads at start; `fetch_tiles` already writes per-tile files + `index.json` for a streaming loader |
-| Brush deltas `world.tanah.delta`, bridge trough carving | ❌ | |
+| Brush deltas `world.tanah.delta`, bridge trough carving | ✅ | `terrain.cpp`: `setBrushDeltas(world["tanah"])` (8 m grid, bilinear) added before carving; `RailSample::bridgeBlend` registers deck chords, ground lowered to deck bottom − 1.5 m within 7 m, blending to 26 m, never raised (`tests/test_terrain`) |
 | Trees from green mask (instanced) | ✅ | `vegetation.cpp`; `vegMask` not applied |
 | Station buildings from `hiasan.objek` | ✅ | `game.cpp buildWorld()` |
 | `hiasan.garis` spline objects (fences, LAA poles, platforms) | ❌ | `uji3dSpline.ts` |
 | Baked OSM city `public/kota/<slug>.json` (buildings) | ✅ | `city_visual.cpp`; per 640 m chunk × palette meshes (no vertex colours), frustum-culled; bks uses the `bekasi` bake (alias in `game.cpp`). Roads not drawn (as in TS); `hijau`/`pohon` data unused |
-| Procedural KRL station | ❌ | `uji3dStasiunKRL.ts` |
-| Clouds | ❌ | |
+| Procedural KRL station | 🟡 | `krl_station.cpp` (`KrlStation`, `krlLayout`): hall + sweeping roof, bowstring stair arch, concourse with a stair per island platform, platforms/canopies/portals/furniture, LAA wires + gantries; flat colours instead of the canvas textures (ACP joints, letters, boards). No save references `stasiun-krl-*` yet, so it is not wired into `game.cpp`; `railtest ENG_TEST_KRL=<tracks> ENG_TARGET=krl` |
+| Clouds | ✅ | `cloud_visual.cpp`: world-pinned billboard sprites over the corridor bbox + 6 km, 0.35/km² (40..220), layers 760–1100 m (¾, 420–1250 m wide) and 1250–1750 m, 8 procedural blob textures × 3 opacities, tinted by the ladder's `awan` column (`Sky::cloudTint`), fogged, slow wind drift (the reference sprites are static). `terraintest` draws them (`ENG_CLOCK`, `ENG_NO_CLOUDS`) |
 
 ## Camera, sky, UI
 
