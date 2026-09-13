@@ -61,6 +61,25 @@ bool AssetCatalog::load(const Options& opt) {
     std::string id = j["id"].stringOr("");
     if (!id.empty() && !entries_.count(id)) entries_[id] = entryFrom(id, j);
   }
+  garis_.clear();
+  for (const Json& j : doc["garis"].arr) {
+    GarisEntry g;
+    g.id = j["id"].stringOr(""); if (g.id.empty()) continue;
+    g.nama = j["nama"].stringOr(""); g.kategori = j["kategori"].stringOr("");
+    g.berkas = j["berkas"].stringOr(""); g.prosedural = j["prosedural"].stringOr("");
+    g.tiang = j["tiang"].stringOr(""); g.tiangProsedural = j["tiangProsedural"].stringOr("");
+    g.langkah = (float)j["langkah"].numberOr(1); g.jarakTiang = (float)j["jarakTiang"].numberOr(0); g.naik = (float)j["naik"].numberOr(0);
+    g.datar = j["datar"].boolOr(false);
+    for (const Json& sl : j["slot"].arr) g.slot.push_back({sl["berkas"].stringOr(""), sl["prosedural"].stringOr(""), (float)sl["jarak"].numberOr(0)});
+    auto reg = [&](const std::string& key, const std::string& berkas) {
+      if (berkas.empty()) return;
+      CatalogEntry e; e.id = key; e.berkas = berkas; e.nama = g.nama; e.kategori = g.kategori; e.pilot = j["pilot"].boolOr(false) || berkas.rfind("pilot-", 0) == 0;
+      entries_[key] = e;
+    };
+    reg("garis:" + g.id, g.berkas); reg("garis:" + g.id + ":tiang", g.tiang);
+    for (size_t i = 0; i < g.slot.size(); ++i) reg("garis:" + g.id + ":slot" + std::to_string(i), g.slot[i].berkas);
+    garis_.push_back(g);
+  }
   std::error_code ec; fs::create_directories(opt_.cacheDir, ec);
   return true;
 }
@@ -79,6 +98,11 @@ const CatalogEntry* AssetCatalog::find(const std::string& id) const {
   auto it = entries_.find(id);
   if (it == entries_.end()) if (const char* alias = saranaSlot(id)) it = entries_.find(alias);
   return it == entries_.end() ? nullptr : &it->second;
+}
+
+const GarisEntry* AssetCatalog::findGaris(const std::string& id) const {
+  for (const GarisEntry& g : garis_) if (g.id == id) return &g;
+  return nullptr;
 }
 
 std::vector<std::string> AssetCatalog::idsByCategory(const std::string& kategori) const {

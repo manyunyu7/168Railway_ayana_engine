@@ -91,6 +91,13 @@ bool Game::buildWorld() {
     mat4 xf = mat4::translation(p) * mat4::rotationY(yaw) * mat4::scale({sc, sc, sc}) * norm;
     scenery_.push_back({m, xf, m->bounds.transformed(xf)});
   }
+  // hiasan.garis (spec §3.5): spline objects. ENG_TEST_GARIS=1 injects a synthetic platform + fence + wall
+  // along the station track (no save carries any `garis` yet).
+  {
+    Json hiasan = world["hiasan"];
+    if (std::getenv("ENG_TEST_GARIS")) injectTestGaris(hiasan);
+    garis_.build(hiasan, catalog_, origin_, ground);
+  }
   // trees from the satellite green mask, kept out of the hiasan footprints (§4.4)
   std::vector<AABB> footprints;
   for (const Placed& p : scenery_) footprints.push_back(p.bounds);
@@ -101,8 +108,8 @@ bool Game::buildWorld() {
   stationScene_.y = gy; orbit_.target = stationScene_; fly_.position.y = gy + 30;
   double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   char m[400];
-  std::snprintf(m, sizeof m, "world built in %.0f ms: %.1f km track, %d points, %zu signals, rails %u tris, terrain %zu tris, %zu hiasan, %zu trees, %zu boards, %zu jpl, city %zu bldg/%u tris/%d meshes (%.0f ms)",
-                ms, graph_.totalLength() / 1000, graph_.pointCount(), signals_.signals().size(), rails_.stats().tris, terrain_.stats.triangles, scenery_.size(), trees_.stats.trees, boards_.stats.boards, jpl_.crossings().size(), city_.stats.buildings, city_.stats.tris, city_.stats.meshes, city_.stats.buildMs);
+  std::snprintf(m, sizeof m, "world built in %.0f ms: %.1f km track, %d points, %zu signals, rails %u tris, terrain %zu tris, %zu hiasan, %zu garis/%zu tiles, %zu trees, %zu boards, %zu jpl, city %zu bldg/%u tris/%d meshes (%.0f ms)",
+                ms, graph_.totalLength() / 1000, graph_.pointCount(), signals_.signals().size(), rails_.stats().tris, terrain_.stats.triangles, scenery_.size(), garis_.stats.lines, garis_.stats.tiles, trees_.stats.trees, boards_.stats.boards, jpl_.crossings().size(), city_.stats.buildings, city_.stats.tris, city_.stats.meshes, city_.stats.buildMs);
   pushMessage(m); std::printf("%s\n", m);
   if (std::getenv("ENG_TERRAIN_DEBUG")) {
     double wx, wy; origin_.toWorld(stationScene_, wx, wy);
@@ -112,6 +119,51 @@ bool Game::buildWorld() {
                 wx, wy, li, li >= 0 ? terrain_.sat().layers[(size_t)li].zoom : 0, li >= 0 ? terrain_.sat().layers[(size_t)li].mpp : 0.0);
   }
   return true;
+}
+
+// Debug: a 220 m island platform 5 m beside the station track, a blue fence 11 m on the other side and a
+// concrete wall 16 m out, as `hiasan.garis` entries (world coordinates), so the spline tiling can be seen.
+void Game::injectTestGaris(Json& hiasan) {
+  const Json& segs = sim_.summary()["segments"];
+  const Json* best = nullptr; double bd = 1e30; double sx = stationScene_.x + origin_.ox, sy = stationScene_.z + origin_.oz;
+  for (const Json& sg : segs.arr) {
+    const Json& poly = sg["poly"];
+    for (size_t i = 0; i + 1 < poly.size(); i += 2) { double d = std::hypot(poly[i].num - sx, poly[i + 1].num - sy); if (d < bd) { bd = d; best = &sg; } }
+  }
+  if (!best) return;
+  const Json& poly = (*best)["poly"];
+  size_t n = poly.size() / 2, ic = 0; bd = 1e30;
+  for (size_t i = 0; i < n; ++i) { double d = std::hypot(poly[2 * i].num - sx, poly[2 * i + 1].num - sy); if (d < bd) { bd = d; ic = i; } }
+  ic = std::min(n - 1, ic + 40);   // 160 m past the building so the tiles are not hidden by the station GLB
+  { size_t a = ic > 0 ? ic - 1 : ic, b = ic + 1 < n ? ic + 1 : ic; double tx = poly[2 * b].num - poly[2 * a].num, ty = poly[2 * b + 1].num - poly[2 * a + 1].num, l = std::hypot(tx, ty);
+    if (l > 0 && !std::getenv("ENG_TARGET")) stationScene_ = origin_.toScene(poly[2 * ic].num - ty / l * 3, poly[2 * ic + 1].num + tx / l * 3, 0); }   // aim the default camera at the platform
+  auto line = [&](const char* kelas, double offset, double halfLen, double naik) {
+    Json g; g.type = Json::Type::Object;
+    Json k; k.type = Json::Type::String; k.str = kelas; g.obj["kelas"] = k;
+    Json nk; nk.type = Json::Type::Number; nk.num = naik; g.obj["naik"] = nk;
+    Json pts; pts.type = Json::Type::Array;
+    double acc = 0;
+    for (size_t i = ic; i + 1 < n && acc < halfLen; ++i) acc += std::hypot(poly[2 * i + 2].num - poly[2 * i].num, poly[2 * i + 3].num - poly[2 * i + 1].num);
+    size_t i0 = ic, i1 = ic; acc = 0;
+    while (i0 > 0 && acc < halfLen) { acc += std::hypot(poly[2 * i0].num - poly[2 * i0 - 2].num, poly[2 * i0 + 1].num - poly[2 * i0 - 1].num); --i0; }
+    acc = 0; while (i1 + 1 < n && acc < halfLen) { acc += std::hypot(poly[2 * i1 + 2].num - poly[2 * i1].num, poly[2 * i1 + 3].num - poly[2 * i1 + 1].num); ++i1; }
+    for (size_t i = i0; i <= i1; i += 4) {
+      size_t a = i > 0 ? i - 1 : i, b = i + 1 < n ? i + 1 : i;
+      double tx = poly[2 * b].num - poly[2 * a].num, ty = poly[2 * b + 1].num - poly[2 * a + 1].num, l = std::hypot(tx, ty); if (l <= 0) continue;
+      Json pt; pt.type = Json::Type::Object;
+      Json px; px.type = Json::Type::Number; px.num = poly[2 * i].num - ty / l * offset; pt.obj["x"] = px;
+      Json py; py.type = Json::Type::Number; py.num = poly[2 * i + 1].num + tx / l * offset; pt.obj["y"] = py;
+      pts.arr.push_back(pt);
+    }
+    g.obj["titik"] = pts;
+    if (hiasan.type != Json::Type::Object) hiasan.type = Json::Type::Object;
+    Json& arr = hiasan.obj["garis"]; if (arr.type != Json::Type::Array) arr.type = Json::Type::Array;
+    arr.arr.push_back(g);
+  };
+  line("peron-kanopi", 5, 110, 0);
+  line("bn-pager-rel-biru", -11, 150, 0);
+  line("tembok-beton-cc0", -16, 150, 0);
+  pushMessage("ENG_TEST_GARIS: platform + fence + wall injected along " + (*best)["id"].stringOr(""));
 }
 
 void Game::applySimState() {
@@ -132,7 +184,7 @@ void Game::applySimState() {
 }
 
 void Game::shutdown() {
-  sim_.stop(); compass_.shutdown(); trains_.shutdown(); trees_.destroy(); boards_.destroy(); jpl_.destroy(); city_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy(); routes_.destroy();
+  sim_.stop(); compass_.shutdown(); trains_.shutdown(); trees_.destroy(); garis_.destroy(); boards_.destroy(); jpl_.destroy(); city_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy(); routes_.destroy();
   renderer_.shutdown(); sky_.shutdown(); text_.shutdown();
 }
 
@@ -417,6 +469,7 @@ void Game::render(Window& win) {
   jpl_.animate(paused_ ? 0.f : (float)std::fmin(realDt_, 0.1) * (float)std::fmax(1.0, timeScale_));
   jpl_.draw(renderer_, &frustum);
   city_.draw(renderer_, &frustum);
+  garis_.draw(renderer_, &frustum);
   updateHover();
   routes_.draw(renderer_);   // blended ribbons before the trains' own transparent parts
   if (!hoverId_.empty() && !hoverOnPanel_) {

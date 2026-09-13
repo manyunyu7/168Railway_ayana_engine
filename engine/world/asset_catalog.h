@@ -18,6 +18,17 @@ struct CatalogEntry {
   bool pilot = false, prosedural = false;
 };
 
+// `garis[]` class (spec §3.5): a body tile repeated every `langkah` metres along a spline, optional posts
+// every `jarakTiang`, extra periodic slots. GLB bodies/posts are reachable through model() under the
+// synthetic ids `garis:<id>` and `garis:<id>:tiang`; procedural ones name the code-built prototype.
+struct GarisEntry {
+  struct Slot { std::string berkas, prosedural; float jarak = 0; };
+  std::string id, nama, kategori, berkas, prosedural, tiang, tiangProsedural;
+  float langkah = 1, jarakTiang = 0, naik = 0;
+  bool datar = false;
+  std::vector<Slot> slot;
+};
+
 class AssetCatalog {
 public:
   struct Options {
@@ -35,6 +46,8 @@ public:
   const Options& options() const { return opt_; }
 
   const CatalogEntry* find(const std::string& id) const;
+  const GarisEntry* findGaris(const std::string& id) const;
+  const std::vector<GarisEntry>& garis() const { return garis_; }
   std::vector<std::string> idsByCategory(const std::string& kategori) const;   // sorted by id
   // Path to a ready `.emod` for the id ("" if unavailable). Downloads/converts as needed.
   std::string emodPath(const std::string& id);
@@ -47,6 +60,7 @@ private:
   Options opt_;
   std::string err_;
   std::map<std::string, CatalogEntry> entries_;
+  std::vector<GarisEntry> garis_;
   std::map<std::string, std::unique_ptr<GpuModel>> models_;   // nullptr = known missing
 };
 

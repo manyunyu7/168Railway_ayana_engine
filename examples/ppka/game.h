@@ -12,6 +12,7 @@
 #include "engine/world/city_visual.h"
 #include "engine/world/jpl_visual.h"
 #include "engine/world/coords.h"
+#include "engine/world/garis_visual.h"
 #include "engine/world/point_visual.h"
 #include "engine/world/rail_builder.h"
 #include "engine/world/rail_profile.h"
@@ -81,11 +82,12 @@ private:
   mat4 viewProj_; int screenW_ = 1, screenH_ = 1;
   bool ready_ = false;
   bool buildWorld();
+  void injectTestGaris(Json& hiasan);   // debug: ENG_TEST_GARIS
   void applySimState();
   // world
   TrackGraph graph_; Terrain terrain_; VerticalProfile profile_; RailBuilder rails_;
   SignalVisuals signals_; PointVisuals points_; RouteVisuals routes_;
-  TracksideBoards boards_; JplVisuals jpl_; CityVisuals city_;
+  TracksideBoards boards_; JplVisuals jpl_; CityVisuals city_; GarisVisuals garis_;
   AssetCatalog catalog_; RollingStock stock_; TrainVisuals trains_;
   struct Placed { GpuModel* model; mat4 xf; AABB bounds; };
   std::vector<Placed> scenery_;      // hiasan objects (station building etc.)
