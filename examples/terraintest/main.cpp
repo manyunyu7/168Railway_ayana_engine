@@ -93,7 +93,11 @@ int main(int argc, char** argv) {
     }
     std::printf("carve check over %zu at-grade samples: max |carved - raw| %.2f m at (%.0f, %.0f), worst plateau error %.3f m\n",
                 k, maxDelta, wxBest, wyBest, worst);
+    float dMax = 0; double dx = 0, dy = 0;
+    for (const RailSample& r : rails) { float d = std::fabs(terrain.brushDelta(r.wx, r.wy)); if (d > dMax) { dMax = d; dx = r.wx; dy = r.wy; } }
+    if (dMax > 0) std::printf("brush deltas: max |delta| %.2f m along the rails at (%.0f, %.0f)\n", dMax, dx, dy);
     if (std::getenv("ENG_AT_CARVE")) { stationX = wxBest; stationY = wyBest; }
+    if (std::getenv("ENG_AT_DELTA") && dMax > 0) { stationX = dx; stationY = dy; }
   }
 
   ModelRenderer renderer; renderer.init();
