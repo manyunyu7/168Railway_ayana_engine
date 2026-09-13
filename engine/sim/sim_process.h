@@ -26,12 +26,16 @@ struct SimTrain {
 struct SimPoint { std::string id, lockedBy; int setting = 0; };
 struct SimSignal { std::string id, aspect; };
 struct SimLogLine { double time = 0; std::string kind, text; };
+struct SimRoute { std::string id, entry, exit, exitLabel; std::vector<std::string> segs, released; };
+struct SimOccupancy { struct Interval { std::string train; float a = 0, b = 0; }; std::string seg; std::vector<Interval> intervals; };
 
 struct SimState {
   double clock = 0; int score = 0, violations = 0, pending = 0;
   std::vector<SimTrain> trains;
   std::vector<SimPoint> points;
   std::vector<SimSignal> signals;
+  std::vector<SimRoute> routes;          // active routes (segs minus released = still locked)
+  std::vector<SimOccupancy> occupancy;   // only segments with an interval
   std::vector<SimLogLine> log;       // only lines new since the previous step
 };
 
@@ -65,6 +69,7 @@ public:
   const Json& setRoute(const std::string& from, const std::string& to);
   const Json& cancelRoute(const std::string& signalId);
   const Json& routes(const std::string& signalId);
+  const Json& preview(const std::string& signalId);                  // hover preview: path along current points
   const Json& command(const std::string& jsonLine);                  // raw: any command object
 
   const Json& lastResponse() const { return last_; }

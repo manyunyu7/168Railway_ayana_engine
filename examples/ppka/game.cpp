@@ -33,6 +33,7 @@ bool Game::init(Window& win, const GameOptions& opt) {
 
   orbit_.target = stationScene_; orbit_.distance = 160; orbit_.pitch = radians(18); orbit_.yaw = radians(35);
   orbit_.near = 1; orbit_.far = 40000; orbit_.fovY = radians(52);
+  if (const char* v = std::getenv("ENG_VIEW")) std::sscanf(v, "%f,%f,%f", &orbit_.distance, &orbit_.yaw, &orbit_.pitch);   // debug: dist,yaw,pitch
   fly_.position = stationScene_ + vec3{0, 30, 120}; fly_.far = 40000;
 
   if (!buildWorld()) return false;
@@ -65,6 +66,7 @@ bool Game::buildWorld() {
   terrain_.build();
   signals_.build(graph_, profile_, world["trackside"]);
   points_.build(graph_, profile_);
+  routes_.init(&graph_, &profile_);
   if (!catalog_.load()) std::fprintf(stderr, "catalog: %s\n", catalog_.error().c_str());
   stock_.init(catalog_); trains_.init(stock_);
   // hiasan objects (spec §5.4): position on carved ground, yaw = rot degrees
@@ -104,11 +106,13 @@ void Game::applySimState() {
   const SimState& st = sim_.state();
   for (const SimSignal& s : st.signals) signals_.setAspect(s.id, s.aspect);
   for (const SimPoint& p : st.points) points_.setState(p.id, p.setting, !p.lockedBy.empty());
+  signals_.animate();
+  routes_.update(st);
   trains_.update(st, origin_, &profile_);
 }
 
 void Game::shutdown() {
-  sim_.stop(); trains_.shutdown(); trees_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy();
+  sim_.stop(); trains_.shutdown(); trees_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy(); routes_.destroy();
   renderer_.shutdown(); sky_.shutdown(); text_.shutdown();
 }
 
@@ -146,31 +150,83 @@ void Game::handleInput(Window& win, double dt) {
 
 // Screen-space picking (spec §6.5): nearest signal within 26 px wins over a point within 40 px
 // unless the point is closer and the signal is farther than 18 px.
-void Game::onClick(double mx, double my, int w, int h) {
+void Game::pickAt(double mx, double my, int w, int h, std::string& sigId, std::string& ptId) const {
   int ww, wh; glfwGetWindowSize((GLFWwindow*)win_->handle, &ww, &wh);
   float px = (float)(mx * w / ww), py = (float)(my * h / wh);
   vec3 eye = useFly_ ? fly_.position : orbit_.position();
-  std::string sigId, ptId; float ds = 1e9f, dw = 1e9f;
+  std::string bs, bp; float ds = 1e9f, dw = 1e9f;
   for (const ScreenPoint& sp : signals_.screenPositions(viewProj_, w, h, eye)) {
-    if (!sp.visible) continue; float d = std::hypot(sp.x - px, sp.y - py); if (d < ds) { ds = d; sigId = sp.id; }
+    if (!sp.visible) continue; float d = std::hypot(sp.x - px, sp.y - py); if (d < ds) { ds = d; bs = sp.id; }
   }
   for (const ScreenPoint& sp : points_.screenPositions(viewProj_, w, h)) {
-    if (!sp.visible) continue; float d = std::hypot(sp.x - px, sp.y - py); if (d < dw) { dw = d; ptId = sp.id; }
+    if (!sp.visible) continue; float d = std::hypot(sp.x - px, sp.y - py); if (d < dw) { dw = d; bp = sp.id; }
   }
   bool hitSig = ds <= 26, hitPt = dw <= 40;
-  if (hitSig && (!hitPt || ds < dw || ds < 18)) {
+  sigId.clear(); ptId.clear();
+  if (hitSig && (!hitPt || ds < dw || ds < 18)) sigId = bs; else if (hitPt) ptId = bp;
+}
+
+// Hover (§6.5): ring + tooltip on the picked object; for an unrouted signal the route preview
+// (the path a click would lock) is fetched from the bridge at most every 250 ms.
+void Game::updateHover() {
+  double mx, my; win_->mousePos(mx, my);
+  if (forceHoverX_ >= 0) { mx = forceHoverX_; my = forceHoverY_; }
+  std::string sigId, ptId;
+  if (!dragging_) pickAt(mx, my, screenW_, screenH_, sigId, ptId);
+  std::string id = sigId.empty() ? ptId : sigId;
+  if (id != hoverId_) { hoverId_ = id; hoverIsSignal_ = !sigId.empty(); previewAt_ = -1; routes_.clearPreview(); hoverTip_.clear(); hoverAction_.clear(); hoverReject_ = false; }
+  if (hoverId_.empty()) return;
+  const SimState& st = sim_.state();
+  if (hoverIsSignal_) {
+    int i = signals_.indexOf(hoverId_); if (i < 0) { hoverId_.clear(); return; }
+    const SignalInstance& si = signals_.signals()[(size_t)i];
+    hoverPos_ = si.pos;
+    const SimRoute* active = nullptr;
+    for (const SimRoute& r : st.routes) if (r.entry == hoverId_) active = &r;
+    static const char* ASP[3] = {"RED", "YELLOW", "GREEN"};
+    std::string head = si.name + "  " + ASP[(int)si.aspect] + " · " + si.signalType;
+    if (active) { hoverTip_ = head + "  |  click = cancel route to " + active->exitLabel; hoverReject_ = false; routes_.clearPreview(); previewAt_ = -1; return; }
+    double now = win_->time();
+    if (previewAt_ < 0 || now - previewAt_ > 0.25) {
+      previewAt_ = now;
+      const Json& r = sim_.preview(hoverId_);
+      std::vector<std::string> path; for (const Json& sg : r["path"].arr) path.push_back(sg.stringOr(""));
+      bool ok = r["cand"].isObject();
+      if (!r["manual"].boolOr(true)) { hoverAction_ = "not operated manually"; hoverReject_ = true; routes_.clearPreview(); }
+      else {
+        hoverAction_ = ok ? "click = set route to " + r["cand"]["exitLabel"].stringOr("?") : r["reason"].stringOr("no path");
+        hoverReject_ = !ok;
+        if (!path.empty()) routes_.setPreview(path, !ok); else routes_.clearPreview();
+      }
+    }
+    hoverTip_ = head + (hoverAction_.empty() ? "" : "  |  " + hoverAction_);
+  } else {
+    const PointInstance* pi = nullptr;
+    for (const PointInstance& p : points_.points()) if (p.nodeId == hoverId_) pi = &p;
+    if (!pi) { hoverId_.clear(); return; }
+    hoverPos_ = pi->pos;
+    hoverTip_ = "point " + hoverId_ + "  " + (pi->setting ? "reverse" : "normal") + (pi->locked ? " · locked" : "") + "  |  click = flip";
+    hoverReject_ = pi->locked;
+  }
+}
+
+void Game::onClick(double mx, double my, int w, int h) {
+  std::string sigId, ptId;
+  pickAt(mx, my, w, h, sigId, ptId);
+  if (!sigId.empty()) {
     const Json& r = sim_.clickSignal(sigId);
     std::string msg = "signal " + sigId + ": " + (r["ok"].boolOr(false) ? "ok" : "rejected");
     if (r.has("reason")) msg += " (" + r["reason"].stringOr("") + ")";
     if (r.has("action")) msg += " " + r["action"].stringOr("");
     pushMessage(msg);
-  } else if (hitPt) {
+  } else if (!ptId.empty()) {
     const Json& r = sim_.flipPoint(ptId);
     std::string msg = "point " + ptId + ": " + (r["ok"].boolOr(false) ? "flipped" : "rejected");
     if (r.has("reason")) msg += " (" + r["reason"].stringOr("") + ")";
     pushMessage(msg);
   } else return;
   sim_.step(0); applySimState();
+  previewAt_ = -1;   // the route/point state changed: refresh the hover preview at once
 }
 
 void Game::stepSim(double realDt) {
@@ -204,6 +260,13 @@ void Game::render(Window& win) {
   for (const Placed& p : scenery_) if (frustum.contains(p.bounds)) renderer_.draw(*p.model, p.xf, &frustum);
   signals_.draw(renderer_, eye, &frustum);
   points_.draw(renderer_, &frustum);
+  updateHover();
+  routes_.draw(renderer_);   // blended ribbons before the trains' own transparent parts
+  if (!hoverId_.empty()) {
+    routes_.drawHoverRing(renderer_, hoverPos_, std::max(1.f, length(hoverPos_ - eye) / 46));
+    vec4 c = viewProj_ * vec4(hoverPos_ + vec3{0, hoverIsSignal_ ? 4.5f : 3.f, 0}, 1);
+    hoverX_ = c.w > 0 ? (c.x / c.w * 0.5f + 0.5f) * (float)w : -1; hoverY_ = c.w > 0 ? (1 - (c.y / c.w * 0.5f + 0.5f)) * (float)h : -1;
+  }
   trains_.draw(renderer_, &frustum);
   renderer_.flushTransparent();
   drawHud(w, h);
@@ -212,14 +275,35 @@ void Game::render(Window& win) {
 void Game::frame(Window& win, double realDt) {
   fps_ = fps_ * 0.95 + (realDt > 0 ? 1.0 / realDt : 0) * 0.05;
   handleInput(win, realDt);
-  // debug: ENG_AUTOCLICK=signal|point clicks the nearest-to-centre visible object at frame 40
-  if (const char* ac = std::getenv("ENG_AUTOCLICK"); ac && frame_ == 40) {
-    int w = screenW_, h = screenH_; int ww, wh; glfwGetWindowSize((GLFWwindow*)win.handle, &ww, &wh);
+  // debug: ENG_AUTOCLICK=signal|point clicks the nearest-to-centre visible object at frame 40;
+  // ENG_AUTOHOVER=signal|point pins the hover cursor on it from frame 40 on.
+  auto nearestToCentre = [&](const char* kind, int& ww, int& wh) {
+    int w = screenW_, h = screenH_; glfwGetWindowSize((GLFWwindow*)win.handle, &ww, &wh);
     vec3 eye = useFly_ ? fly_.position : orbit_.position();
-    auto pts = std::string(ac) == "point" ? points_.screenPositions(viewProj_, w, h) : signals_.screenPositions(viewProj_, w, h, eye);
+    std::string k = kind, want;   // "signal" | "point" | "signal:<name>" | "point:<nodeId>"
+    if (size_t c = k.find(':'); c != std::string::npos) { want = k.substr(c + 1); k = k.substr(0, c); }
+    auto pts = k == "point" ? points_.screenPositions(viewProj_, w, h) : signals_.screenPositions(viewProj_, w, h, eye);
     float best = 1e9f; ScreenPoint hit;
-    for (const ScreenPoint& sp : pts) { if (!sp.visible) continue; float d = std::hypot(sp.x - w / 2.f, sp.y - h / 2.f); if (d < best) { best = d; hit = sp; } }
-    if (best < 1e9f) { pushMessage("autoclick " + hit.id); onClick(hit.x * ww / w, hit.y * wh / h, w, h); }
+    for (const ScreenPoint& sp : pts) {
+      if (!sp.visible) continue;
+      if (!want.empty()) { int i = k == "point" ? -1 : signals_.indexOf(sp.id); std::string nm = i >= 0 ? signals_.signals()[(size_t)i].name : sp.id; if (nm != want) continue; }
+      float d = std::hypot(sp.x - w / 2.f, sp.y - h / 2.f); if (d < best) { best = d; hit = sp; }
+    }
+    hit.x = hit.x * (float)ww / (float)w; hit.y = hit.y * (float)wh / (float)h;
+    return hit;
+  };
+  if (const char* ac = std::getenv("ENG_AUTOCLICK"); ac && frame_ == 40) {
+    int ww, wh; ScreenPoint hit = nearestToCentre(ac, ww, wh);
+    if (!hit.id.empty()) { pushMessage("autoclick " + hit.id); onClick(hit.x, hit.y, screenW_, screenH_); }
+  }
+  if (const char* ar = std::getenv("ENG_AUTOROUTE"); ar && frame_ == 40) {   // debug: click a signal by name, on/off screen
+    const Json& r = sim_.clickSignal(ar);
+    pushMessage(std::string("autoroute ") + ar + ": " + (r["ok"].boolOr(false) ? "ok" : "rejected") + " " + r["reason"].stringOr(""));
+    sim_.step(0); applySimState();
+  }
+  if (const char* ah = std::getenv("ENG_AUTOHOVER"); ah && frame_ == 40) {
+    int ww, wh; ScreenPoint hit = nearestToCentre(ah, ww, wh);
+    if (!hit.id.empty()) { forceHoverX_ = hit.x; forceHoverY_ = hit.y; }
   }
   stepSim(realDt);
   render(win);

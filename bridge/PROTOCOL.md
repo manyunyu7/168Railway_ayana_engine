@@ -107,6 +107,14 @@ Success/rejection shapes are the same as `click_signal`.
 ### `{"cmd":"routes","id":"SKP MT"}`
 Lists candidates with `blocked` = `whyBlocked` result or null.
 
+### `{"cmd":"preview","signal":"SKP MT"}`
+Hover preview: the path `click_signal` would lock along the *current* point settings
+(`Interlocking.traceByPoints`), without changing anything. `{ok, signal, name, manual, active,
+path:[segId...], cand:{exitLabel, exitSignal, segs}|null, reason, wesel, dm}`. `cand` null = the
+trace dead-ends (`path` stops at the offending point `wesel`, `reason` in the engine's wording);
+`active` = id of the route already set from this signal (or null); `manual` false = not an
+interlocking/bersama signal (cannot be operated by hand).
+
 ### `{"cmd":"cancel_route","signal":"SKP MT"}` (or `"route":"r123"`)
 `{ok:false, reason:"sedang dilalui", ka}` when a train is already inside.
 
@@ -119,6 +127,6 @@ Lists candidates with `blocked` = `whyBlocked` result or null.
 ## C++ side
 `eng::SimProcess` (`engine/sim/sim_process.h`) spawns the bridge with fork/exec (cwd = PPKA root,
 `npx tsx`), blocks on one line per command, parses with `eng::Json` and fills `SimState`
-(`SimTrain{... vehicles[{model,sarana,kind,length,x,y,heading,seg,s,x1,y1,x2,y2,seg2,s2}]}`, `SimPoint{id,setting,lockedBy}`, `SimSignal{id,aspect}`,
-new log lines). Raw responses stay available in `lastResponse()`; `world()`/`summary()` keep the load
+(`SimTrain{... vehicles[{model,sarana,kind,length,x,y,heading,seg,s,x1,y1,x2,y2,seg2,s2}]}`, `SimPoint{id,setting,lockedBy}`, `SimSignal{id,aspect}`, `SimRoute{id,entry,exit,exitLabel,segs,released}`,
+`SimOccupancy{seg, intervals[{train,a,b}]}`, new log lines); `preview(signal)` wraps the `preview` command. Raw responses stay available in `lastResponse()`; `world()`/`summary()` keep the load
 result. `examples/simtest` exercises everything and prints latency/size statistics.

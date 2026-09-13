@@ -155,6 +155,7 @@ const Json& SimProcess::setRoute(const std::string& from, const std::string& to)
 }
 const Json& SimProcess::cancelRoute(const std::string& signalId) { return command("{\"cmd\":\"cancel_route\",\"signal\":\"" + escape(signalId) + "\"}"); }
 const Json& SimProcess::routes(const std::string& signalId) { return command("{\"cmd\":\"routes\",\"id\":\"" + escape(signalId) + "\"}"); }
+const Json& SimProcess::preview(const std::string& signalId) { return command("{\"cmd\":\"preview\",\"signal\":\"" + escape(signalId) + "\"}"); }
 
 void SimProcess::parseState(const Json& j) {
   SimState st;
@@ -188,6 +189,18 @@ void SimProcess::parseState(const Json& j) {
     st.points.push_back({p["id"].stringOr(""), p["locked"].stringOr(""), p["setting"].intOr(0)});
   for (const Json& s : j["signals"].arr)
     st.signals.push_back({s["id"].stringOr(""), s["aspect"].stringOr("")});
+  for (const Json& r : j["routes"].arr) {
+    SimRoute rt;
+    rt.id = r["id"].stringOr(""); rt.entry = r["entry"].stringOr(""); rt.exit = r["exit"].stringOr(""); rt.exitLabel = r["exitLabel"].stringOr("");
+    for (const Json& sg : r["segs"].arr) rt.segs.push_back(sg.stringOr(""));
+    for (const Json& sg : r["released"].arr) rt.released.push_back(sg.stringOr(""));
+    st.routes.push_back(std::move(rt));
+  }
+  for (const Json& o : j["occupancy"].arr) {
+    SimOccupancy oc; oc.seg = o["seg"].stringOr("");
+    for (const Json& iv : o["iv"].arr) oc.intervals.push_back({iv[0].stringOr(""), (float)iv[1].numberOr(0), (float)iv[2].numberOr(0)});
+    st.occupancy.push_back(std::move(oc));
+  }
   for (const Json& l : j["log"].arr)
     st.log.push_back({l["t"].numberOr(0), l["kind"].stringOr(""), l["text"].stringOr("")});
   state_ = std::move(st);

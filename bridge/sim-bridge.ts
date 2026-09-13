@@ -313,6 +313,23 @@ function cmdRoutes(c: any) {
   })) };
 }
 
+/** Hover preview (hud3d.ts setHoverSinyal): the path `click_signal` WOULD lock along the
+ *  current point settings, without touching anything. `cand` is null when the trace dead-ends
+ *  (then `path` stops at the offending point and `reason` says why). */
+function cmdPreview(c: any) {
+  requireSession();
+  const sig = resolveSignal(String(c.signal ?? c.id));
+  const active = ixl.routeFromSignal(sig.id);
+  const manual = sig.signalType === 'interlocking' || sig.signalType === 'bersama';
+  const tr = ixl.traceByPoints(sig, !!c.sepurSalah);
+  return {
+    ok: true, signal: sig.id, name: sig.name, manual, active: active?.id ?? null,
+    path: tr.path, cand: tr.cand ? { exitLabel: tr.cand.exitLabel, exitSignal: tr.cand.exitSignal, segs: tr.cand.segs } : null,
+    reason: tr.cand ? null : (tr.dm ? 'melawan penanda arah' : (tr.alasan ?? 'jalur belum menerus')),
+    wesel: tr.wesel ?? null, dm: tr.dm ?? null,
+  };
+}
+
 function cmdCancelRoute(c: any) {
   requireSession();
   let id: string = c.route ?? '';
@@ -347,6 +364,7 @@ function handle(c: any) {
     case 'click_signal': return cmdClickSignal(c);
     case 'set_route': return cmdSetRoute(c);
     case 'routes': return cmdRoutes(c);
+    case 'preview': return cmdPreview(c);
     case 'cancel_route': return cmdCancelRoute(c);
     case 'flip_point': return cmdFlipPoint(c);
     case 'ping': return { ok: true, pong: true, ppka: PPKA };

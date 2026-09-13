@@ -13,6 +13,7 @@
 #include "engine/world/rail_builder.h"
 #include "engine/world/rail_profile.h"
 #include "engine/world/rolling_stock.h"
+#include "engine/world/route_visual.h"
 #include "engine/world/signal_visual.h"
 #include "engine/world/terrain.h"
 #include "engine/world/track_graph.h"
@@ -39,6 +40,9 @@ private:
   void drawHud(int w, int h);
   void pushMessage(const std::string& s);
   void onClick(double mx, double my, int w, int h);
+  // Screen-space pick (§6.5): fills sigId or ptId (one of them) for a window-space cursor position.
+  void pickAt(double mx, double my, int w, int h, std::string& sigId, std::string& ptId) const;
+  void updateHover();
 
   Window* win_ = nullptr;
   SimProcess sim_;
@@ -59,12 +63,16 @@ private:
   void applySimState();
   // world
   TrackGraph graph_; Terrain terrain_; VerticalProfile profile_; RailBuilder rails_;
-  SignalVisuals signals_; PointVisuals points_;
+  SignalVisuals signals_; PointVisuals points_; RouteVisuals routes_;
   AssetCatalog catalog_; RollingStock stock_; TrainVisuals trains_;
   struct Placed { GpuModel* model; mat4 xf; AABB bounds; };
   std::vector<Placed> scenery_;      // hiasan objects (station building etc.)
   Vegetation trees_;
-  std::string hoverId_;
+  std::string hoverId_;             // hovered signal id or point node id ("" = none)
+  bool hoverIsSignal_ = false; vec3 hoverPos_; float hoverX_ = 0, hoverY_ = 0;
+  std::string hoverTip_, hoverAction_; bool hoverReject_ = false;
+  double forceHoverX_ = -1, forceHoverY_ = -1;   // debug: ENG_AUTOHOVER pins the cursor on an object
+  double previewAt_ = -1;           // last preview request time (s), -1 = none pending for this hover
 };
 
 } // namespace eng

@@ -44,6 +44,13 @@ void Game::drawHud(int w, int h) {
     text_.draw(lab, sx - tw / 2, sy - lh + 2, white, 0.7f);
   }
 
+  // hover tooltip above the picked signal/point
+  if (!hoverId_.empty() && !hoverTip_.empty() && hoverX_ >= 0) {
+    float tw = text_.measure(hoverTip_, 0.75f);
+    text_.rect(hoverX_ - tw / 2 - 6, hoverY_ - lh - 4, tw + 12, lh + 6, hoverReject_ ? vec4{0.45f, 0.08f, 0.08f, 0.85f} : vec4{0.05f, 0.25f, 0.45f, 0.85f});
+    text_.draw(hoverTip_, hoverX_ - tw / 2, hoverY_ - lh - 1, white, 0.75f);
+  }
+
   // messages (bottom-left)
   float my = (float)h - pad - lh * (float)messages_.size();
   text_.rect(0, my - pad * 0.5f, 700, (float)h - my + pad, panel);
