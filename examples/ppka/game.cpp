@@ -393,6 +393,7 @@ void Game::render(Window& win) {
   trees_.draw(renderer_, eye, &frustum);
   rails_.draw(renderer_, &frustum);
   for (const Placed& p : scenery_) if (frustum.contains(p.bounds)) renderer_.draw(*p.model, p.xf, &frustum);
+  { double hh = std::fmod(sim_.state().clock / 3600.0, 24.0); signals_.setView(useFly_ ? fly_.fovY : orbit_.fovY, h, hh < 6 || hh >= 18); }
   signals_.draw(renderer_, eye, &frustum);
   points_.draw(renderer_, &frustum);
   updateHover();
