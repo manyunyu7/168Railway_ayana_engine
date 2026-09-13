@@ -12,11 +12,11 @@ void GpuModel::upload(const Model& m) {
   for (const Mesh& me : m.meshes) {
     GpuMesh gm;
     for (const Primitive& p : me.primitives)
-      gm.primitives.push_back({rhi::createMesh(std::as_bytes(std::span(p.vertices)), layout, p.indices), p.material});
+      gm.primitives.push_back({rhi::createMesh(std::as_bytes(std::span(p.vertices)), layout, p.indices), p.material, AABB{p.boundsMin, p.boundsMax}});
     meshes.push_back(std::move(gm));
   }
   materials = m.materials; nodes = m.nodes; roots = m.roots;
-  boundsMin = m.boundsMin; boundsMax = m.boundsMax;
+  bounds = {m.boundsMin, m.boundsMax};
   world.assign(nodes.size(), mat4::identity());
   auto visit = [&](auto&& self, int n, const mat4& parent) -> void {
     world[(size_t)n] = parent * nodes[(size_t)n].local;
@@ -36,7 +36,7 @@ void ModelRenderer::init() {
   auto L = [&](const char* n) { return rhi::uniformLocation(prog_, n); };
   u_ = {L("uViewProj"), L("uModel"), L("uEye"), L("uSunDir"), L("uSunColor"), L("uSkyColor"), L("uGroundColor"),
         L("uBaseColor"), L("uEmissive"), L("uMetallic"), L("uRoughness"), L("uAlphaCutoff"),
-        L("uHasBaseTex"), L("uHasMRTex"), L("uHasEmissiveTex"), L("uAlphaMode")};
+        L("uHasBaseTex"), L("uHasMRTex"), L("uHasEmissiveTex"), L("uAlphaMode"), L("uFogColor"), L("uFogDensity")};
   rhi::useProgram(prog_);
   rhi::setUniform(L("uBaseTex"), 0); rhi::setUniform(L("uMRTex"), 1); rhi::setUniform(L("uEmissiveTex"), 2);
   const uint8_t px[4] = {255, 255, 255, 255};
@@ -44,15 +44,17 @@ void ModelRenderer::init() {
 }
 void ModelRenderer::shutdown() { rhi::destroyProgram(prog_); rhi::destroyTexture(white_); }
 
+void ModelRenderer::flushTransparent() {
+  if (transparent_.empty()) return;
+  std::sort(transparent_.begin(), transparent_.end(), [](const DrawItem& a, const DrawItem& b) { return a.depth > b.depth; });
+  rhi::setBlend(true); rhi::setDepthWrite(false);
+  for (const DrawItem& d : transparent_) drawItem(d);
+  rhi::setBlend(false); rhi::setDepthWrite(true);
+  transparent_.clear();
+}
+
 void ModelRenderer::beginFrame(const mat4& viewProj, vec3 eye, const Lighting& l) {
-  // flush transparent items from the previous frame first (drawn back-to-front)
-  if (!transparent_.empty()) {
-    std::sort(transparent_.begin(), transparent_.end(), [](const DrawItem& a, const DrawItem& b) { return a.depth > b.depth; });
-    rhi::setBlend(true); rhi::setDepthWrite(false);
-    for (const DrawItem& d : transparent_) drawItem(d);
-    rhi::setBlend(false); rhi::setDepthWrite(true);
-    transparent_.clear();
-  }
+  transparent_.clear(); drawCalls = 0; culled = 0;
   eye_ = eye;
   rhi::useProgram(prog_);
   rhi::setUniform(u_.viewProj, viewProj.data());
@@ -61,11 +63,12 @@ void ModelRenderer::beginFrame(const mat4& viewProj, vec3 eye, const Lighting& l
   rhi::setUniform(u_.sunColor, l.sunColor.x, l.sunColor.y, l.sunColor.z);
   rhi::setUniform(u_.skyColor, l.skyColor.x, l.skyColor.y, l.skyColor.z);
   rhi::setUniform(u_.groundColor, l.groundColor.x, l.groundColor.y, l.groundColor.z);
+  rhi::setUniform(u_.fogColor, l.fogColor.x, l.fogColor.y, l.fogColor.z);
+  rhi::setUniform(u_.fogDensity, l.fogDensity);
 }
 
 void ModelRenderer::drawItem(const DrawItem& d) {
-  static const Material DEFAULT;
-  const Material& mt = d.prim->material >= 0 ? d.model->materials[(size_t)d.prim->material] : DEFAULT;
+  const Material& mt = *d.material;
   rhi::setUniform(u_.model, d.world.data());
   rhi::setUniform(u_.baseColor, mt.baseColor.x, mt.baseColor.y, mt.baseColor.z, mt.baseColor.w);
   rhi::setUniform(u_.emissive, mt.emissive.x, mt.emissive.y, mt.emissive.z);
@@ -74,26 +77,45 @@ void ModelRenderer::drawItem(const DrawItem& d) {
   rhi::setUniform(u_.alphaCutoff, mt.alphaCutoff);
   rhi::setUniform(u_.alphaMode, (int)mt.alphaMode);
   auto bind = [&](int slot, int tex, int flagLoc) {
-    bool has = tex >= 0 && tex < (int)d.model->textures.size();
+    bool has = d.textures && tex >= 0 && tex < (int)d.textures->size();
     rhi::setUniform(flagLoc, has ? 1 : 0);
-    rhi::bindTexture(slot, has ? d.model->textures[(size_t)tex] : white_);
+    rhi::bindTexture(slot, has ? (*d.textures)[(size_t)tex] : white_);
   };
-  bind(0, mt.baseColorTex, u_.hasBase); bind(1, mt.metalRoughTex, u_.hasMR); bind(2, mt.emissiveTex, u_.hasEmissive);
+  if (d.textures) {
+    bind(0, mt.baseColorTex, u_.hasBase); bind(1, mt.metalRoughTex, u_.hasMR); bind(2, mt.emissiveTex, u_.hasEmissive);
+  } else {
+    bool has = d.baseTex.id != 0;
+    rhi::setUniform(u_.hasBase, has ? 1 : 0); rhi::bindTexture(0, has ? d.baseTex : white_);
+    rhi::setUniform(u_.hasMR, 0); rhi::bindTexture(1, white_);
+    rhi::setUniform(u_.hasEmissive, 0); rhi::bindTexture(2, white_);
+  }
   rhi::setCullFace(!mt.doubleSided);
-  rhi::drawMesh(d.prim->mesh);
+  rhi::drawMesh(*d.mesh);
+  ++drawCalls;
 }
 
-void ModelRenderer::draw(const GpuModel& model, const mat4& transform) {
+void ModelRenderer::submit(DrawItem d) {
+  if (d.material->alphaMode == AlphaMode::Blend) {
+    d.depth = length(d.world.transformPoint({}) - eye_);
+    transparent_.push_back(d);
+  } else drawItem(d);
+}
+
+void ModelRenderer::draw(const GpuModel& model, const mat4& transform, const Frustum* frustum) {
+  static const Material DEFAULT;
   for (size_t n = 0; n < model.nodes.size(); ++n) {
     int mi = model.nodes[n].mesh; if (mi < 0) continue;
     mat4 w = transform * model.world[n];
     for (const GpuPrimitive& p : model.meshes[(size_t)mi].primitives) {
-      bool blend = p.material >= 0 && model.materials[(size_t)p.material].alphaMode == AlphaMode::Blend;
-      DrawItem d{&model, &p, w, 0};
-      if (blend) { vec3 c = w.transformPoint({}); d.depth = length(c - eye_); transparent_.push_back(d); }
-      else drawItem(d);
+      if (frustum && !frustum->contains(p.bounds.transformed(w))) { ++culled; continue; }
+      const Material& mt = p.material >= 0 ? model.materials[(size_t)p.material] : DEFAULT;
+      submit({&p.mesh, &mt, &model.textures, {}, w, 0});
     }
   }
+}
+
+void ModelRenderer::drawMesh(const rhi::Mesh& mesh, const Material& mat, rhi::Texture baseTex, const mat4& transform) {
+  submit({&mesh, &mat, nullptr, baseTex, transform, 0});
 }
 
 } // namespace eng

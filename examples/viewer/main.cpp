@@ -26,8 +26,8 @@ int main(int argc, char** argv) {
   ModelRenderer renderer; renderer.init();
   Lighting light;
   OrbitCamera cam;
-  cam.target = (gpu.boundsMin + gpu.boundsMax) * 0.5f;
-  cam.distance = length(gpu.boundsMax - gpu.boundsMin) * 0.9f;
+  cam.target = gpu.bounds.center();
+  cam.distance = length(gpu.bounds.extent()) * 1.8f;
   cam.far = cam.distance * 20; cam.near = cam.distance * 0.002f;
 
   double mxPrev = 0, myPrev = 0; bool dragging = false; int frame = 0;
@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
     rhi::clear(0.55f, 0.65f, 0.8f, 1);
     renderer.beginFrame(cam.projection((float)w / (float)h) * cam.view(), cam.position(), light);
     renderer.draw(gpu);
-    renderer.beginFrame(cam.projection((float)w / (float)h) * cam.view(), cam.position(), light); // flush transparent
+    renderer.flushTransparent();
 
     if (frame++ == 0) rhi::checkErrors("first frame");
     if (const char* cap = std::getenv("ENG_CAPTURE"); cap && frame == 30) {

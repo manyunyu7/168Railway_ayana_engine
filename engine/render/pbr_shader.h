@@ -26,6 +26,8 @@ uniform vec4 uBaseColor;
 uniform vec3 uEmissive;
 uniform float uMetallic, uRoughness, uAlphaCutoff;
 uniform int uHasBaseTex, uHasMRTex, uHasEmissiveTex, uAlphaMode; // 0 opaque 1 mask 2 blend
+uniform vec3 uFogColor;
+uniform float uFogDensity;   // 0 = off
 uniform sampler2D uBaseTex, uMRTex, uEmissiveTex;
 out vec4 oColor;
 
@@ -69,6 +71,11 @@ void main() {
 
   vec3 color = direct + ambient + emissive;
   color = color / (color + vec3(1.0));          // Reinhard tonemap
+  if (uFogDensity > 0.0) {
+    float dist = length(uEye - vWorldPos);
+    float f = 1.0 - exp(-dist * dist * uFogDensity * uFogDensity);
+    color = mix(color, uFogColor, clamp(f, 0.0, 1.0));
+  }
   oColor = vec4(pow(color, vec3(1.0/2.2)), uAlphaMode == 2 ? base.a : 1.0);
 })";
 
