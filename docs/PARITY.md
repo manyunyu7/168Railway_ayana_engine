@@ -92,7 +92,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
 | Feature | Status | Notes |
 |---|---|---|
 | macOS (GLFW + OpenGL 4.1) | ✅ | |
-| Texture compression (ETC2/BC) in EMOD | ✅ | EMOD v5: `convert --target web\|desktop\|android`, KTX2 twins transcoded, mip chains, RGBA8 fallback; ASTC later |
+| Texture compression (ETC2/BC) in EMOD | ✅ | EMOD v5: `convert --target web\|desktop\|android`, KTX2 twins transcoded, mip chains, RGBA8 fallback; v6 placeholders (`--textures external`) for host-streamed textures; ASTC later |
 | GLES3 backend + Android EGL, Flutter `Texture` plugin | ❌ | prerequisite: C++ sim port (no Node on Android) |
-| WebAssembly (WebGL2) | 🟡 | viewer only: streamed models (`engine/core/fetch`), `web/index.html`; no sim bridge, no terrain yet (per-tile files exist) |
+| WebAssembly (WebGL2) | 🟡 | viewer only: streamed geometry (`engine/core/fetch`) + KTX2 textures transcoded in a worker (`web/ktx2.js`) and pushed through `viewer_texture_*`; CC203 = 2.5 MB; no sim bridge, no terrain yet (per-tile files exist) |
 | Automated tests (`ctest`: math, parsers, LUT vs TS, golden images) | ✅ | `tests/`, `ctest --preset mac-debug` (+ `mac-debug-gpu`) |

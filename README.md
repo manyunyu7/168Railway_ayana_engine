@@ -65,14 +65,34 @@ Maps known to work: `mojokerto` (one station, 64 trains), `bks` (Bekasi, 3 stati
 
 ```bash
 brew install emscripten
-cmake --preset wasm && cmake --build --preset wasm      # -> build/wasm/index.html + viewer.js/.wasm (210 KB) + font
-web/build-models.sh                                     # cc203 / wilis / KRL -> build/wasm/models/*.emod (ETC2, ~6 MB each)
+cmake --preset wasm && cmake --build --preset wasm      # -> build/wasm/viewer.js/.wasm (213 KB) + font
+web/build-models.sh                                     # geometry .emod (~1 MB) + KTX2 GLBs + page JS -> build/wasm
 npx serve -l 8766 build/wasm                            # open http://127.0.0.1:8766/index.html
 ```
 The same RHI runs on WebGL2 (`ENG_GL_ES`); only the window hints and the main loop differ. Nothing but the
-font is preloaded: models are streamed with `emscripten_fetch` (`engine/core/fetch.h`) when the page calls the
-exported `viewer_load(url)`; `web/index.html` has the model dropdown, FPS and download readouts.
-The simulator bridge is native-only, so the web build currently ships the model viewer.
+font is preloaded: geometry is streamed with `emscripten_fetch` (`engine/core/fetch.h`) when the page calls the
+exported `viewer_load(url)`. The simulator bridge is native-only, so the web build currently ships the model viewer.
+
+### Web textures: KTX2 transcoded in the browser
+
+Raw ETC2 blocks are ~10x larger than the Basis Universal KTX2 (ETC1S + zstd) files the reference client already
+downloads, so the web page does not use EMOD-embedded textures at all:
+
+- `convert --target web --textures external` writes a **geometry-only EMOD v6**: every image is a placeholder
+  (size / wrap / colour-space hints + `source`, its index in the KTX2 twin); the loader shows 1x1 white until the
+  texture arrives. CC203: 1.3 MB instead of 16.6 MB.
+- `web/ktx2.js` (plain ES module) fetches the reference project's KTX2 GLB (`public/model3d/ktx2/<berkas>`, copied
+  to `build/wasm/models/ktx2/`), pulls the KTX2 blobs out of the GLB container and transcodes **all mip levels** in a
+  Web Worker (`web/ktx2-worker.js`) with the BinomialLLC transcoder that three.js ships (`web/vendor/basis_transcoder.*`,
+  Apache 2.0 — third-party code stays on the JS side, the engine has no decoders). Target format by
+  `viewer_supports()`: ETC2 → BC1/BC3 → RGBA8.
+- The blocks go into the engine through the viewer's C ABI (`viewer_texture_begin(image, w, h, format, mips, srgb,
+  wrapS, wrapT)`, `viewer_texture_mip(level, ptr, bytes)`, `viewer_texture_end()`, buffers from `viewer_alloc`),
+  which calls `rhi::createTextureCompressed` and swaps the texture into the loaded `GpuModel`.
+
+CC203 in headless Chromium: **2.50 MB download** (1304 KB geometry + 1257 KB textures, five 4096² atlases),
+transcode 83 ms, upload 9 ms; the page's bottom bar shows the split, the format and the timings. Native builds are
+unchanged (`convert --target desktop` keeps embedding BC1/BC3).
 
 ### Textures (EMOD v5)
 
@@ -80,10 +100,9 @@ The simulator bridge is native-only, so the web build currently ships the model 
 (RGB / RGBA+EAC) for web and Android, **BC1/BC3** for desktop (macOS GL exposes S3TC only). Sources: the
 Basis Universal KTX2 twins the reference project ships (`public/model3d/ktx2/<berkas>`, found automatically,
 transcoded with the BinomialLLC transcoder in `tools/third_party/basisu`), otherwise the GLB's PNG encoded by
-`tools/texcomp` (own ETC1/EAC encoder, stb_dxt). Web files also carry a 256 px RGBA8 fallback per texture for
-browsers without `WEBGL_compressed_texture_etc` (Chromium has it everywhere; desktop Firefox/Safari may not);
-`--fallback 0` drops it. The runtime uploads the first variant `rhi::supports()` and never decodes anything.
-CC203 went from 22.3 MB (raw RGBA) to 4.8 MB desktop / 6.1 MB web. `fetch_tiles --target web` also writes
+`tools/texcomp` (own ETC1/EAC encoder, stb_dxt). `--fallback PX` adds an RGBA8 copy per texture for GPUs without
+the format (`--fallback 0` drops it). The runtime uploads the first variant `rhi::supports()` and never decodes
+anything. CC203 went from 22.3 MB (raw RGBA) to 4.8 MB desktop. `fetch_tiles --target web` also writes
 per-tile files (`assets/terrain/<map>/{dem,sat/<layer>}/<z>_<x>_<y>.bin` + `index.json`) for a streaming client.
 
 ## Tests
