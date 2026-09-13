@@ -35,5 +35,4 @@ target_link_libraries(viewer PRIVATE engine)
 # ---- tools (offline; may use third-party decoders) ----
 add_executable(convert tools/convert/main.cpp)
 target_link_libraries(convert PRIVATE engine)
-target_compile_options(convert PRIVATE -Wno-error -O2 -fno-sanitize=all)
-target_link_options(convert PRIVATE -fno-sanitize=all)
+target_compile_options(convert PRIVATE -Wno-error -O2 -fno-sanitize=undefined)
