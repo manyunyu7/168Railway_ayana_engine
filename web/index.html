@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ayana engine — web viewer</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #ddd; font: 14px system-ui, sans-serif; }
+  #bar { position: fixed; bottom: 0; left: 0; right: 0; display: flex; gap: 12px; align-items: center; padding: 8px 12px;
+         background: rgba(0,0,0,.6); flex-wrap: wrap; z-index: 2; }
+  #bar select, #bar button { font: inherit; padding: 4px 8px; }
+  #stats span { margin-right: 14px; }
+  #status { color: #fc6; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <strong>Ayana viewer (WebGL2)</strong>
+  <label>model <select id="model">
+    <option value="models/cc203.emod">CC203 locomotive</option>
+    <option value="models/wilis.emod">K1 Wilis livery</option>
+    <option value="models/krl-kuha.emod">KRL JR205 cab car</option>
+  </select></label>
+  <span id="stats"><span id="fps">– fps</span><span id="size">download –</span><span id="wasm"></span></span>
+  <span id="status">loading runtime…</span>
+</div>
+<canvas id="canvas" tabindex="1" oncontextmenu="event.preventDefault()"></canvas>
+<script>
+  // Emscripten glue: canvas + main-loop; models are streamed via viewer_load (emscripten_fetch).
+  const status = document.getElementById('status'), fps = document.getElementById('fps'), size = document.getElementById('size');
+  let pending = 0, downloaded = 0;
+  var Module = {
+    canvas: document.getElementById('canvas'),
+    print: t => console.log(t),
+    printErr: t => console.error(t),
+    setStatus: t => { if (t) status.textContent = t; },
+    onRuntimeInitialized() {
+      status.textContent = '';
+      const sel = document.getElementById('model');
+      const load = () => { pending = performance.now(); status.textContent = 'loading ' + sel.value + ' …'; Module.ccall('viewer_load', null, ['string'], [sel.value]); };
+      sel.addEventListener('change', load);
+      load();
+      setInterval(() => {
+        fps.textContent = Module._viewer_fps().toFixed(0) + ' fps';
+        if (pending && Module._viewer_ready()) {
+          downloaded = Module._viewer_bytes();
+          size.textContent = 'download ' + (downloaded / 1048576).toFixed(2) + ' MB in ' + (performance.now() - pending).toFixed(0) + ' ms';
+          status.textContent = ''; pending = 0;
+        }
+      }, 250);
+    }
+  };
+  // wasm + js size readout
+  fetch('viewer.wasm', { method: 'HEAD' }).then(r => { const n = r.headers.get('content-length'); if (n) document.getElementById('wasm').textContent = 'wasm ' + (n / 1024).toFixed(0) + ' KB'; }).catch(() => {});
+</script>
+<script async src="viewer.js"></script>
+</body>
+</html>

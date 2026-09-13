@@ -14,6 +14,7 @@ add_library(engine STATIC
   ${ENGINE_WORLD_SRC}
   engine/rhi/rhi_gl.cpp
   engine/core/window.cpp
+  engine/core/fetch.cpp
   engine/core/json.cpp
   engine/asset/gltf.cpp
   engine/asset/emod.cpp
@@ -36,7 +37,7 @@ if(APPLE)
 elseif(EMSCRIPTEN)
   # WebGL2 via Emscripten's GLES3 emulation; GLFW comes from the Emscripten port
   target_compile_definitions(engine PUBLIC ENG_GL_ES=1)
-  target_link_options(engine PUBLIC -sUSE_GLFW=3 -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2
+  target_link_options(engine PUBLIC -sUSE_GLFW=3 -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFETCH=1
                       -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=256MB -sSTACK_SIZE=1MB)
 elseif(ANDROID)
   target_link_libraries(engine PUBLIC GLESv3 EGL log android)
@@ -49,10 +50,12 @@ target_link_libraries(cube PRIVATE engine)
 add_executable(viewer examples/viewer/main.cpp)
 target_link_libraries(viewer PRIVATE engine)
 if(EMSCRIPTEN)
-  # web build: viewer only for now; assets are preloaded into the virtual FS
-  set_target_properties(viewer PROPERTIES SUFFIX ".html")
+  # web build: viewer only for now. Only the font is preloaded; models are streamed at runtime with
+  # fetchFile (web/index.html calls viewer_load(url); `.emod` files go to build/wasm/models, see web/build-models.sh).
   target_link_options(viewer PRIVATE "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/font.efnt@/assets/font.efnt"
-                      "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/build/assets/web@/models" -sEXIT_RUNTIME=0)
+                      -sEXIT_RUNTIME=0 -sEXPORTED_FUNCTIONS=_main,_viewer_load,_viewer_fps,_viewer_bytes,_viewer_ready
+                      -sEXPORTED_RUNTIME_METHODS=ccall,cwrap)
+  configure_file(web/index.html ${CMAKE_BINARY_DIR}/index.html COPYONLY)
   return()
 endif()
 add_executable(simtest examples/simtest/main.cpp)
