@@ -31,6 +31,7 @@ struct Material {
   float alphaCutoff = 0.5f;
   bool doubleSided = false;
   bool unlit = false;               // KHR_materials_unlit: base colour shown as-is
+  bool depthTest = true;            // false = overlay drawn on top (reticles, gizmos); not serialised
 };
 
 struct Primitive {

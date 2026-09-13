@@ -18,6 +18,7 @@
 #include "engine/world/terrain.h"
 #include "engine/world/track_graph.h"
 #include "engine/world/train_visual.h"
+#include "examples/ppka/compass.h"
 #include "engine/world/vegetation.h"
 #include <deque>
 #include <string>
@@ -68,7 +69,8 @@ private:
   struct Placed { GpuModel* model; mat4 xf; AABB bounds; };
   std::vector<Placed> scenery_;      // hiasan objects (station building etc.)
   Vegetation trees_;
-  std::string hoverId_;             // hovered signal id or point node id ("" = none)
+  std::string hoverId_;
+  Compass compass_;             // hovered signal id or point node id ("" = none)
   bool hoverIsSignal_ = false; vec3 hoverPos_; float hoverX_ = 0, hoverY_ = 0;
   std::string hoverTip_, hoverAction_; bool hoverReject_ = false;
   double forceHoverX_ = -1, forceHoverY_ = -1;   // debug: ENG_AUTOHOVER pins the cursor on an object

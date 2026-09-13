@@ -84,6 +84,7 @@ bool Game::buildWorld() {
   std::vector<AABB> footprints;
   for (const Placed& p : scenery_) footprints.push_back(p.bounds);
   trees_.build(terrain_, catalog_, footprints);
+  compass_.init([this](float x, float z) { return terrain_.groundHeight(x + origin_.ox, z + origin_.oz); });
   // camera height follows the ground at the station
   float gy = terrain_.groundHeight(stationScene_.x + origin_.ox, stationScene_.z + origin_.oz);
   stationScene_.y = gy; orbit_.target = stationScene_; fly_.position.y = gy + 30;
@@ -112,7 +113,7 @@ void Game::applySimState() {
 }
 
 void Game::shutdown() {
-  sim_.stop(); trains_.shutdown(); trees_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy(); routes_.destroy();
+  sim_.stop(); compass_.shutdown(); trains_.shutdown(); trees_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy(); routes_.destroy();
   renderer_.shutdown(); sky_.shutdown(); text_.shutdown();
 }
 
@@ -127,6 +128,8 @@ void Game::handleInput(Window& win, double dt) {
   double mx, my; win.mousePos(mx, my);
   float dx = (float)(mx - mxPrev_), dy = (float)(my - myPrev_);
   bool lmb = win.mouseButton(0), rmb = win.mouseButton(1);
+  // debug: ENG_AUTOJUMP=1 simulates a short right-click at (30 %, 65 %) of the window at frame 40
+  if (std::getenv("ENG_AUTOJUMP") && frame_ >= 40 && frame_ < 43) { int ww, wh; glfwGetWindowSize((GLFWwindow*)win.handle, &ww, &wh); mx = ww * 0.3; my = wh * 0.65; rmb = frame_ < 42; }
   if (lmb) {
     if (!dragging_) { clickArmed_ = true; clickX_ = mx; clickY_ = my; }
     else if (useFly_) fly_.look(dx, dy); else orbit_.rotate(dx, dy);
@@ -136,7 +139,13 @@ void Game::handleInput(Window& win, double dt) {
     if (dragging_ && clickArmed_) { int w, h; win.framebufferSize(w, h); onClick(clickX_, clickY_, w, h); }
     dragging_ = false; clickArmed_ = false;
   }
-  if (rmb) { if (useFly_) fly_.look(dx, dy); else orbit_.rotate(dx, dy); }
+  if (useFly_) { if (rmb) fly_.look(dx, dy); }
+  else {
+    int fw, fh; win.framebufferSize(fw, fh); int ww, wh; glfwGetWindowSize((GLFWwindow*)win.handle, &ww, &wh);
+    bool ctrl = win.key(GLFW_KEY_LEFT_CONTROL) || win.key(GLFW_KEY_RIGHT_CONTROL) || win.key(GLFW_KEY_LEFT_SUPER);
+    compass_.update(orbit_, mx * fw / ww, my * fh / wh, fw, fh, rmb, ctrl,
+                    win.key(GLFW_KEY_LEFT), win.key(GLFW_KEY_RIGHT), win.key(GLFW_KEY_UP), win.key(GLFW_KEY_DOWN), (float)dt, viewProj_.inverse());
+  }
   mxPrev_ = mx; myPrev_ = my;
   if (win.scroll != 0) { if (useFly_) fly_.speed *= std::pow(1.2f, (float)win.scroll); else orbit_.zoom((float)win.scroll); win.scroll = 0; }
   if (useFly_) {
@@ -267,6 +276,7 @@ void Game::render(Window& win) {
     hoverX_ = c.w > 0 ? (c.x / c.w * 0.5f + 0.5f) * (float)w : -1; hoverY_ = c.w > 0 ? (1 - (c.y / c.w * 0.5f + 0.5f)) * (float)h : -1;
   }
   trains_.draw(renderer_, &frustum);
+  if (!useFly_) compass_.draw(renderer_, orbit_);
   renderer_.flushTransparent();
   drawHud(w, h);
 }

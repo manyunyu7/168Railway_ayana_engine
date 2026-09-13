@@ -73,7 +73,7 @@ void Compass::init(std::function<float(float, float)> groundHeight) {
   north_ = cone(1.1f, 3, 3, 0);
   viewArrow_ = cone(1.6f, 4, 3, 0);
   mat_.baseColor = {0.91f, 0.65f, 0.23f, 0}; mat_.metallic = 0; mat_.roughness = 1;
-  mat_.emissive = {0.91f, 0.65f, 0.23f}; mat_.alphaMode = AlphaMode::Blend; mat_.doubleSided = true;
+  mat_.emissive = {0.91f, 0.65f, 0.23f}; mat_.alphaMode = AlphaMode::Blend; mat_.doubleSided = true; mat_.depthTest = false;
 }
 
 void Compass::shutdown() { rhi::destroyMesh(ring_); rhi::destroyMesh(cross_); rhi::destroyMesh(north_); rhi::destroyMesh(viewArrow_); }
@@ -162,13 +162,11 @@ void Compass::draw(ModelRenderer& r, const OrbitCamera& cam) {
   vec3 p = cam.target + vec3{0, 0.25f, 0};
   float scale = std::fmax(1.f, cam.distance / 250);   // keep the reticle readable when zoomed out
   mat4 base = mat4::translation(p) * mat4::scale({scale, scale, scale});
-  rhi::setDepthTestEnabled(false);
   r.drawMesh(ring_, mat_, {}, base);
   r.drawMesh(cross_, mat_, {}, base);
   r.drawMesh(north_, mat_, {}, base * mat4::translation({0, 0, -7.5f}));
   vec3 f = cam.target - cam.position(); float yaw = std::atan2(f.x, f.z);   // arrow points along the view direction
   r.drawMesh(viewArrow_, mat_, {}, base * mat4::rotationY(yaw + PI) * mat4::translation({0, 0, -3.5f}));
-  rhi::setDepthTestEnabled(true);
 }
 
 } // namespace eng

@@ -16,8 +16,8 @@ void Game::drawHud(int w, int h) {
 
   // top bar: clock, time scale, score, fps
   char top[200];
-  std::snprintf(top, sizeof top, "%s   x%.0f%s   score %d   viol %d   pending %d   fps %.0f   draws %u",
-                clockText(st.clock).c_str(), timeScale_, paused_ ? " PAUSED" : "", st.score, st.violations, st.pending, fps_, renderer_.drawCalls);
+  std::snprintf(top, sizeof top, "%s   x%.0f%s   score %d   viol %d   pending %d   fps %.0f   draws %u   az %03d",
+                clockText(st.clock).c_str(), timeScale_, paused_ ? " PAUSED" : "", st.score, st.violations, st.pending, fps_, renderer_.drawCalls, compass_.azimuth(orbit_));
   text_.rect(0, 0, (float)w, lh + pad, panel);
   text_.draw(top, pad, pad * 0.5f, white, 0.8f);
 
@@ -57,7 +57,7 @@ void Game::drawHud(int w, int h) {
   for (const std::string& m : messages_) { text_.draw(m, pad, my, white, 0.8f); my += lh; }
 
   // help (bottom-right)
-  text_.draw("LMB drag orbit | RMB/WASD fly (F) | click signal/point | space pause | +/- speed | Esc quit",
+  text_.draw("LMB orbit | RMB tap = fly focus there, hold = glide | Ctrl+arrows nudge | F fly cam | click signal/point | space pause | +/- speed",
              (float)w - 760, (float)h - lh - pad * 0.5f, dim, 0.65f);
   text_.flush(w, h);
 }
