@@ -1,0 +1,175 @@
+// Example: rail test. `railtest [map.json] [--sim]` — loads a PPKA save, builds the track graph,
+// vertical profile (synthetic terrain), rail/bridge meshes, signals and points arrows, and shows
+// them with an orbit camera centred on the station. With --sim the map is loaded through the
+// TypeScript bridge and the session is stepped so signal aspects and point settings are real.
+// Env: ENG_CAPTURE=file.ppm (frame 30, exit), ENG_VIEW=dist,yaw,pitch, ENG_TARGET=signal:<name>|point:<nodeId>|x,z
+#include "engine/core/json.h"
+#include "engine/core/orbit_camera.h"
+#include "engine/core/window.h"
+#include "engine/render/model_renderer.h"
+#include "engine/render/sky.h"
+#include "engine/render/text.h"
+#include "engine/sim/sim_process.h"
+#include "engine/world/point_visual.h"
+#include "engine/world/rail_builder.h"
+#include "engine/world/rail_profile.h"
+#include "engine/world/signal_visual.h"
+#include "engine/world/track_graph.h"
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
+#include <string>
+
+using namespace eng;
+
+// Rolling synthetic terrain (metres, raw DEM datum) until real tiles are wired in.
+struct SineHeight : HeightSource {
+  float rawHeight(double wx, double wy) const override {
+    return 20.f + 5.f * (float)std::sin(wx / 700.0) * (float)std::cos(wy / 900.0) + 2.f * (float)std::sin((wx + wy) / 260.0);
+  }
+};
+
+int main(int argc, char** argv) {
+  std::string path = std::string(ENG_SOURCE_DIR) + "/../ppka-wannabe-2/src/data/mojokerto.json";
+  bool useSim = false;
+  for (int i = 1; i < argc; ++i) { std::string a = argv[i]; if (a == "--sim") useSim = true; else path = a; }
+
+  Json save; std::string err;
+  SimProcess sim;
+  if (useSim) {
+    if (!sim.start()) { std::fprintf(stderr, "sim start failed: %s\n", sim.error().c_str()); return 1; }
+    std::string map = path.substr(path.find_last_of('/') + 1); map = map.substr(0, map.find('.'));
+    if (!sim.load(map)["ok"].boolOr(false)) { std::fprintf(stderr, "sim load failed\n"); return 1; }
+    save.type = Json::Type::Object; save.obj["world"] = sim.world();
+    sim.startSession(true, "");
+    for (int i = 0; i < 120; ++i) sim.step(0.5);   // one simulated minute
+  } else {
+    std::ifstream f(path);
+    if (!f) { std::fprintf(stderr, "cannot open %s\n", path.c_str()); return 1; }
+    std::stringstream ss; ss << f.rdbuf();
+    save = Json::parse(ss.str(), &err);
+    if (!err.empty()) { std::fprintf(stderr, "json: %s\n", err.c_str()); return 1; }
+  }
+  const Json& world = save["world"];
+
+  Window win;
+  if (!win.open(1280, 800, "engine — railtest")) return 1;
+  rhi::init();
+
+  auto t0 = std::chrono::steady_clock::now();
+  TrackGraph graph;
+  if (!graph.fromJson(world, &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+  std::vector<StationZone> stations; double stX = graph.origin().ox, stY = graph.origin().oz;
+  for (const Json& sc : world["scenery"].arr)
+    if (sc["kind"].stringOr("") == "station") {
+      stations.push_back({sc["pos"]["x"].numberOr(0), sc["pos"]["y"].numberOr(0), 160});
+      if (stations.size() == 1) { stX = stations[0].wx; stY = stations[0].wy; }
+    }
+  SineHeight dem;
+  float demBase = dem.rawHeight(graph.origin().ox, graph.origin().oz);
+  VerticalProfile profile; profile.build(graph, dem, stations, demBase);
+  RailBuilder rails; rails.build(graph, profile, &dem, demBase);
+  SignalVisuals signals; signals.build(graph, profile, world["trackside"]);
+  PointVisuals points; points.build(graph, profile);
+  double buildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  std::printf("graph %zu nodes %zu segs %d points %.3f km | profile %d chains gmax %.1f permille | rails %d chunks %u tris %d piers (%.1f ms) | %zu signals | total %.1f ms\n",
+              graph.nodes.size(), graph.segments.size(), graph.pointCount(), graph.totalLength() / 1000, profile.chainCount(),
+              profile.gmax() * 1000, rails.stats().chunks, rails.stats().tris, rails.stats().piers, rails.stats().buildMs,
+              signals.signals().size(), buildMs);
+
+  auto applySim = [&]() {
+    for (const SimSignal& s : sim.state().signals) signals.setAspect(s.id, s.aspect);
+    for (const SimPoint& p : sim.state().points) points.setState(p.id, p.setting, !p.lockedBy.empty());
+  };
+  if (useSim) applySim();
+  else {   // demo aspects: cycle so every colour shows up
+    int k = 0;
+    for (const SignalInstance& s : signals.signals()) signals.setAspect(s.id, (Aspect)(k++ % 3));
+    k = 0;
+    for (const PointInstance& p : points.points()) points.setState(p.nodeId, k % 2, (k / 2) % 3 == 0), ++k;
+  }
+
+  ModelRenderer renderer; renderer.init();
+  TextRenderer text; if (!text.load(std::string(ENG_SOURCE_DIR) + "/assets/font.efnt", err)) std::fprintf(stderr, "font: %s\n", err.c_str());
+  Lighting light; light.fogDensity = 1.f / 6000; Sky sky; sky.init(); sky.sunDir = light.sunDir;
+  OrbitCamera cam;
+  cam.target = graph.origin().toScene(stX, stY, profile.railHeight(graph.segments[0].id.c_str(), 0));
+  {   // rail height near the station: nearest node
+    double best = 1e30; int bi = 0;
+    for (size_t i = 0; i < graph.nodes.size(); ++i) { double d = std::hypot(graph.nodes[i].wx - stX, graph.nodes[i].wy - stY); if (d < best) { best = d; bi = (int)i; } }
+    const TrackSegment& s = graph.segments[(size_t)graph.nodes[(size_t)bi].segs[0]];
+    cam.target.y = profile.railHeight(s.id.c_str(), s.a == bi ? 0.0 : s.length);
+  }
+  cam.distance = 260; cam.yaw = radians(35); cam.pitch = radians(22); cam.fovY = radians(52); cam.near = 1; cam.far = 40000;
+  if (const char* v = std::getenv("ENG_VIEW")) std::sscanf(v, "%f,%f,%f", &cam.distance, &cam.yaw, &cam.pitch);
+  if (const char* tg = std::getenv("ENG_TARGET")) {
+    std::string t = tg;
+    if (t.rfind("face:", 0) == 0) {   // camera in front of the signal head, looking at the lenses
+      for (const SignalInstance& s : signals.signals()) if (s.name == t.substr(5)) {
+        cam.target = s.lensWorld[s.lamps - 1]; vec3 f = s.world.transformDir({-1, 0, 0});
+        cam.yaw = std::atan2(f.x, f.z); cam.pitch = 0.05f; cam.distance = 4;
+      }
+    } else if (t.rfind("signal:", 0) == 0) { for (const SignalInstance& s : signals.signals()) if (s.name == t.substr(7)) cam.target = s.railPos; }
+    else if (t.rfind("seg:", 0) == 0) {
+      int si = graph.segIndex(t.substr(4));
+      if (si >= 0) { TrackSample sm = graph.sampleAt(si, graph.length(si) / 2); cam.target = graph.origin().toScene(sm.wx, sm.wy, profile.railHeight(si, graph.length(si) / 2)); }
+    }
+    else if (t.rfind("point:", 0) == 0) { for (const PointInstance& p : points.points()) if (p.nodeId == t.substr(6)) cam.target = p.pos; }
+    else { float x, z; if (std::sscanf(tg, "%f,%f", &x, &z) == 2) { cam.target.x = x; cam.target.z = z; } }
+  }
+
+  double mxPrev = 0, myPrev = 0; bool dragging = false; int frame = 0; double simAcc = 0, last = win.time();
+  double fpsAcc = 0; int fpsN = 0; float fps = 0;
+  while (win.isOpen()) {
+    win.pollEvents();
+    double now = win.time(), dt = now - last; last = now;
+    fpsAcc += dt; if (++fpsN == 30) { fps = (float)(fpsN / fpsAcc); fpsAcc = 0; fpsN = 0; }
+    double mx, my; win.mousePos(mx, my);
+    if (win.mouseButton(0)) { if (dragging) cam.rotate((float)(mx - mxPrev), (float)(my - myPrev)); dragging = true; }
+    else dragging = false;
+    mxPrev = mx; myPrev = my;
+    if (win.scroll != 0) { cam.zoom((float)win.scroll); win.scroll = 0; }
+    if (useSim) { simAcc += dt; if (simAcc >= 0.5) { sim.step(simAcc); simAcc = 0; applySim(); } }
+
+    int w, h; win.framebufferSize(w, h);
+    rhi::setViewport(w, h);
+    rhi::clear(light.fogColor.x, light.fogColor.y, light.fogColor.z, 1);
+    mat4 vp = cam.projection((float)w / (float)h) * cam.view();
+    Frustum fr(vp);
+    sky.draw(vp.inverse(), cam.position());
+    renderer.beginFrame(vp, cam.position(), light);
+    rails.draw(renderer, &fr);
+    signals.draw(renderer, cam.position(), &fr);
+    points.draw(renderer, &fr);
+    renderer.flushTransparent();
+
+    // HUD: counts + signal name labels at the top lens.
+    for (const ScreenPoint& sp : signals.screenPositions(vp, w, h, cam.position())) {
+      if (!sp.visible) continue;
+      const SignalInstance& s = signals.signals()[(size_t)signals.indexOf(sp.id)];
+      float tw = text.measure(s.name, 0.8f);
+      text.rect(sp.x - tw / 2 - 3, sp.y - 26, tw + 6, text.lineHeight(0.8f) + 2, {0, 0, 0, 0.55f});
+      text.draw(s.name, sp.x - tw / 2, sp.y - 25, {1, 1, 1, 1}, 0.8f);
+    }
+    char hud[256];
+    std::snprintf(hud, sizeof hud, "%zu nodes  %zu segs  %d points  %.1f km  |  %d chunks  %u tris  |  %zu signals  |  draws %u culled %u  %.0f fps",
+                  graph.nodes.size(), graph.segments.size(), graph.pointCount(), graph.totalLength() / 1000,
+                  rails.stats().chunks, rails.stats().tris, signals.signals().size(), renderer.drawCalls, renderer.culled, fps);
+    text.rect(8, 8, text.measure(hud) + 16, text.lineHeight() + 8, {0, 0, 0, 0.5f});
+    text.draw(hud, 16, 12);
+    text.flush(w, h);
+
+    if (frame++ == 0) rhi::checkErrors("first frame");
+    if (const char* cap = std::getenv("ENG_CAPTURE"); cap && frame == 30) {
+      rhi::captureFramebuffer(cap, w, h); std::printf("captured -> %s\n", cap); break;
+    }
+    win.swapBuffers();
+  }
+  rails.destroy(); signals.destroy(); points.destroy();
+  renderer.shutdown(); text.shutdown(); sky.shutdown(); win.close();
+  if (useSim) sim.stop();
+  return 0;
+}
