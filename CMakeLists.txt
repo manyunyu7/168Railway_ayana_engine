@@ -6,7 +6,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_compile_options(-Wall -Wextra -Werror -ffp-contract=off)
 
 # ---- engine library ----
+file(GLOB ENGINE_WORLD_SRC CONFIGURE_DEPENDS engine/world/*.cpp)
 add_library(engine STATIC
+  ${ENGINE_WORLD_SRC}
   engine/rhi/rhi_gl.cpp
   engine/core/window.cpp
   engine/core/json.cpp
@@ -46,3 +48,10 @@ target_compile_options(convert PRIVATE -Wno-error -O2 -fno-sanitize=undefined)
 add_executable(fontgen tools/fontgen/main.cpp)
 target_include_directories(fontgen PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_options(fontgen PRIVATE -Wno-error -O2 -fno-sanitize=undefined)
+
+# ---- per-directory targets (each dir may carry its own CMakeLists.txt) ----
+file(GLOB SUB_CMAKE CONFIGURE_DEPENDS examples/*/CMakeLists.txt tools/*/CMakeLists.txt)
+foreach(f ${SUB_CMAKE})
+  get_filename_component(d ${f} DIRECTORY)
+  add_subdirectory(${d})
+endforeach()
