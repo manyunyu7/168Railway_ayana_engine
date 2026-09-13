@@ -1,6 +1,6 @@
 // Offline converter: GLB -> .emod (v5). The only place third-party image decoding / texture encoding lives.
 //   convert in.glb out.emod [--max-texture 1024] [--target desktop|web|android] [--ktx2 auto|none|FILE]
-//                           [--fallback PX] [--raw]
+//                           [--fallback PX] [--raw] [--textures embedded|external]
 // Textures are stored GPU-ready with full mip chains: web/android = ETC2 (RGB or RGBA/EAC), desktop = BC1/BC3
 // (macOS GL exposes S3TC only). Sources, in order of preference:
 //   1. the Basis Universal (KTX2, ETC1S) twin of the GLB shipped by the reference project
@@ -9,6 +9,8 @@
 //      stb_dxt for BC).
 // `--fallback PX` adds a PX-wide RGBA8 copy for GPUs without the format (web default 256, others none);
 // `--raw` writes plain RGBA8 (EMOD v5 without compression, as v4 did).
+// `--textures external` writes geometry only: every image becomes a placeholder (size / wrap / colour-space hints and
+// `source` = its index in the KTX2 twin); the web page streams the KTX2 GLB and transcodes it in JS (web/ktx2.js).
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_HDR
 #define STBI_NO_PSD
@@ -98,8 +100,8 @@ static bool transcodeKtx2(const std::vector<uint8_t>& ktx, texcomp::Target targe
 }
 
 int main(int argc, char** argv) {
-  if (argc < 3) { std::fprintf(stderr, "usage: convert in.glb out.emod [--max-texture N] [--target desktop|web|android] [--ktx2 auto|none|FILE] [--fallback PX] [--raw]\n"); return 2; }
-  int maxTex = 2048; bool raw = false; std::string ktx2 = "auto";
+  if (argc < 3) { std::fprintf(stderr, "usage: convert in.glb out.emod [--max-texture N] [--target desktop|web|android] [--ktx2 auto|none|FILE] [--fallback PX] [--raw] [--textures embedded|external]\n"); return 2; }
+  int maxTex = 2048; bool raw = false, external = false; std::string ktx2 = "auto";
   texcomp::Options opt;
   for (int i = 3; i < argc; ++i) {
     auto val = [&](const char* name) { if (i + 1 >= argc) { std::fprintf(stderr, "%s needs a value\n", name); std::exit(2); } return argv[++i]; };
@@ -109,6 +111,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--fallback")) opt.fallback = std::atoi(val("--fallback"));
     else if (!std::strcmp(argv[i], "--raw")) raw = true;
     else if (!std::strcmp(argv[i], "--fast")) opt.highQuality = false;
+    else if (!std::strcmp(argv[i], "--textures")) { const char* v = val("--textures"); external = !std::strcmp(v, "external"); if (!external && std::strcmp(v, "embedded")) { std::fprintf(stderr, "unknown --textures mode\n"); return 2; } }
     else { std::fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
   }
 
@@ -122,7 +125,7 @@ int main(int argc, char** argv) {
 
   // KTX2 twin: <dir>/ktx2/<name>.glb (reference project layout) unless given explicitly
   std::vector<std::vector<uint8_t>> ktxImages;
-  if (!raw && ktx2 != "none" && !model.images.empty()) {
+  if (!raw && !external && ktx2 != "none" && !model.images.empty()) {
     fs::path src(argv[1]);
     std::string twin = ktx2 == "auto" ? (src.parent_path() / "ktx2" / src.filename()).string() : ktx2;
     std::error_code ec;
@@ -138,6 +141,13 @@ int main(int argc, char** argv) {
   for (size_t i = 0; i < model.images.size(); ++i) {
     Image& im = model.images[i];
     int w, h, c;
+    if (external) {   // placeholder: dimensions of the source picture, no pixels; the host maps `source` to the KTX2 twin's image
+      if (!stbi_info_from_memory(im.encoded.data(), (int)im.encoded.size(), &w, &h, &c)) { std::fprintf(stderr, "image %zu (%s): %s\n", i, im.mime.c_str(), stbi_failure_reason()); return 1; }
+      im.width = w; im.height = h; im.channels = 4; im.source = (int)i;
+      im.encoded.clear(); im.encoded.shrink_to_fit();
+      std::printf("  image %zu: %dx%d%s%s, external (source %d)\n", i, w, h, im.linear ? " linear" : "", im.wrapS == 1 || im.wrapT == 1 ? " clamp" : "", im.source);
+      continue;
+    }
     unsigned char* px = stbi_load_from_memory(im.encoded.data(), (int)im.encoded.size(), &w, &h, &c, 4);
     if (!px) { std::fprintf(stderr, "image %zu (%s): decode failed: %s\n", i, im.mime.c_str(), stbi_failure_reason()); return 1; }
     int ow = w, oh = h;

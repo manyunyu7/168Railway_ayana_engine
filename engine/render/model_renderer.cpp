@@ -8,6 +8,10 @@ namespace eng {
 rhi::Texture uploadImage(const Image& im) {
   // colour images are sRGB; metal/rough, normal and occlusion maps are data
   auto wrapS = (rhi::Wrap)im.wrapS, wrapT = (rhi::Wrap)im.wrapT;
+  if (im.placeholder()) {   // texture streamed later by the host: 1x1 white until it arrives
+    const uint8_t px[4] = {255, 255, 255, 255};
+    return rhi::createTexture(1, 1, rhi::Format::RGBA8, std::as_bytes(std::span(px)), false, false, wrapS, wrapT);
+  }
   if (im.variants.empty())
     return rhi::createTexture(im.width, im.height, rhi::Format::RGBA8, std::as_bytes(std::span(im.pixels)), true, !im.linear, wrapS, wrapT);
   static const rhi::Format map[] = {rhi::Format::RGBA8, rhi::Format::ETC2_RGB, rhi::Format::ETC2_RGBA, rhi::Format::BC1, rhi::Format::BC3, rhi::Format::BC7};

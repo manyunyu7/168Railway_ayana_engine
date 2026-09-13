@@ -221,4 +221,11 @@ TEST_MAIN({
   Image im2; CHECK_MSG(loadImageFile(ib, im2, err), err);
   CHECK(im2.width == 2 && im2.linear && im2.pixels == t.images[1].pixels);
   CHECK(!loadImageFile(std::span<const uint8_t>(ib.data(), 10), im2, err));
+  // v6 placeholder: hints + source index only, no pixel data (textures streamed by the host)
+  v5.variants.clear(); v5.pixels.clear(); v5.source = 3; v5.width = 4096; v5.height = 2048;
+  CHECK(v5.placeholder());
+  CHECK_MSG(saveEmod(t, path, err), err);
+  Model t4; CHECK_MSG(loadEmod(path, t4, err), err); std::filesystem::remove(path);
+  CHECK(t4.images[0].placeholder() && t4.images[0].source == 3 && t4.images[0].width == 4096 && t4.images[0].wrapS == 1);
+  CHECK(!t4.images[1].placeholder() && t4.images[1].source == -1);
 })

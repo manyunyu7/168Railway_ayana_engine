@@ -17,7 +17,8 @@ struct Lighting {
 };
 
 // Uploads an Image: the first variant the GPU supports (compressed chains as-is, RGBA8 with generated mips),
-// or `pixels` when the image has no variants. Returns id 0 when nothing is usable (logged).
+// or `pixels` when the image has no variants; a placeholder (v6, textures streamed separately) becomes a 1x1 white.
+// Returns id 0 when nothing is usable (logged).
 rhi::Texture uploadImage(const Image& im);
 
 struct GpuPrimitive { rhi::Mesh mesh; int material; AABB bounds; };

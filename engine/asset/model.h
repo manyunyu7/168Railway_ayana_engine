@@ -31,6 +31,10 @@ struct Image {
                                     // fallback); the loader uploads the first one the GPU supports. Empty = use pixels.
   uint8_t wrapS = 0, wrapT = 0;     // glTF sampler wrap of the textures using this image: 0 repeat, 1 clamp, 2 mirror
   bool linear = false;              // sampled as data (metal/rough, normal, occlusion): upload without sRGB decode
+  int source = -1;                  // v6: index of this image in the external texture file (KTX2 GLB twin) when the
+                                    // EMOD carries only a placeholder (no variants, no pixels); the host streams the
+                                    // texture in later. -1 = the image is stored in the file.
+  bool placeholder() const { return variants.empty() && pixels.empty() && encoded.empty(); }
 };
 
 enum class AlphaMode : uint8_t { Opaque, Mask, Blend };

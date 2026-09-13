@@ -27,10 +27,11 @@ bool readFile(const std::string& path, std::vector<uint8_t>& out) {
 }
 
 bool writeImage(Writer& w, const Image& im, std::string& err) {
-  bool raw = im.variants.empty();
-  if (raw && (im.pixels.empty() || im.channels != 4)) { err = "image not decoded to RGBA8"; return false; }
+  bool raw = im.variants.empty(), placeholder = im.placeholder();
+  if (raw && !placeholder && im.channels != 4) { err = "image not decoded to RGBA8"; return false; }
   w.put((uint16_t)im.width); w.put((uint16_t)im.height); w.put((uint8_t)4);
-  w.put(im.wrapS); w.put(im.wrapT); w.put((uint8_t)(im.linear ? 1 : 0));
+  w.put(im.wrapS); w.put(im.wrapT); w.put((uint8_t)(im.linear ? 1 : 0)); w.put((int16_t)im.source);
+  if (placeholder) { w.put((uint8_t)0); return true; }
   if (raw) {   // a raw image becomes a one-variant, one-mip RGBA8 record
     w.put((uint8_t)1); w.put((uint8_t)TexFormat::RGBA8); w.put((uint8_t)1);
     w.put((uint16_t)im.width); w.put((uint16_t)im.height); w.put((uint32_t)im.pixels.size()); w.bytes(im.pixels.data(), im.pixels.size());
@@ -50,6 +51,7 @@ bool writeImage(Writer& w, const Image& im, std::string& err) {
 bool readImage(Reader& r, Image& im, uint32_t ver, std::string& err) {
   im.width = r.get<uint16_t>(); im.height = r.get<uint16_t>(); im.channels = r.get<uint8_t>();
   im.wrapS = r.get<uint8_t>(); im.wrapT = r.get<uint8_t>(); im.linear = r.get<uint8_t>() != 0;   // zero (= repeat, sRGB) before v4
+  if (ver >= 6) im.source = r.get<int16_t>();
   if (ver < 5) { im.pixels.resize((size_t)im.width * im.height * im.channels); r.bytes(im.pixels.data(), im.pixels.size()); return r.ok; }
   im.variants.resize(r.get<uint8_t>());
   for (ImageVariant& v : im.variants) {
@@ -155,7 +157,7 @@ bool loadEmod(std::span<const uint8_t> bytes, Model& m, std::string& err) {
 bool saveImageFile(const Image& im, const std::string& path, std::string& err) {
   Writer w{std::ofstream(path, std::ios::binary)};
   if (!w.f) { err = "cannot write " + path; return false; }
-  w.bytes("EIMG", 4); w.put((uint32_t)1);
+  w.bytes("EIMG", 4); w.put((uint32_t)2);
   return writeImage(w, im, err) && (bool)w.f;
 }
 
@@ -163,9 +165,10 @@ bool loadImageFile(std::span<const uint8_t> bytes, Image& im, std::string& err) 
   Reader r{bytes};
   char magic[4] = {}; r.bytes(magic, 4);
   if (!r.ok || std::memcmp(magic, "EIMG", 4) != 0) { err = "not an EIMG file"; return false; }
-  if (r.get<uint32_t>() != 1) { err = "EIMG version unsupported"; return false; }
+  uint32_t ver = r.get<uint32_t>();   // 1 = v5 image record, 2 = v6 (source index)
+  if (ver < 1 || ver > 2) { err = "EIMG version unsupported"; return false; }
   im = {};
-  if (!readImage(r, im, 5, err)) { if (err.empty()) err = "truncated EIMG"; return false; }
+  if (!readImage(r, im, ver == 1 ? 5 : 6, err)) { if (err.empty()) err = "truncated EIMG"; return false; }
   return true;
 }
 
