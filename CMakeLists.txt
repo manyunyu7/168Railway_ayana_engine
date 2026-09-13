@@ -15,7 +15,10 @@ add_library(engine STATIC
   engine/render/model_renderer.cpp
   engine/render/text.cpp
   engine/render/sky.cpp
+  engine/sim/sim_process.cpp
 )
+# Repo root at compile time: SimProcess finds bridge/sim-bridge.ts and ../ppka-wannabe-2 from it.
+target_compile_definitions(engine PUBLIC ENG_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_include_directories(engine PUBLIC ${CMAKE_SOURCE_DIR})
 
 if(APPLE)
@@ -33,6 +36,8 @@ add_executable(cube examples/cube/main.cpp)
 target_link_libraries(cube PRIVATE engine)
 add_executable(viewer examples/viewer/main.cpp)
 target_link_libraries(viewer PRIVATE engine)
+add_executable(simtest examples/simtest/main.cpp)
+target_link_libraries(simtest PRIVATE engine)
 
 # ---- tools (offline; may use third-party decoders) ----
 add_executable(convert tools/convert/main.cpp)
