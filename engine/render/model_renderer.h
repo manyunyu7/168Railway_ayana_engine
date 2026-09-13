@@ -16,6 +16,10 @@ struct Lighting {
   float fogDensity = 0;               // ~1/visibility_m
 };
 
+// Uploads an Image: the first variant the GPU supports (compressed chains as-is, RGBA8 with generated mips),
+// or `pixels` when the image has no variants. Returns id 0 when nothing is usable (logged).
+rhi::Texture uploadImage(const Image& im);
+
 struct GpuPrimitive { rhi::Mesh mesh; int material; AABB bounds; };
 struct GpuMesh { std::vector<GpuPrimitive> primitives; };
 

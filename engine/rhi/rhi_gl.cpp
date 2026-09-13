@@ -18,22 +18,60 @@
 #define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
 #endif
 
+// Compressed format enums (not all are in gl3.h / GLES3 headers)
+#ifndef GL_COMPRESSED_RGB8_ETC2
+#define GL_COMPRESSED_RGB8_ETC2 0x9274
+#define GL_COMPRESSED_SRGB8_ETC2 0x9275
+#define GL_COMPRESSED_RGBA8_ETC2_EAC 0x9278
+#define GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC 0x9279
+#endif
+#define GL_COMPRESSED_RGB_S3TC_DXT1_EXT 0x83F0
+#define GL_COMPRESSED_RGBA_S3TC_DXT5_EXT 0x83F3
+#define GL_COMPRESSED_SRGB_S3TC_DXT1_EXT 0x8C4C
+#define GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT 0x8C4F
+#define GL_COMPRESSED_RGBA_BPTC_UNORM 0x8E8C
+#define GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM 0x8E8D
+
 namespace eng::rhi {
 
 static float g_maxAniso = 0, g_aniso = 1;   // 0 = extension absent
+static bool g_etc2 = false, g_s3tc = false, g_s3tcSrgb = false, g_bptc = false;
 
 void init() {
-  g_maxAniso = 0; g_aniso = 1;
+  g_maxAniso = 0; g_aniso = 1; g_etc2 = g_s3tc = g_s3tcSrgb = g_bptc = false;
+#if defined(ENG_GL_ES) && !defined(__EMSCRIPTEN__)
+  g_etc2 = true;   // core in GLES 3.0; WebGL2 only has it through WEBGL_compressed_texture_etc (found below)
+#endif
   GLint n = 0; glGetIntegerv(GL_NUM_EXTENSIONS, &n);
   for (GLint i = 0; i < n; ++i) {
     const char* e = (const char*)glGetStringi(GL_EXTENSIONS, (GLuint)i);
-    if (e && !std::strcmp(e, "GL_EXT_texture_filter_anisotropic")) glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &g_maxAniso);
+    if (!e) continue;
+    if (!std::strcmp(e, "GL_EXT_texture_filter_anisotropic")) glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &g_maxAniso);
+    // Emscripten reports WebGL extensions with a GL_ prefix; desktop/GLES names as usual
+    if (std::strstr(e, "_compressed_texture_etc") && !std::strstr(e, "etc1")) g_etc2 = true;
+    if (std::strstr(e, "_compressed_texture_s3tc") && !std::strstr(e, "srgb")) g_s3tc = true;
+    if (std::strstr(e, "_texture_compression_s3tc")) g_s3tc = true;
+    if (std::strstr(e, "_compressed_texture_s3tc_srgb") || std::strstr(e, "_texture_sRGB") || std::strstr(e, "_texture_compression_s3tc_srgb")) g_s3tcSrgb = true;
+    if (std::strstr(e, "_texture_compression_bptc")) g_bptc = true;
   }
+#if defined(ENG_GL_DESKTOP)
+  g_s3tcSrgb = g_s3tcSrgb || g_s3tc;   // GL 4.1 core: EXT_texture_sRGB formats are part of the S3TC support (macOS)
+#endif
   glEnable(GL_DEPTH_TEST);
   glEnable(GL_CULL_FACE);
   glCullFace(GL_BACK);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-  std::printf("[rhi] %s | %s\n", glGetString(GL_RENDERER), glGetString(GL_VERSION));
+  std::printf("[rhi] %s | %s | compressed: %s%s%s%s\n", glGetString(GL_RENDERER), glGetString(GL_VERSION),
+              g_etc2 ? "ETC2 " : "", g_s3tc ? "BC1/BC3 " : "", g_bptc ? "BC7 " : "", g_etc2 || g_s3tc || g_bptc ? "" : "none");
+}
+
+bool supports(Format f) {
+  switch (f) {
+    case Format::ETC2_RGB: case Format::ETC2_RGBA: return g_etc2;
+    case Format::BC1: case Format::BC3: return g_s3tc;
+    case Format::BC7: return g_bptc;
+    default: return true;
+  }
 }
 
 void setViewport(int w, int h) { glViewport(0, 0, w, h); }
@@ -168,6 +206,28 @@ Texture createTexture(int w, int h, Format f, std::span<const std::byte> pixels,
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, mipmap ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
   if (mipmap) glGenerateMipmap(GL_TEXTURE_2D);
   if (mipmap && g_aniso > 1) glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, g_aniso);
+  return t;
+}
+Texture createTextureCompressed(Format f, std::span<const MipData> mips, bool srgb, Wrap wrapS, Wrap wrapT) {
+  if (!supports(f) || mips.empty()) return {};
+  auto wrapMode = [](Wrap w) { return w == Wrap::Clamp ? GL_CLAMP_TO_EDGE : w == Wrap::Mirror ? GL_MIRRORED_REPEAT : GL_REPEAT; };
+  bool s = srgb && (f == Format::ETC2_RGB || f == Format::ETC2_RGBA || f == Format::BC7 || g_s3tcSrgb);
+  GLenum internal = f == Format::ETC2_RGB  ? (s ? GL_COMPRESSED_SRGB8_ETC2 : GL_COMPRESSED_RGB8_ETC2)
+                  : f == Format::ETC2_RGBA ? (s ? GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC : GL_COMPRESSED_RGBA8_ETC2_EAC)
+                  : f == Format::BC1       ? (s ? GL_COMPRESSED_SRGB_S3TC_DXT1_EXT : GL_COMPRESSED_RGB_S3TC_DXT1_EXT)
+                  : f == Format::BC3       ? (s ? GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT : GL_COMPRESSED_RGBA_S3TC_DXT5_EXT)
+                  :                          (s ? GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM : GL_COMPRESSED_RGBA_BPTC_UNORM);
+  Texture t; glGenTextures(1, &t.id);
+  glBindTexture(GL_TEXTURE_2D, t.id);
+  for (size_t i = 0; i < mips.size(); ++i)
+    glCompressedTexImage2D(GL_TEXTURE_2D, (GLint)i, internal, mips[i].width, mips[i].height, 0, (GLsizei)mips[i].data.size(), mips[i].data.data());
+  bool chain = mips.size() > 1;
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, (GLint)mips.size() - 1);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode(wrapS));
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode(wrapT));
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, chain ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+  if (chain && g_aniso > 1) glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, g_aniso);
   return t;
 }
 void destroyTexture(Texture t) { if (t.id) glDeleteTextures(1, &t.id); }

@@ -11,11 +11,24 @@ namespace eng {
 
 struct Vertex { vec3 pos; vec3 normal; vec2 uv; };   // 32 bytes, interleaved
 
+// GPU texture formats an image may be stored in (EMOD v5). Compressed data is uploaded as-is with the
+// full mip chain; the runtime never encodes or decodes block formats.
+enum class TexFormat : uint8_t { RGBA8, ETC2_RGB, ETC2_RGBA, BC1, BC3, BC7 };
+constexpr bool isCompressed(TexFormat f) { return f != TexFormat::RGBA8; }
+constexpr size_t texLevelBytes(TexFormat f, int w, int h) {
+  size_t blocks = (size_t)((w + 3) / 4) * (size_t)((h + 3) / 4);
+  return f == TexFormat::RGBA8 ? (size_t)w * h * 4 : blocks * (f == TexFormat::ETC2_RGB || f == TexFormat::BC1 ? 8 : 16);
+}
+struct MipLevel { int width = 0, height = 0; std::vector<uint8_t> data; };
+struct ImageVariant { TexFormat format = TexFormat::RGBA8; std::vector<MipLevel> mips; };   // mips[0] = full size
+
 struct Image {
   std::string mime;                 // "image/png" etc. when still encoded
   std::vector<uint8_t> encoded;     // raw file bytes (GLB) — empty once decoded
   int width = 0, height = 0, channels = 0;
-  std::vector<uint8_t> pixels;      // decoded RGBA8 (engine format)
+  std::vector<uint8_t> pixels;      // decoded RGBA8 (engine format; EMOD ≤ v4, or converter output before encoding)
+  std::vector<ImageVariant> variants;   // v5: encoded forms in preference order (e.g. ETC2 chain, then a small RGBA8
+                                    // fallback); the loader uploads the first one the GPU supports. Empty = use pixels.
   uint8_t wrapS = 0, wrapT = 0;     // glTF sampler wrap of the textures using this image: 0 repeat, 1 clamp, 2 mirror
   bool linear = false;              // sampled as data (metal/rough, normal, occlusion): upload without sRGB decode
 };

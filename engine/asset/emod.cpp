@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <vector>
 
 namespace eng {
 
@@ -12,25 +13,67 @@ struct Writer {
   void str(const std::string& s) { put((uint16_t)s.size()); f.write(s.data(), (std::streamsize)s.size()); }
   void bytes(const void* p, size_t n) { f.write((const char*)p, (std::streamsize)n); }
 };
-struct Reader {
-  std::ifstream f; bool ok = true;
-  template <class T> T get() { T v{}; if (!f.read((char*)&v, sizeof v)) ok = false; return v; }
-  std::string str() { uint16_t n = get<uint16_t>(); std::string s(n, 0); if (n && !f.read(s.data(), n)) ok = false; return s; }
-  void bytes(void* p, size_t n) { if (n && !f.read((char*)p, (std::streamsize)n)) ok = false; }
+struct Reader {   // over a byte span (files are read whole; the web build gets the bytes from fetch)
+  std::span<const uint8_t> buf; size_t pos = 0; bool ok = true;
+  template <class T> T get() { T v{}; if (pos + sizeof v > buf.size()) { ok = false; pos = buf.size(); return v; } std::memcpy(&v, buf.data() + pos, sizeof v); pos += sizeof v; return v; }
+  std::string str() { uint16_t n = get<uint16_t>(); std::string s(n, 0); bytes(s.data(), n); return s; }
+  void bytes(void* p, size_t n) { if (pos + n > buf.size()) { ok = false; pos = buf.size(); return; } if (n) std::memcpy(p, buf.data() + pos, n); pos += n; }
 };
+
+bool readFile(const std::string& path, std::vector<uint8_t>& out) {
+  std::ifstream f(path, std::ios::binary | std::ios::ate); if (!f) return false;
+  std::streamsize n = f.tellg(); f.seekg(0); out.resize((size_t)n);
+  return n == 0 || (bool)f.read((char*)out.data(), n);
 }
+
+bool writeImage(Writer& w, const Image& im, std::string& err) {
+  bool raw = im.variants.empty();
+  if (raw && (im.pixels.empty() || im.channels != 4)) { err = "image not decoded to RGBA8"; return false; }
+  w.put((uint16_t)im.width); w.put((uint16_t)im.height); w.put((uint8_t)4);
+  w.put(im.wrapS); w.put(im.wrapT); w.put((uint8_t)(im.linear ? 1 : 0));
+  if (raw) {   // a raw image becomes a one-variant, one-mip RGBA8 record
+    w.put((uint8_t)1); w.put((uint8_t)TexFormat::RGBA8); w.put((uint8_t)1);
+    w.put((uint16_t)im.width); w.put((uint16_t)im.height); w.put((uint32_t)im.pixels.size()); w.bytes(im.pixels.data(), im.pixels.size());
+    return true;
+  }
+  w.put((uint8_t)im.variants.size());
+  for (const ImageVariant& v : im.variants) {
+    w.put((uint8_t)v.format); w.put((uint8_t)v.mips.size());
+    for (const MipLevel& l : v.mips) {
+      if (l.data.size() != texLevelBytes(v.format, l.width, l.height)) { err = "mip level size mismatch"; return false; }
+      w.put((uint16_t)l.width); w.put((uint16_t)l.height); w.put((uint32_t)l.data.size()); w.bytes(l.data.data(), l.data.size());
+    }
+  }
+  return true;
+}
+
+bool readImage(Reader& r, Image& im, uint32_t ver, std::string& err) {
+  im.width = r.get<uint16_t>(); im.height = r.get<uint16_t>(); im.channels = r.get<uint8_t>();
+  im.wrapS = r.get<uint8_t>(); im.wrapT = r.get<uint8_t>(); im.linear = r.get<uint8_t>() != 0;   // zero (= repeat, sRGB) before v4
+  if (ver < 5) { im.pixels.resize((size_t)im.width * im.height * im.channels); r.bytes(im.pixels.data(), im.pixels.size()); return r.ok; }
+  im.variants.resize(r.get<uint8_t>());
+  for (ImageVariant& v : im.variants) {
+    v.format = (TexFormat)r.get<uint8_t>(); v.mips.resize(r.get<uint8_t>());
+    if ((uint8_t)v.format > (uint8_t)TexFormat::BC7) { err = "unknown texture format"; return false; }
+    for (MipLevel& l : v.mips) {
+      l.width = r.get<uint16_t>(); l.height = r.get<uint16_t>(); uint32_t n = r.get<uint32_t>();
+      if (!r.ok || n != texLevelBytes(v.format, l.width, l.height)) { err = "bad mip level"; return false; }
+      l.data.resize(n); r.bytes(l.data.data(), n);
+    }
+  }
+  // a plain single RGBA8 variant is also exposed as `pixels` so CPU users (tests, procedural code) keep working
+  if (im.variants.size() == 1 && im.variants[0].format == TexFormat::RGBA8 && im.variants[0].mips.size() == 1)
+    im.pixels = im.variants[0].mips[0].data;
+  return r.ok;
+}
+} // namespace
 
 bool saveEmod(const Model& m, const std::string& path, std::string& err) {
   Writer w{std::ofstream(path, std::ios::binary)};
   if (!w.f) { err = "cannot write " + path; return false; }
   w.bytes("EMOD", 4); w.put(EMOD_VERSION);
   w.put((uint32_t)m.images.size());
-  for (const Image& im : m.images) {
-    if (im.pixels.empty() || im.channels != 4) { err = "image not decoded to RGBA8"; return false; }
-    w.put((uint16_t)im.width); w.put((uint16_t)im.height); w.put((uint8_t)4);
-    w.put(im.wrapS); w.put(im.wrapT); w.put((uint8_t)(im.linear ? 1 : 0));
-    w.bytes(im.pixels.data(), im.pixels.size());
-  }
+  for (const Image& im : m.images) if (!writeImage(w, im, err)) return false;
   w.put((uint32_t)m.materials.size());
   for (const Material& mt : m.materials) {
     w.str(mt.name); w.put(mt.baseColor); w.put(mt.metallic); w.put(mt.roughness); w.put(mt.emissive);
@@ -61,19 +104,20 @@ bool saveEmod(const Model& m, const std::string& path, std::string& err) {
 }
 
 bool loadEmod(const std::string& path, Model& m, std::string& err) {
-  Reader r{std::ifstream(path, std::ios::binary)};
-  if (!r.f) { err = "cannot open " + path; return false; }
-  char magic[4]; r.bytes(magic, 4);
-  if (std::memcmp(magic, "EMOD", 4) != 0) { err = "not an EMOD file"; return false; }
+  std::vector<uint8_t> bytes;
+  if (!readFile(path, bytes)) { err = "cannot open " + path; return false; }
+  return loadEmod(bytes, m, err);
+}
+
+bool loadEmod(std::span<const uint8_t> bytes, Model& m, std::string& err) {
+  Reader r{bytes};
+  char magic[4] = {}; r.bytes(magic, 4);
+  if (!r.ok || std::memcmp(magic, "EMOD", 4) != 0) { err = "not an EMOD file"; return false; }
   uint32_t ver = r.get<uint32_t>();
   if (ver < 1 || ver > EMOD_VERSION) { err = "EMOD version " + std::to_string(ver) + " unsupported"; return false; }
   m = {};
   m.images.resize(r.get<uint32_t>());
-  for (Image& im : m.images) {
-    im.width = r.get<uint16_t>(); im.height = r.get<uint16_t>(); im.channels = r.get<uint8_t>();
-    im.wrapS = r.get<uint8_t>(); im.wrapT = r.get<uint8_t>(); im.linear = r.get<uint8_t>() != 0;   // zero (= repeat, sRGB) before v4
-    im.pixels.resize((size_t)im.width * im.height * im.channels); r.bytes(im.pixels.data(), im.pixels.size());
-  }
+  for (Image& im : m.images) if (!readImage(r, im, ver, err)) { if (err.empty()) err = "truncated EMOD"; return false; }
   m.materials.resize(r.get<uint32_t>());
   for (Material& mt : m.materials) {
     mt.name = r.str(); mt.baseColor = r.get<vec4>(); mt.metallic = r.get<float>(); mt.roughness = r.get<float>(); mt.emissive = r.get<vec3>();
@@ -90,7 +134,9 @@ bool loadEmod(const std::string& path, Model& m, std::string& err) {
       p.vertices.resize(r.get<uint32_t>()); r.bytes(p.vertices.data(), p.vertices.size() * sizeof(Vertex));
       p.indices.resize(r.get<uint32_t>()); r.bytes(p.indices.data(), p.indices.size() * 4);
       p.boundsMin = r.get<vec3>(); p.boundsMax = r.get<vec3>();
+      if (!r.ok) break;
     }
+    if (!r.ok) break;
   }
   m.nodes.resize(r.get<uint32_t>());
   for (Node& n : m.nodes) {
@@ -98,10 +144,28 @@ bool loadEmod(const std::string& path, Model& m, std::string& err) {
     n.children.resize(r.get<uint32_t>()); for (int& c : n.children) c = r.get<int32_t>();
     n.local = r.get<mat4>();
     if (ver >= 2) { uint16_t ne = r.get<uint16_t>(); for (uint16_t i = 0; i < ne && r.ok; ++i) { std::string k = r.str(); n.extras[k] = r.str(); } }
+    if (!r.ok) break;
   }
   m.roots.resize(r.get<uint32_t>()); for (int& x : m.roots) x = r.get<int32_t>();
   m.boundsMin = r.get<vec3>(); m.boundsMax = r.get<vec3>();
   if (!r.ok) { err = "truncated EMOD"; return false; }
+  return true;
+}
+
+bool saveImageFile(const Image& im, const std::string& path, std::string& err) {
+  Writer w{std::ofstream(path, std::ios::binary)};
+  if (!w.f) { err = "cannot write " + path; return false; }
+  w.bytes("EIMG", 4); w.put((uint32_t)1);
+  return writeImage(w, im, err) && (bool)w.f;
+}
+
+bool loadImageFile(std::span<const uint8_t> bytes, Image& im, std::string& err) {
+  Reader r{bytes};
+  char magic[4] = {}; r.bytes(magic, 4);
+  if (!r.ok || std::memcmp(magic, "EIMG", 4) != 0) { err = "not an EIMG file"; return false; }
+  if (r.get<uint32_t>() != 1) { err = "EIMG version unsupported"; return false; }
+  im = {};
+  if (!readImage(r, im, 5, err)) { if (err.empty()) err = "truncated EIMG"; return false; }
   return true;
 }
 

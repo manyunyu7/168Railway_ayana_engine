@@ -1,13 +1,35 @@
 #include "engine/render/model_renderer.h"
 #include "engine/render/pbr_shader.h"
 #include <algorithm>
+#include <cstdio>
 
 namespace eng {
 
+rhi::Texture uploadImage(const Image& im) {
+  // colour images are sRGB; metal/rough, normal and occlusion maps are data
+  auto wrapS = (rhi::Wrap)im.wrapS, wrapT = (rhi::Wrap)im.wrapT;
+  if (im.variants.empty())
+    return rhi::createTexture(im.width, im.height, rhi::Format::RGBA8, std::as_bytes(std::span(im.pixels)), true, !im.linear, wrapS, wrapT);
+  static const rhi::Format map[] = {rhi::Format::RGBA8, rhi::Format::ETC2_RGB, rhi::Format::ETC2_RGBA, rhi::Format::BC1, rhi::Format::BC3, rhi::Format::BC7};
+  for (const ImageVariant& v : im.variants) {
+    rhi::Format f = map[(int)v.format];
+    if (v.mips.empty() || !rhi::supports(f)) continue;
+    if (v.format == TexFormat::RGBA8) {
+      const MipLevel& l = v.mips[0];
+      return rhi::createTexture(l.width, l.height, rhi::Format::RGBA8, std::as_bytes(std::span(l.data)), true, !im.linear, wrapS, wrapT);
+    }
+    std::vector<rhi::MipData> mips;
+    for (const MipLevel& l : v.mips) mips.push_back({l.width, l.height, std::as_bytes(std::span(l.data))});
+    return rhi::createTextureCompressed(f, mips, !im.linear, wrapS, wrapT);
+  }
+  std::fprintf(stderr, "[model] no usable texture variant for a %dx%d image (formats: ", im.width, im.height);
+  for (const ImageVariant& v : im.variants) std::fprintf(stderr, "%d ", (int)v.format);
+  std::fprintf(stderr, ")\n");
+  return {};
+}
+
 void GpuModel::upload(const Model& m) {
-  for (const Image& im : m.images)   // colour images are sRGB; metal/rough, normal and occlusion maps are data
-    textures.push_back(rhi::createTexture(im.width, im.height, rhi::Format::RGBA8, std::as_bytes(std::span(im.pixels)), true,
-                                          !im.linear, (rhi::Wrap)im.wrapS, (rhi::Wrap)im.wrapT));
+  for (const Image& im : m.images) textures.push_back(uploadImage(im));
   const rhi::Attribute layout[] = {{0, 3, sizeof(Vertex), 0}, {1, 3, sizeof(Vertex), 12}, {2, 2, sizeof(Vertex), 24}};
   for (const Mesh& me : m.meshes) {
     GpuMesh gm;

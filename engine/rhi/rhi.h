@@ -13,7 +13,8 @@ struct Texture { uint32_t id = 0; };
 struct Mesh    { uint32_t vao = 0; Buffer vb, ib; uint32_t indexCount = 0; };
 
 enum class BufferKind { Vertex, Index };
-enum class Format { RGBA8, RGB8, RG8, R8 };
+// Uncompressed formats always exist; block-compressed ones depend on the GPU/extension (see supports()).
+enum class Format { RGBA8, RGB8, RG8, R8, ETC2_RGB, ETC2_RGBA, BC1, BC3, BC7 };
 
 // One vertex attribute (mesh layout description).
 struct Attribute { int location; int components; int stride; int offset; bool normalized = false; };
@@ -60,6 +61,12 @@ float   setAnisotropy(float level);
 enum class Wrap : uint8_t { Repeat, Clamp, Mirror };   // matches Image::wrapS/T encoding
 Texture createTexture(int w, int h, Format f, std::span<const std::byte> pixels, bool mipmap = true, bool srgb = false,
                       Wrap wrapS = Wrap::Repeat, Wrap wrapT = Wrap::Repeat);
+// Block-compressed upload (ETC2/BC): every mip level is given by the caller (glCompressedTexImage2D per
+// level; nothing is generated). Returns id 0 when the format is unsupported — check supports() first.
+struct MipData { int width, height; std::span<const std::byte> data; };
+bool    supports(Format f);          // valid after init(); uncompressed formats are always true
+Texture createTextureCompressed(Format f, std::span<const MipData> mips, bool srgb = false,
+                                Wrap wrapS = Wrap::Repeat, Wrap wrapT = Wrap::Repeat);
 void    destroyTexture(Texture t);
 void    bindTexture(int slot, Texture t);
 
