@@ -52,6 +52,7 @@ bool saveEmod(const Model& m, const std::string& path, std::string& err) {
     w.str(n.name); w.put((int32_t)n.mesh); w.put((int32_t)n.parent);
     w.put((uint32_t)n.children.size()); for (int c : n.children) w.put((int32_t)c);
     w.put(n.local);
+    w.put((uint16_t)n.extras.size()); for (const auto& [k, v] : n.extras) { w.str(k); w.str(v); }
   }
   w.put((uint32_t)m.roots.size()); for (int r : m.roots) w.put((int32_t)r);
   w.put(m.boundsMin); w.put(m.boundsMax);
@@ -64,7 +65,7 @@ bool loadEmod(const std::string& path, Model& m, std::string& err) {
   char magic[4]; r.bytes(magic, 4);
   if (std::memcmp(magic, "EMOD", 4) != 0) { err = "not an EMOD file"; return false; }
   uint32_t ver = r.get<uint32_t>();
-  if (ver != EMOD_VERSION) { err = "EMOD version " + std::to_string(ver) + " unsupported"; return false; }
+  if (ver < 1 || ver > EMOD_VERSION) { err = "EMOD version " + std::to_string(ver) + " unsupported"; return false; }
   m = {};
   m.images.resize(r.get<uint32_t>());
   for (Image& im : m.images) {
@@ -93,6 +94,7 @@ bool loadEmod(const std::string& path, Model& m, std::string& err) {
     n.name = r.str(); n.mesh = r.get<int32_t>(); n.parent = r.get<int32_t>();
     n.children.resize(r.get<uint32_t>()); for (int& c : n.children) c = r.get<int32_t>();
     n.local = r.get<mat4>();
+    if (ver >= 2) { uint16_t ne = r.get<uint16_t>(); for (uint16_t i = 0; i < ne && r.ok; ++i) { std::string k = r.str(); n.extras[k] = r.str(); } }
   }
   m.roots.resize(r.get<uint32_t>()); for (int& x : m.roots) x = r.get<int32_t>();
   m.boundsMin = r.get<vec3>(); m.boundsMax = r.get<vec3>();

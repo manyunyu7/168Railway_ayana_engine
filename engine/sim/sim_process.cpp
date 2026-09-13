@@ -176,6 +176,10 @@ void SimProcess::parseState(const Json& j) {
       vh.model = v["model"].stringOr(""); vh.kind = v["kind"].stringOr("");
       vh.x = v["x"].numberOr(0); vh.y = v["y"].numberOr(0);
       vh.heading = (float)v["heading"].numberOr(0); vh.length = (float)v["len"].numberOr(0);
+      vh.sarana = v["sarana"].stringOr(""); vh.seg = v["seg"].stringOr(""); vh.seg2 = v["seg2"].stringOr(vh.seg);
+      vh.s = (float)v["s"].numberOr(0); vh.s2 = (float)v["s2"].numberOr(vh.s);
+      vh.x1 = v["x1"].numberOr(vh.x); vh.y1 = v["y1"].numberOr(vh.y);
+      vh.x2 = v["x2"].numberOr(vh.x); vh.y2 = v["y2"].numberOr(vh.y);
       tr.vehicles.push_back(std::move(vh));
     }
     st.trains.push_back(std::move(tr));

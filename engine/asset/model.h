@@ -2,6 +2,8 @@
 #pragma once
 #include "engine/math/math.h"
 #include <cstdint>
+#include <cstdlib>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -43,6 +45,11 @@ struct Node {
   int mesh = -1, parent = -1;
   std::vector<int> children;
   mat4 local;                       // TRS baked into a matrix
+  std::map<std::string, std::string> extras;   // scalar glTF node extras (numbers/bools/strings as text)
+  float extraNumber(const std::string& key, float d) const {
+    auto it = extras.find(key); if (it == extras.end()) return d;
+    char* e = nullptr; float v = std::strtof(it->second.c_str(), &e); return e && *e == 0 ? v : d;
+  }
 };
 
 struct Model {

@@ -9,7 +9,12 @@
 namespace eng {
 
 // Coordinates are double: Web Mercator maps sit at ~1.2e7 m where float resolution is ~1 m.
-struct SimVehicle { std::string model, kind; double x = 0, y = 0; float heading = 0, length = 0; };
+struct SimVehicle {
+  std::string model, sarana, kind, seg, seg2;
+  double x = 0, y = 0;            // midpoint between the couplers
+  double x1 = 0, y1 = 0, x2 = 0, y2 = 0;   // front / rear coupler (world XY)
+  float heading = 0, length = 0, s = 0, s2 = 0;
+};
 struct SimTrain {
   std::string id, no, name, consist, state, hold, seg;
   int kelas = 0;

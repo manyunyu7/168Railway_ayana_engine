@@ -7,7 +7,7 @@
 //                    i32 baseColorTex, metalRoughTex, normalTex, emissiveTex, occlusionTex,
 //                    u8 alphaMode, f alphaCutoff, u8 doubleSided }
 //   u32 nMeshes { name, u32 nPrims { i32 material, u32 nVerts, Vertex[], u32 nIdx, u32[], vec3 min, vec3 max } }
-//   u32 nNodes { name, i32 mesh, i32 parent, u32 nChildren, i32[], mat4 local }
+//   u32 nNodes { name, i32 mesh, i32 parent, u32 nChildren, i32[], mat4 local, u16 nExtras { key, value } (v2+) }
 //   u32 nRoots i32[]   vec3 boundsMin boundsMax
 // strings: u16 length + bytes
 #pragma once
@@ -16,7 +16,7 @@
 
 namespace eng {
 
-constexpr uint32_t EMOD_VERSION = 1;
+constexpr uint32_t EMOD_VERSION = 2;   // v1 files (no node extras) still load
 
 bool saveEmod(const Model& m, const std::string& path, std::string& error);
 bool loadEmod(const std::string& path, Model& out, std::string& error);

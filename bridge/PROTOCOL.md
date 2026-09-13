@@ -67,7 +67,8 @@ Response = the **dynamic state**:
     seg, s, dir,             front of train: segment id, metres from node a, travel direction
     x, y, heading,           front of train in world XY, heading = atan2 of travel tangent
     hold, holdSignal, delay (s), nextStop (trackmark name),
-    vehicles: [{model, sarana, kind:"loco"|"car", len, x, y, heading, seg, s}]   front to rear
+    vehicles: [{model, sarana, kind:"loco"|"car", len, x, y, heading, seg, s,
+                x1, y1, x2, y2, seg2, s2}]                                        front to rear
   }],
   points:  [{id, setting:0|1, locked:<routeId>|null}],
   signals: [{id, aspect:"red"|"yellow"|"green"}],
@@ -77,7 +78,8 @@ Response = the **dynamic state**:
 }
 ```
 Vehicle `x,y` is the midpoint between its two couplers (both projected on the track, so consists bend on
-curves); `heading` is front-minus-rear. `model` is the 3D model id resolved the same way the web 3D layer
+curves); `heading` is front-minus-rear. `(x1,y1)` / `seg,s` is the vehicle's front coupler and `(x2,y2)` / `seg2,s2`
+its rear coupler, so the 3D layer can place each car exactly between its two couplers (§7.4). `model` is the 3D model id resolved the same way the web 3D layer
 does it (`src/tiga/armada.ts`: fleet by train number / per-slot override), falling back to the `sarana`
 catalogue id. `{"cmd":"state"}` returns the same object without advancing.
 
@@ -117,6 +119,6 @@ Lists candidates with `blocked` = `whyBlocked` result or null.
 ## C++ side
 `eng::SimProcess` (`engine/sim/sim_process.h`) spawns the bridge with fork/exec (cwd = PPKA root,
 `npx tsx`), blocks on one line per command, parses with `eng::Json` and fills `SimState`
-(`SimTrain{... vehicles[{model,x,y,heading}]}`, `SimPoint{id,setting,lockedBy}`, `SimSignal{id,aspect}`,
+(`SimTrain{... vehicles[{model,sarana,kind,length,x,y,heading,seg,s,x1,y1,x2,y2,seg2,s2}]}`, `SimPoint{id,setting,lockedBy}`, `SimSignal{id,aspect}`,
 new log lines). Raw responses stay available in `lastResponse()`; `world()`/`summary()` keep the load
 result. `examples/simtest` exercises everything and prints latency/size statistics.

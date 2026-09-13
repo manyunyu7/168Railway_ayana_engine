@@ -135,6 +135,9 @@ function trainState(t: any) {
       x: r3((a.p.x + b.p.x) / 2), y: r3((a.p.y + b.p.y) / 2),
       heading: r3(Math.atan2(dy, dx)),            // radians, direction of travel (front minus rear)
       seg: a.segId, s: r3(a.s),                   // front coupler of this vehicle on the track
+      x1: r3(a.p.x), y1: r3(a.p.y),               // front coupler in world XY
+      x2: r3(b.p.x), y2: r3(b.p.y),               // rear coupler in world XY
+      seg2: b.segId, s2: r3(b.s),                 // rear coupler on the track
     });
   }
   const sm = world.graph.sampleAt(t.front.segId, t.front.s);
