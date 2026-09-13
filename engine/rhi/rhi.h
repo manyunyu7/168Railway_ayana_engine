@@ -38,6 +38,7 @@ void    destroyProgram(Program p);
 void    useProgram(Program p);
 int     uniformLocation(Program p, const char* name);
 void    setUniform(int loc, const float* mat4);
+void    setUniform(int loc, float x, float y);
 void    setUniform(int loc, float x, float y, float z);
 void    setUniform(int loc, float x, float y, float z, float w);
 void    setUniform(int loc, float v);

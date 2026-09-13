@@ -3,6 +3,7 @@
 #include "engine/core/orbit_camera.h"
 #include "engine/core/window.h"
 #include "engine/render/model_renderer.h"
+#include "engine/render/text.h"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +25,7 @@ int main(int argc, char** argv) {
   model = {};
 
   ModelRenderer renderer; renderer.init();
+  TextRenderer text; if (!text.load("assets/font.efnt", err)) std::fprintf(stderr, "font: %s\n", err.c_str());
   Lighting light;
   OrbitCamera cam;
   cam.target = gpu.bounds.center();
@@ -45,6 +47,10 @@ int main(int argc, char** argv) {
     renderer.beginFrame(cam.projection((float)w / (float)h) * cam.view(), cam.position(), light);
     renderer.draw(gpu);
     renderer.flushTransparent();
+    char hud[128]; std::snprintf(hud, sizeof hud, "%s  draws %u  culled %u", argv[1], renderer.drawCalls, renderer.culled);
+    text.rect(8, 8, text.measure(hud) + 16, text.lineHeight() + 8, {0, 0, 0, 0.5f});
+    text.draw(hud, 16, 12);
+    text.flush(w, h);
 
     if (frame++ == 0) rhi::checkErrors("first frame");
     if (const char* cap = std::getenv("ENG_CAPTURE"); cap && frame == 30) {
@@ -52,6 +58,6 @@ int main(int argc, char** argv) {
     }
     win.swapBuffers();
   }
-  gpu.destroy(); renderer.shutdown(); win.close();
+  gpu.destroy(); renderer.shutdown(); text.shutdown(); win.close();
   return 0;
 }

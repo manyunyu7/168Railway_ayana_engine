@@ -98,6 +98,7 @@ void destroyProgram(Program p) { if (p.id) glDeleteProgram(p.id); }
 void useProgram(Program p) { glUseProgram(p.id); }
 int  uniformLocation(Program p, const char* name) { return glGetUniformLocation(p.id, name); }
 void setUniform(int loc, const float* m) { glUniformMatrix4fv(loc, 1, GL_FALSE, m); }
+void setUniform(int loc, float x, float y) { glUniform2f(loc, x, y); }
 void setUniform(int loc, float x, float y, float z) { glUniform3f(loc, x, y, z); }
 void setUniform(int loc, float x, float y, float z, float w) { glUniform4f(loc, x, y, z, w); }
 void setUniform(int loc, float v) { glUniform1f(loc, v); }

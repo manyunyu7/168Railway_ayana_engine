@@ -13,6 +13,7 @@ add_library(engine STATIC
   engine/asset/gltf.cpp
   engine/asset/emod.cpp
   engine/render/model_renderer.cpp
+  engine/render/text.cpp
 )
 target_include_directories(engine PUBLIC ${CMAKE_SOURCE_DIR})
 
@@ -36,3 +37,6 @@ target_link_libraries(viewer PRIVATE engine)
 add_executable(convert tools/convert/main.cpp)
 target_link_libraries(convert PRIVATE engine)
 target_compile_options(convert PRIVATE -Wno-error -O2 -fno-sanitize=undefined)
+add_executable(fontgen tools/fontgen/main.cpp)
+target_include_directories(fontgen PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_options(fontgen PRIVATE -Wno-error -O2 -fno-sanitize=undefined)
