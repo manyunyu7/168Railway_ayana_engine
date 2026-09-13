@@ -99,9 +99,21 @@ bool saveEmod(const Model& m, const std::string& path, std::string& err) {
     w.put((uint32_t)n.children.size()); for (int c : n.children) w.put((int32_t)c);
     w.put(n.local);
     w.put((uint16_t)n.extras.size()); for (const auto& [k, v] : n.extras) { w.str(k); w.str(v); }
+    w.put(n.translation); w.put(n.rotation); w.put(n.scale);   // v7
   }
   w.put((uint32_t)m.roots.size()); for (int r : m.roots) w.put((int32_t)r);
   w.put(m.boundsMin); w.put(m.boundsMax);
+  w.put((uint32_t)m.animations.size());   // v7
+  for (const Animation& a : m.animations) {
+    w.str(a.name); w.put(a.duration);
+    w.put((uint32_t)a.samplers.size());
+    for (const AnimSampler& sm : a.samplers) {
+      w.put(sm.comps); w.put((uint8_t)(sm.step ? 1 : 0)); w.put((uint32_t)sm.times.size());
+      w.bytes(sm.times.data(), sm.times.size() * 4); w.bytes(sm.values.data(), sm.values.size() * 4);
+    }
+    w.put((uint32_t)a.channels.size());
+    for (const AnimChannel& c : a.channels) { w.put((int32_t)c.sampler); w.put((int32_t)c.node); w.put((uint8_t)c.path); }
+  }
   return (bool)w.f;
 }
 
@@ -146,10 +158,28 @@ bool loadEmod(std::span<const uint8_t> bytes, Model& m, std::string& err) {
     n.children.resize(r.get<uint32_t>()); for (int& c : n.children) c = r.get<int32_t>();
     n.local = r.get<mat4>();
     if (ver >= 2) { uint16_t ne = r.get<uint16_t>(); for (uint16_t i = 0; i < ne && r.ok; ++i) { std::string k = r.str(); n.extras[k] = r.str(); } }
+    if (ver >= 7) { n.translation = r.get<vec3>(); n.rotation = r.get<quat>(); n.scale = r.get<vec3>(); }
+    else { n.translation = {n.local.m[3][0], n.local.m[3][1], n.local.m[3][2]}; }   // pre-v7: no clips, TRS unused
     if (!r.ok) break;
   }
   m.roots.resize(r.get<uint32_t>()); for (int& x : m.roots) x = r.get<int32_t>();
   m.boundsMin = r.get<vec3>(); m.boundsMax = r.get<vec3>();
+  if (ver >= 7) {
+    m.animations.resize(r.get<uint32_t>());
+    for (Animation& a : m.animations) {
+      a.name = r.str(); a.duration = r.get<float>();
+      a.samplers.resize(r.get<uint32_t>());
+      for (AnimSampler& sm : a.samplers) {
+        sm.comps = r.get<uint8_t>(); sm.step = r.get<uint8_t>() != 0; uint32_t n = r.get<uint32_t>();
+        if (!r.ok || sm.comps == 0 || sm.comps > 4 || n > (1u << 24)) { err = "bad animation sampler"; return false; }
+        sm.times.resize(n); r.bytes(sm.times.data(), n * 4);
+        sm.values.resize((size_t)n * sm.comps); r.bytes(sm.values.data(), sm.values.size() * 4);
+      }
+      a.channels.resize(r.get<uint32_t>());
+      for (AnimChannel& c : a.channels) { c.sampler = r.get<int32_t>(); c.node = r.get<int32_t>(); c.path = (AnimPath)r.get<uint8_t>(); }
+      if (!r.ok) break;
+    }
+  }
   if (!r.ok) { err = "truncated EMOD"; return false; }
   return true;
 }

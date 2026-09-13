@@ -228,4 +228,57 @@ TEST_MAIN({
   Model t4; CHECK_MSG(loadEmod(path, t4, err), err); std::filesystem::remove(path);
   CHECK(t4.images[0].placeholder() && t4.images[0].source == 3 && t4.images[0].width == 4096 && t4.images[0].wrapS == 1);
   CHECK(!t4.images[1].placeholder() && t4.images[1].source == -1);
+
+  // ---- model 3: animations (v7). Two nodes: `door` translated by a LINEAR clip, `arm` rotated by a STEP
+  //      clip plus a CUBICSPLINE scale sampler (tangents dropped); a matrix-form node is decomposed to TRS.
+  {
+    GlbBuilder b;
+    std::vector<float> times{0, 1, 2};
+    std::vector<float> trans{0, 0, 0, 0, 0, 1, 0, 0, 3};               // z: 0 -> 1 -> 3
+    std::vector<float> rot{0, 0, 0, 1, 0, 0.7071068f, 0, 0.7071068f, 0, 1, 0, 0};   // identity, 90 deg Y, 180 deg Y
+    std::vector<float> cub{0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 2, 2, 2, 0, 0, 0, 0, 0, 0, 4, 4, 4, 0, 0, 0};   // (in, value, out) x 3 keys
+    int aT = b.accessor(b.view(times), 3, "SCALAR", 5126, ",\"min\":[0],\"max\":[2]");
+    int aTr = b.accessor(b.view(trans), 3, "VEC3", 5126);
+    int aRot = b.accessor(b.view(rot), 3, "VEC4", 5126);
+    int aCub = b.accessor(b.view(cub), 9, "VEC3", 5126);
+    std::string body =
+      "\"nodes\":[{\"name\":\"door\",\"translation\":[5,0,0],\"children\":[1]},"
+      "{\"name\":\"arm\",\"matrix\":[2,0,0,0, 0,2,0,0, 0,0,2,0, 1,2,3,1]}],"
+      "\"scenes\":[{\"nodes\":[0]}],"
+      "\"animations\":[{\"name\":\"pintu-kiri\",\"samplers\":[{\"input\":" + std::to_string(aT) + ",\"output\":" + std::to_string(aTr) + "}],"
+      "\"channels\":[{\"sampler\":0,\"target\":{\"node\":0,\"path\":\"translation\"}}]},"
+      "{\"name\":\"panto-naik\",\"samplers\":[{\"input\":" + std::to_string(aT) + ",\"output\":" + std::to_string(aRot) + ",\"interpolation\":\"STEP\"},"
+      "{\"input\":" + std::to_string(aT) + ",\"output\":" + std::to_string(aCub) + ",\"interpolation\":\"CUBICSPLINE\"}],"
+      "\"channels\":[{\"sampler\":0,\"target\":{\"node\":1,\"path\":\"rotation\"}},{\"sampler\":1,\"target\":{\"node\":1,\"path\":\"scale\"}},"
+      "{\"sampler\":0,\"target\":{\"node\":1,\"path\":\"weights\"}}]}]";
+    glb = b.finish(body);
+  }
+  Model an;
+  CHECK_MSG(loadGlb(glb, an, err), err);
+  CHECK(an.nodes[0].translation.x == 5 && an.nodes[0].scale.y == 1);
+  CHECK_NEAR(an.nodes[1].translation.z, 3, 1e-6); CHECK_NEAR(an.nodes[1].scale.x, 2, 1e-6); CHECK_NEAR(an.nodes[1].rotation.w, 1, 1e-6);
+  CHECK(an.animations.size() == 2);
+  CHECK(an.animations[0].name == "pintu-kiri" && an.animations[0].channels.size() == 1 && an.animations[0].samplers.size() == 1);
+  CHECK_NEAR(an.animations[0].duration, 2, 1e-6);
+  CHECK(an.animations[1].channels.size() == 2);   // weights channel dropped
+  CHECK(an.animations[1].samplers[0].step && !an.animations[1].samplers[1].step);
+  CHECK(an.animations[1].samplers[1].values.size() == 9 && an.animations[1].samplers[1].values[3] == 2 && an.animations[1].samplers[1].values[6] == 4);
+  // scrub: door z at t = 1.5 -> 2 (linear between 1 and 3), clamped past the end; arm STEP holds 90 deg until t = 2
+  std::vector<mat4> local, world;
+  restPose(an.nodes, local); scrubAnimation(an.nodes, an.animations[0], 1.5f, local);
+  CHECK_NEAR(local[0].m[3][2], 2, 1e-5); CHECK_NEAR(local[0].m[3][0], 0, 1e-5);   // translation replaced (x no longer 5)
+  scrubAnimation(an.nodes, an.animations[0], 9, local); CHECK_NEAR(local[0].m[3][2], 3, 1e-5);
+  scrubAnimation(an.nodes, an.animations[1], 1.9f, local);
+  { vec3 ax = local[1].transformDir({1, 0, 0}); CHECK_NEAR(ax.x, 0, 1e-4); CHECK_NEAR(ax.z, -3.8, 1e-4); }   // 90 deg about Y (STEP), scale 2 -> 4 lerped at 0.9
+  scrubAnimation(an.nodes, an.animations[1], 0.5f, local);
+  { vec3 ax = local[1].transformDir({1, 0, 0}); CHECK_NEAR(ax.x, 1.5, 1e-4); }   // STEP rotation held at key 0, scale lerps 1 -> 2
+  computeWorld(an.nodes, an.roots, local, world);
+  CHECK_NEAR(world[1].m[3][2], 3 + 3, 1e-4);   // parent door at z = 3 (clamped clip) + own z 3
+  // EMOD v7 round trip of TRS + clips
+  CHECK_MSG(saveEmod(an, path, err), err);
+  Model an2; CHECK_MSG(loadEmod(path, an2, err), err); std::filesystem::remove(path);
+  CHECK(an2.animations.size() == 2 && an2.animations[1].name == "panto-naik");
+  CHECK(an2.animations[0].samplers[0].times == an.animations[0].samplers[0].times && an2.animations[0].samplers[0].values == an.animations[0].samplers[0].values);
+  CHECK(an2.animations[1].samplers[0].step && an2.animations[1].channels[1].path == AnimPath::Scale && an2.animations[1].channels[1].node == 1);
+  CHECK(an2.nodes[1].scale.x == an.nodes[1].scale.x && an2.nodes[0].translation.x == 5 && an2.nodes[1].rotation.w == an.nodes[1].rotation.w);
 })

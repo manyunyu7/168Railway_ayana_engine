@@ -41,14 +41,9 @@ void GpuModel::upload(const Model& m) {
       gm.primitives.push_back({rhi::createMesh(std::as_bytes(std::span(p.vertices)), layout, p.indices), p.material, AABB{p.boundsMin, p.boundsMax}});
     meshes.push_back(std::move(gm));
   }
-  materials = m.materials; nodes = m.nodes; roots = m.roots;
+  materials = m.materials; nodes = m.nodes; roots = m.roots; animations = m.animations;
   bounds = {m.boundsMin, m.boundsMax};
-  world.assign(nodes.size(), mat4::identity());
-  auto visit = [&](auto&& self, int n, const mat4& parent) -> void {
-    world[(size_t)n] = parent * nodes[(size_t)n].local;
-    for (int c : nodes[(size_t)n].children) self(self, c, world[(size_t)n]);
-  };
-  for (int r : roots) visit(visit, r, mat4::identity());
+  std::vector<mat4> local; restPose(nodes, local); computeWorld(nodes, roots, local, world);
 }
 
 void GpuModel::destroy() {
@@ -142,11 +137,12 @@ void ModelRenderer::submit(DrawItem d) {
   } else drawItem(d);
 }
 
-void ModelRenderer::draw(const GpuModel& model, const mat4& transform, const Frustum* frustum) {
+void ModelRenderer::draw(const GpuModel& model, const mat4& transform, const Frustum* frustum, const std::vector<mat4>* worldOverride) {
   static const Material DEFAULT;
+  const std::vector<mat4>& world = worldOverride && worldOverride->size() == model.world.size() ? *worldOverride : model.world;
   for (size_t n = 0; n < model.nodes.size(); ++n) {
     int mi = model.nodes[n].mesh; if (mi < 0) continue;
-    mat4 w = transform * model.world[n];
+    mat4 w = transform * world[n];
     for (const GpuPrimitive& p : model.meshes[(size_t)mi].primitives) {
       if (frustum && !frustum->contains(p.bounds.transformed(w))) { ++culled; continue; }
       const Material& mt = p.material >= 0 ? model.materials[(size_t)p.material] : DEFAULT;

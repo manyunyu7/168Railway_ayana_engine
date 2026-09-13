@@ -92,17 +92,40 @@ struct Ctx {
   }
 };
 
-mat4 nodeMatrix(const Json& n) {
+// Rotation quaternion of an orthonormal 3x3 (column-major mat4), Shepperd's method.
+quat quatFromMat(const mat4& m) {
+  float m00 = m.m[0][0], m11 = m.m[1][1], m22 = m.m[2][2];
+  float m01 = m.m[0][1], m02 = m.m[0][2], m10 = m.m[1][0], m12 = m.m[1][2], m20 = m.m[2][0], m21 = m.m[2][1];
+  float tr = m00 + m11 + m22; quat q;
+  if (tr > 0) { float s = std::sqrt(tr + 1) * 2; q.w = 0.25f * s; q.x = (m12 - m21) / s; q.y = (m20 - m02) / s; q.z = (m01 - m10) / s; }
+  else if (m00 > m11 && m00 > m22) { float s = std::sqrt(1 + m00 - m11 - m22) * 2; q.w = (m12 - m21) / s; q.x = 0.25f * s; q.y = (m10 + m01) / s; q.z = (m20 + m02) / s; }
+  else if (m11 > m22) { float s = std::sqrt(1 + m11 - m00 - m22) * 2; q.w = (m20 - m02) / s; q.x = (m10 + m01) / s; q.y = 0.25f * s; q.z = (m21 + m12) / s; }
+  else { float s = std::sqrt(1 + m22 - m00 - m11) * 2; q.w = (m01 - m10) / s; q.x = (m20 + m02) / s; q.y = (m21 + m12) / s; q.z = 0.25f * s; }
+  return q;
+}
+
+void nodeTransform(const Json& n, Node& node) {
   if (n.has("matrix")) {
     mat4 m; const Json& a = n["matrix"];
     for (int i = 0; i < 16; ++i) (&m.m[0][0])[i] = (float)a[(size_t)i].numberOr(i % 5 == 0 ? 1 : 0);
-    return m;
+    node.local = m;
+    // decompose so animated channels can still replace a single component
+    node.translation = {m.m[3][0], m.m[3][1], m.m[3][2]};
+    vec3 cx{m.m[0][0], m.m[0][1], m.m[0][2]}, cy{m.m[1][0], m.m[1][1], m.m[1][2]}, cz{m.m[2][0], m.m[2][1], m.m[2][2]};
+    node.scale = {length(cx), length(cy), length(cz)};
+    float det = dot(cx, cross(cy, cz)); if (det < 0) node.scale.x = -node.scale.x;
+    mat4 r = mat4::identity();
+    if (node.scale.x != 0 && node.scale.y != 0 && node.scale.z != 0) {
+      cx = cx / node.scale.x; cy = cy / node.scale.y; cz = cz / node.scale.z;
+      r.m[0][0] = cx.x; r.m[0][1] = cx.y; r.m[0][2] = cx.z; r.m[1][0] = cy.x; r.m[1][1] = cy.y; r.m[1][2] = cy.z; r.m[2][0] = cz.x; r.m[2][1] = cz.y; r.m[2][2] = cz.z;
+    }
+    node.rotation = quatFromMat(r);
+    return;
   }
-  vec3 t{0, 0, 0}, s{1, 1, 1}; quat r;
-  if (n.has("translation")) t = {(float)n["translation"][0].num, (float)n["translation"][1].num, (float)n["translation"][2].num};
-  if (n.has("scale")) s = {(float)n["scale"][0].num, (float)n["scale"][1].num, (float)n["scale"][2].num};
-  if (n.has("rotation")) r = {(float)n["rotation"][0].num, (float)n["rotation"][1].num, (float)n["rotation"][2].num, (float)n["rotation"][3].num};
-  return trs(t, r, s);
+  if (n.has("translation")) node.translation = {(float)n["translation"][0].num, (float)n["translation"][1].num, (float)n["translation"][2].num};
+  if (n.has("scale")) node.scale = {(float)n["scale"][0].num, (float)n["scale"][1].num, (float)n["scale"][2].num};
+  if (n.has("rotation")) node.rotation = {(float)n["rotation"][0].num, (float)n["rotation"][1].num, (float)n["rotation"][2].num, (float)n["rotation"][3].num};
+  node.local = trs(node.translation, node.rotation, node.scale);
 }
 
 } // namespace
@@ -237,7 +260,7 @@ bool loadGlb(std::span<const uint8_t> bytes, Model& out, std::string& err) {
   out.nodes.resize(nodes.size());
   for (size_t i = 0; i < nodes.size(); ++i) {
     const Json& n = nodes[i]; Node& node = out.nodes[i];
-    node.name = n["name"].stringOr(""); node.mesh = n["mesh"].intOr(-1); node.local = nodeMatrix(n);
+    node.name = n["name"].stringOr(""); node.mesh = n["mesh"].intOr(-1); nodeTransform(n, node);
     for (const auto& [k, v] : n["extras"].obj) {   // scalars only; arrays/objects are dropped
       if (v.isNumber()) { char buf[32]; std::snprintf(buf, sizeof buf, "%.9g", v.num); node.extras[k] = buf; }
       else if (v.isString()) node.extras[k] = v.str;
@@ -250,8 +273,87 @@ bool loadGlb(std::span<const uint8_t> bytes, Model& out, std::string& err) {
   if (sc.isNull()) { for (size_t i = 0; i < out.nodes.size(); ++i) if (out.nodes[i].parent < 0) out.roots.push_back((int)i); }
   else for (const Json& r : sc["nodes"].arr) out.roots.push_back(r.intOr(0));
 
+  // animations: node TRS channels only (no morph weights); tangents of CUBICSPLINE samplers dropped
+  for (const Json& an : doc["animations"].arr) {
+    Animation a; a.name = an["name"].stringOr("");
+    for (const Json& sm : an["samplers"].arr) {
+      AnimSampler s; Accessor in, val;
+      if (!ctx.accessor(sm["input"].intOr(0), in) || !ctx.accessor(sm["output"].intOr(0), val)) return false;
+      std::string ip = sm["interpolation"].stringOr("LINEAR");
+      bool cubic = ip == "CUBICSPLINE"; s.step = ip == "STEP";
+      s.comps = (uint8_t)val.comps;
+      s.times.resize(in.count);
+      for (size_t i = 0; i < in.count; ++i) { s.times[i] = in.readFloat(i, 0); a.duration = std::fmax(a.duration, s.times[i]); }
+      s.values.resize(in.count * s.comps);
+      for (size_t i = 0; i < in.count; ++i) {
+        size_t src = cubic ? i * 3 + 1 : i;   // cubic: [inTangent, value, outTangent] per key
+        if (src >= val.count) break;
+        for (int c = 0; c < s.comps; ++c) s.values[i * s.comps + (size_t)c] = val.readFloat(src, c);
+      }
+      a.samplers.push_back(std::move(s));
+    }
+    for (const Json& ch : an["channels"].arr) {
+      AnimChannel c; c.sampler = ch["sampler"].intOr(-1); c.node = ch["target"]["node"].intOr(-1);
+      std::string path = ch["target"]["path"].stringOr("");
+      if (path == "translation") c.path = AnimPath::Translation; else if (path == "rotation") c.path = AnimPath::Rotation;
+      else if (path == "scale") c.path = AnimPath::Scale; else continue;   // weights: unsupported
+      if (c.sampler < 0 || c.sampler >= (int)a.samplers.size() || c.node < 0 || c.node >= (int)out.nodes.size()) continue;
+      a.channels.push_back(c);
+    }
+    out.animations.push_back(std::move(a));
+  }
+
   out.computeBounds();
   return true;
+}
+
+void restPose(const std::vector<Node>& nodes, std::vector<mat4>& local) {
+  local.resize(nodes.size());
+  for (size_t i = 0; i < nodes.size(); ++i) local[i] = nodes[i].local;
+}
+
+void scrubAnimation(const std::vector<Node>& nodes, const Animation& a, float t, std::vector<mat4>& local) {
+  if (local.size() != nodes.size()) restPose(nodes, local);
+  // per-node TRS, only for the targeted nodes (a channel replaces one component)
+  struct Pose { vec3 t; quat r; vec3 s; bool used = false; };
+  std::vector<Pose> pose;
+  for (const AnimChannel& ch : a.channels) {
+    const AnimSampler& s = a.samplers[(size_t)ch.sampler];
+    if (s.times.empty()) continue;
+    if (pose.empty()) pose.resize(nodes.size());
+    Pose& p = pose[(size_t)ch.node];
+    if (!p.used) { const Node& n = nodes[(size_t)ch.node]; p = {n.translation, n.rotation, n.scale, true}; }
+    // keyframe pair around t (clamped)
+    size_t n = s.times.size(), k = 0;
+    while (k + 1 < n && s.times[k + 1] <= t) ++k;
+    size_t k1 = std::min(k + 1, n - 1);
+    float f = 0;
+    if (!s.step && k1 != k) { float dt = s.times[k1] - s.times[k]; f = dt > 1e-9f ? std::fmin(1.f, std::fmax(0.f, (t - s.times[k]) / dt)) : 0; }
+    const float* v0 = &s.values[k * s.comps]; const float* v1 = &s.values[k1 * s.comps];
+    if (ch.path == AnimPath::Rotation && s.comps == 4) {
+      quat q0{v0[0], v0[1], v0[2], v0[3]}, q1{v1[0], v1[1], v1[2], v1[3]};
+      float d = q0.x * q1.x + q0.y * q1.y + q0.z * q1.z + q0.w * q1.w;
+      if (d < 0) { q1 = {-q1.x, -q1.y, -q1.z, -q1.w}; d = -d; }
+      float w0 = 1 - f, w1 = f;
+      if (d < 0.9995f) { float th = std::acos(std::fmin(1.f, d)), sn = std::sin(th); w0 = std::sin((1 - f) * th) / sn; w1 = std::sin(f * th) / sn; }
+      quat q{q0.x * w0 + q1.x * w1, q0.y * w0 + q1.y * w1, q0.z * w0 + q1.z * w1, q0.w * w0 + q1.w * w1};
+      float l = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w); if (l > 1e-9f) { q.x /= l; q.y /= l; q.z /= l; q.w /= l; }
+      p.r = q;
+    } else if (s.comps >= 3) {
+      vec3 v{v0[0] + (v1[0] - v0[0]) * f, v0[1] + (v1[1] - v0[1]) * f, v0[2] + (v1[2] - v0[2]) * f};
+      if (ch.path == AnimPath::Translation) p.t = v; else if (ch.path == AnimPath::Scale) p.s = v;
+    }
+  }
+  for (size_t i = 0; i < pose.size(); ++i) if (pose[i].used) local[i] = trs(pose[i].t, pose[i].r, pose[i].s);
+}
+
+void computeWorld(const std::vector<Node>& nodes, const std::vector<int>& roots, const std::vector<mat4>& local, std::vector<mat4>& world) {
+  world.assign(nodes.size(), mat4::identity());
+  auto visit = [&](auto&& self, int n, const mat4& parent) -> void {
+    world[(size_t)n] = parent * local[(size_t)n];
+    for (int c : nodes[(size_t)n].children) self(self, c, world[(size_t)n]);
+  };
+  for (int r : roots) visit(visit, r, mat4::identity());
 }
 
 bool loadGlbFile(const std::string& path, Model& out, std::string& err) {

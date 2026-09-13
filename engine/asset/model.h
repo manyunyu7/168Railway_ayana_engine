@@ -70,11 +70,30 @@ struct Node {
   int mesh = -1, parent = -1;
   std::vector<int> children;
   mat4 local;                       // TRS baked into a matrix
+  vec3 translation{0, 0, 0}; quat rotation; vec3 scale{1, 1, 1};   // the same TRS split (animation targets replace
+                                    // one component and rebuild `local`); a matrix-form node is decomposed
   std::map<std::string, std::string> extras;   // scalar glTF node extras (numbers/bools/strings as text)
   float extraNumber(const std::string& key, float d) const {
     auto it = extras.find(key); if (it == extras.end()) return d;
     char* e = nullptr; float v = std::strtof(it->second.c_str(), &e); return e && *e == 0 ? v : d;
   }
+};
+
+// Animation clips (glTF animations[]): keyframed node translation / rotation / scale. Sampler
+// keyframe times are seconds; values are comps floats per key (3, 4 for rotation quaternions, 3).
+// CUBICSPLINE samplers are stored with only their keyframe values (tangents dropped) as LINEAR.
+struct AnimSampler {
+  std::vector<float> times, values;
+  uint8_t comps = 3;
+  bool step = false;                // STEP interpolation (else LINEAR)
+};
+enum class AnimPath : uint8_t { Translation, Rotation, Scale };
+struct AnimChannel { int sampler = -1, node = -1; AnimPath path = AnimPath::Translation; };
+struct Animation {
+  std::string name;
+  float duration = 0;               // last keyframe time over all samplers
+  std::vector<AnimSampler> samplers;
+  std::vector<AnimChannel> channels;
 };
 
 struct Model {
@@ -83,9 +102,17 @@ struct Model {
   std::vector<Mesh> meshes;
   std::vector<Node> nodes;
   std::vector<int> roots;
+  std::vector<Animation> animations;
   vec3 boundsMin, boundsMax;        // in model space, all nodes applied
 
   void computeBounds();
 };
+
+// Node-tree evaluation shared by the CPU model and GpuModel (both keep `nodes`/`roots`).
+// `local` starts as every node's rest `local`; scrubbing a clip at `t` seconds (clamped to the
+// clip) rebuilds the matrices of the nodes it targets; `computeWorld` chains parents.
+void restPose(const std::vector<Node>& nodes, std::vector<mat4>& local);
+void scrubAnimation(const std::vector<Node>& nodes, const Animation& a, float t, std::vector<mat4>& local);
+void computeWorld(const std::vector<Node>& nodes, const std::vector<int>& roots, const std::vector<mat4>& local, std::vector<mat4>& world);
 
 } // namespace eng

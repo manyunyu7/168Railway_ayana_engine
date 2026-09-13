@@ -173,6 +173,24 @@ int main(int argc, char** argv) {
         std::printf("  node %zu '%s':%s\n", ni, n["name"].stringOr("").c_str(), odd.c_str());
       ++ni;
     }
+    // animations: name, channels by target path, interpolation, duration, targeted nodes (the engine
+    // plays node TRS clips: `pintu-*` doors, `panto-*` pantographs; weights are ignored)
+    for (const Json& an : doc["animations"].arr) {
+      std::set<std::string> paths, interp, targets; float dur = 0; bool weights = false;
+      for (const Json& sm : an["samplers"].arr) {
+        interp.insert(sm["interpolation"].stringOr("LINEAR"));
+        const Json& in = doc["accessors"][(size_t)sm["input"].intOr(0)];
+        dur = std::fmax(dur, (float)in["max"][0].numberOr(0));
+      }
+      for (const Json& ch : an["channels"].arr) {
+        std::string pth = ch["target"]["path"].stringOr("?"); paths.insert(pth); if (pth == "weights") weights = true;
+        targets.insert(doc["nodes"][(size_t)ch["target"]["node"].intOr(0)]["name"].stringOr("?"));
+      }
+      std::string ps, is, ts; for (const auto& x : paths) ps += x + ","; for (const auto& x : interp) is += x + ","; for (const auto& x : targets) ts += x + ",";
+      std::printf("  anim '%s': %zu ch [%s] %s %.2fs -> %s\n", an["name"].stringOr("").c_str(), an["channels"].size(), ps.c_str(), is.c_str(), dur, ts.c_str());
+      if (weights) flags.insert("morph weight animation (ignored)");
+      if (interp.count("CUBICSPLINE")) flags.insert("CUBICSPLINE (played as LINEAR)");
+    }
     if (doc["animations"].size()) flags.insert("animations");
     if (doc["skins"].size()) flags.insert("skins");
     std::string fl; for (const std::string& f : flags) fl += f + "; ";

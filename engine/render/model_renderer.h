@@ -30,6 +30,7 @@ struct GpuModel {
   std::vector<Material> materials;
   std::vector<Node> nodes;
   std::vector<int> roots;
+  std::vector<Animation> animations;   // clips kept for node-pose players (see scrubAnimation)
   std::vector<mat4> world;          // per node, computed at upload (static models)
   AABB bounds;
 
@@ -42,8 +43,10 @@ public:
   void init();
   void shutdown();
   void beginFrame(const mat4& viewProj, vec3 eye, const Lighting& light);
-  // frustum: optional per-primitive culling (world-space bounds computed on the fly)
-  void draw(const GpuModel& model, const mat4& transform = mat4::identity(), const Frustum* frustum = nullptr);
+  // frustum: optional per-primitive culling (world-space bounds computed on the fly).
+  // worldOverride: per-node matrices replacing model.world (animated poses from computeWorld); same size.
+  void draw(const GpuModel& model, const mat4& transform = mat4::identity(), const Frustum* frustum = nullptr,
+            const std::vector<mat4>* worldOverride = nullptr);
   // Procedural geometry: one mesh, one material, optional single base-color texture.
   void drawMesh(const rhi::Mesh& mesh, const Material& mat, rhi::Texture baseTex, const mat4& transform);
   // Instanced: every primitive of the model must have had an instance buffer attached

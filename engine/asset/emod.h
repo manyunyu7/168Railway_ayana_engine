@@ -11,8 +11,11 @@
 //                    i32 baseColorTex, metalRoughTex, normalTex, emissiveTex, occlusionTex,
 //                    u8 alphaMode, f alphaCutoff, u8 doubleSided }
 //   u32 nMeshes { name, u32 nPrims { i32 material, u32 nVerts, Vertex[], u32 nIdx, u32[], vec3 min, vec3 max } }
-//   u32 nNodes { name, i32 mesh, i32 parent, u32 nChildren, i32[], mat4 local, u16 nExtras { key, value } (v2+) }
+//   u32 nNodes { name, i32 mesh, i32 parent, u32 nChildren, i32[], mat4 local, u16 nExtras { key, value } (v2+),
+//                vec3 translation, quat rotation, vec3 scale (v7+) }
 //   u32 nRoots i32[]   vec3 boundsMin boundsMax
+//   v7+: u32 nAnimations { name, f duration, u32 nSamplers { u8 comps, u8 step, u32 nKeys, f times[nKeys], f values[nKeys*comps] },
+//                          u32 nChannels { i32 sampler, i32 node, u8 path (0 T, 1 R, 2 S) } }
 // strings: u16 length + bytes
 //
 // Standalone image files (".eimg", terrain satellite tiles): magic "EIMG" u32 version (1 = v5 record, 2 = v6) + one image record.
@@ -23,10 +26,11 @@
 
 namespace eng {
 
-constexpr uint32_t EMOD_VERSION = 6;   // v1 (no node extras), v2 (TEXCOORD_0 only), v3 (material UV set), v4 (image
+constexpr uint32_t EMOD_VERSION = 7;   // v1 (no node extras), v2 (TEXCOORD_0 only), v3 (material UV set), v4 (image
                                        // wrap/colour-space flags, emissive strength, UV transforms baked), v5 (images as
                                        // GPU-format variants with mip chains: ETC2 / BC / RGBA8) still load;
-                                       // v6 = image `source` index + placeholder images (textures streamed separately)
+                                       // v6 (image `source` index + placeholder images, textures streamed separately);
+                                       // v7 = node TRS + animation clips (door / pantograph rigs)
 
 bool saveEmod(const Model& m, const std::string& path, std::string& error);
 bool loadEmod(const std::string& path, Model& out, std::string& error);
