@@ -59,6 +59,18 @@ models in `public/model3d/`). Node ≥ 20 is needed for the simulation bridge (`
 
 Maps known to work: `mojokerto` (one station, 64 trains), `bks` (Bekasi, 3 stations, 503 trains).
 
+## Web (WebAssembly)
+
+![CC203 rendered by the Wasm build in Chromium](docs/screenshot-wasm.jpg)
+
+```bash
+brew install emscripten
+cmake --preset wasm && cmake --build --preset wasm      # -> build/wasm/viewer.html (+ .wasm 200 KB)
+npx serve build/wasm                                    # open /viewer.html
+```
+The same RHI runs on WebGL2 (`ENG_GL_ES`); only the window hints and the main loop differ.
+The simulator bridge is native-only, so the web build currently ships the model viewer.
+
 ## Layout
 
 ```

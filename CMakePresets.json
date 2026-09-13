@@ -1,13 +1,72 @@
 {
   "version": 6,
   "configurePresets": [
-    { "name": "mac-debug", "generator": "Ninja", "binaryDir": "build/mac-debug",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined", "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined" } },
-    { "name": "mac-release", "generator": "Ninja", "binaryDir": "build/mac-release",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" } }
+    {
+      "name": "mac-debug",
+      "generator": "Ninja",
+      "binaryDir": "build/mac-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
+      }
+    },
+    {
+      "name": "mac-release",
+      "generator": "Ninja",
+      "binaryDir": "build/mac-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "wasm",
+      "generator": "Ninja",
+      "binaryDir": "build/wasm",
+      "toolchainFile": "/opt/homebrew/Cellar/emscripten/6.0.9/libexec/cmake/Modules/Platform/Emscripten.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
   ],
   "buildPresets": [
-    { "name": "mac-debug", "configurePreset": "mac-debug" },
-    { "name": "mac-release", "configurePreset": "mac-release" }
+    {
+      "name": "mac-debug",
+      "configurePreset": "mac-debug"
+    },
+    {
+      "name": "mac-release",
+      "configurePreset": "mac-release"
+    },
+    {
+      "name": "wasm",
+      "configurePreset": "wasm"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "mac-debug",
+      "configurePreset": "mac-debug",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "exclude": {
+          "label": "gpu"
+        }
+      }
+    },
+    {
+      "name": "mac-release",
+      "configurePreset": "mac-release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "exclude": {
+          "label": "gpu"
+        }
+      }
+    }
   ]
 }

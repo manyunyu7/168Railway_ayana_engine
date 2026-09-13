@@ -8,11 +8,17 @@ static GLFWwindow* W(const Window& w) { return static_cast<GLFWwindow*>(w.handle
 
 bool Window::open(int width, int height, const char* title) {
   if (!glfwInit()) { std::fprintf(stderr, "glfwInit failed\n"); return false; }
+#ifdef __EMSCRIPTEN__
+  glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);   // WebGL2 = GLES 3.0
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+#else
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
   glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
   glfwWindowHint(GLFW_SAMPLES, 4);
+#endif
   GLFWwindow* w = glfwCreateWindow(width, height, title, nullptr, nullptr);
   if (!w) { std::fprintf(stderr, "glfwCreateWindow failed\n"); glfwTerminate(); return false; }
   handle = w;
