@@ -91,6 +91,8 @@ int main(int argc, char** argv) {
               profile.gmax() * 1000, rails.stats().chunks, rails.stats().tris, rails.stats().piers, rails.stats().bridgeSegs, rails.stats().trussSegs, rails.stats().viaductSegs, rails.stats().tunnelSegs, rails.stats().buildMs,
               signals.signals().size(), buildMs);
 
+  for (const RailBuilder::BridgeInfo& b : rails.stats().bridges)
+    if (b.shape != BridgeShape::Deck) std::printf("  bridge %s: %s, chain span %.0f m, deck %.1f m above ground\n", b.seg.c_str(), b.shape == BridgeShape::Truss ? "truss" : "viaduct", b.span, b.height);
   auto applySim = [&]() {
     for (const SimSignal& s : sim.state().signals) signals.setAspect(s.id, s.aspect);
     for (const SimPoint& p : sim.state().points) points.setState(p.id, p.setting, !p.lockedBy.empty());
@@ -151,6 +153,19 @@ int main(int argc, char** argv) {
       for (size_t si = 0; si < graph.segments.size(); ++si) if (graph.segments[si].kind == want && k++ == n) {
         TrackSample sm = graph.sampleAt((int)si, graph.length(si) / 2); cam.target = graph.origin().toScene(sm.wx, sm.wy, profile.railHeight((int)si, graph.length(si) / 2));
         std::printf("target %s %d = seg %s (%.0f m)\n", t.c_str(), n, graph.segments[si].id.c_str(), graph.length(si));
+      }
+    }
+    else if (t.rfind("mouth:", 0) == 0) {   // n-th tunnel segment: camera outside its `a` mouth looking in
+      int n = std::atoi(t.c_str() + 6), k = 0;
+      for (size_t si = 0; si < graph.segments.size(); ++si) if (graph.segments[si].kind == RailKind::Tunnel && k++ == n) {
+        TrackSample sm = graph.sampleAt((int)si, 0.0); vec3 m = graph.origin().toScene(sm.wx, sm.wy, profile.railHeight((int)si, 0.0));
+        vec3 in = normalize(vec3{(float)sm.tx, 0, (float)sm.ty});   // scene z = world y
+        cam.target = m + vec3{0, 2, 0}; cam.yaw = std::atan2(-in.x, -in.z); cam.pitch = 0.12f; cam.distance = 40;
+        std::printf("target %s = seg %s mouth\n", t.c_str(), graph.segments[si].id.c_str());
+        if (haveTerrain) for (float d = -20; d <= 80; d += 10) {   // ground vs rail head along the approach (negative = inside)
+          vec3 q = m - in * d; double wx, wy; graph.origin().toWorld(q, wx, wy);
+          std::printf("  d %+4.0f m: ground %.1f raw %.1f rail %.1f\n", d, terrain.groundHeight(wx, wy), terrain.dem().heightScene(wx, wy), m.y);
+        }
       }
     }
     else if (t == "krl") { cam.target = krlXf.transformPoint({0, 3, 0}); }

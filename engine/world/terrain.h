@@ -32,6 +32,7 @@ struct MeshBuilder;
 namespace terrain {
 constexpr int DEM_Z = 13, DEM_Z_FAR = 10, TILE_Z = 14;
 constexpr float CARVE_INNER = 9, CARVE_OUTER = 60;            // UKIR_DALAM / UKIR_LUAR
+constexpr float MOUTH_INNER = 4.5f, MOUTH_OUTER = 13;            // corridor radii right at a tunnel mouth (engine addition, see groundHeight)
 constexpr float LOW_OUTER = 20, LOW_INNER = 8, LOW_MAX_DROP = 1.5f, LOW_IGNORE_DIFF = 4;   // RENDAH_*
 constexpr float BALLAST_FOOT = -0.580f;                      // BALAS_KAKI
 constexpr float PLATEAU_OFFSET = BALLAST_FOOT - 0.04f;       // plateau below the rail head

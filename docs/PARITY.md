@@ -44,7 +44,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
 
 | Feature | Status | Notes |
 |---|---|---|
-| Bézier track, arc-length LUT, vertical profile, rails/ballast, bridges (deck+piers), tunnels | ✅ | `track_graph`, `rail_profile`, `rail_builder` |
+| Bézier track, arc-length LUT, vertical profile, rails/ballast, bridges (deck+piers), tunnels | ✅ | `track_graph`, `rail_profile`, `rail_builder`. Tunnel mouths: engine addition — the carve corridor narrows to 4.5/13 m at the mouth (instead of fading to 0) and the first 12 m inside the portal are registered, so the portal ring is not buried when the z13 DEM sits above the rail (`railtest ENG_TARGET=mouth:n`) |
 | Warren truss bridges, viaduct columns | ✅ | `rail_builder.cpp`: shape `jenisJembatan ?? bentukJembatan(chain span, deck height)`; truss members (8 m panels, diagonals, verticals, top bracing, portals) in a steel mesh per chunk replacing the parapets; piers every 28 m at the structure centre (84 m under a truss), twin columns 1.3 m in from the edges for a viaduct. `railtest` draws the real terrain when tiles exist (`ENG_TARGET=bridge:n\|tunnel:n`) |
 | Profile step 3 (parallel roadbed pairing) | ❌ | heights of parallel tracks may differ slightly |
 | Colour-light signal geometry (§6.2), coronas, LOD sphere | ✅ | `signal_visual.cpp` |

@@ -323,12 +323,29 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
       double wx, wy; o.toWorld({p.x, p.y, p.z}, wx, wy);
       samples_.push_back({wx, wy, p.y, atGrade, w, jb});
     }
+    // Tunnel mouths: the first 12 m inside each portal are registered with weight 0 so the terrain's
+    // narrow mouth corridor (Terrain::groundHeight) opens a short cutting through the hill face
+    // instead of burying the portal ring (engine addition, not in the reference).
+    if (seg.kind == RailKind::Tunnel)
+      for (int e = 0; e < 2; ++e) {
+        int node = e ? seg.b : seg.a; bool more = false;
+        for (int x : g.nodes[(size_t)node].segs) if (x != (int)si && g.segments[(size_t)x].kind == RailKind::Tunnel) more = true;
+        if (more) continue;
+        for (int i = 0; i <= 3 && i < (int)pts.size(); ++i) {
+          const Pt& p = pts[e ? pts.size() - 1 - (size_t)i : (size_t)i];
+          double wx, wy; o.toWorld({p.x, p.y, p.z}, wx, wy);
+          samples_.push_back({wx, wy, p.y, true, 0.f, -1.f});
+        }
+        samples_.push_back({0, 0, 0, false, 0, -1});   // chain break
+      }
 
     BridgeShape shape = BridgeShape::Deck;
     if (seg.kind == RailKind::Bridge && pairs[si].host) {
       const Pt& m = pts[pts.size() / 2];
       float deckH = ground ? m.y + DEK_BAWAH - groundAt(m) : 0;
-      shape = seg.bridge != BridgeShape::Auto ? seg.bridge : bentukJembatan(chainSpan(si), deckH);
+      float span = chainSpan(si);
+      shape = seg.bridge != BridgeShape::Auto ? seg.bridge : bentukJembatan(span, deckH);
+      stats_.bridges.push_back({seg.id, shape, span, deckH});
       if (shape == BridgeShape::Truss) ++stats_.trussSegs;
       if (shape == BridgeShape::Viaduct) ++stats_.viaductSegs;
     }

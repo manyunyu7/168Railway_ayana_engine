@@ -273,10 +273,16 @@ float Terrain::groundHeight(double wx, double wy) const {
   if (railGrid_.empty() && bridgeGrid_.empty()) return h;
   float x = (float)(wx - origin_.ox), z = (float)(wy - origin_.oz);
   Nearest n;
-  if (nearestRail(x, z, n) && n.d <= CARVE_OUTER && n.b > 0) {
-    float t = n.d <= CARVE_INNER ? 1.f : 1 - (n.d - CARVE_INNER) / (CARVE_OUTER - CARVE_INNER);
-    float w = smoothstep01(t) * n.b;
-    h = h * (1 - w) + (carveBase(n) + PLATEAU_OFFSET) * w;
+  if (nearestRail(x, z, n) && n.d <= CARVE_OUTER) {
+    // Toward a tunnel mouth (b -> 0) the reference fades the whole carve out, which leaves the portal
+    // buried when the DEM sits above the rail there. Instead the corridor NARROWS with b (inner 9 -> 4 m,
+    // outer 60 -> 12 m) so the hill still stands over the tunnel but a short cutting opens the portal.
+    float inner = MOUTH_INNER + (CARVE_INNER - MOUTH_INNER) * n.b, outer = MOUTH_OUTER + (CARVE_OUTER - MOUTH_OUTER) * n.b;
+    if (n.d <= outer) {
+      float t = n.d <= inner ? 1.f : 1 - (n.d - inner) / (outer - inner);
+      float w = smoothstep01(t);
+      h = h * (1 - w) + (carveBase(n) + PLATEAU_OFFSET) * w;
+    }
   }
   float jd, jy, jb;
   if (nearestDeck(x, z, jd, jy, jb) && jd <= BRIDGE_OUTER && jb > 0) {
