@@ -21,6 +21,6 @@ constexpr int SKIP = 77;
 #define CHECK_EQ(a, b) do { ++test::checks; if (!((a) == (b))) test::fail(__FILE__, __LINE__, #a " == " #b); } while (0)
 
 // Body runs inside main; returns the process exit code.
-#define TEST_MAIN(body) int main() { body; \
+#define TEST_MAIN(...) int main() { __VA_ARGS__; \
   std::printf("%s: %d checks, %d failures\n", __FILE__, test::checks, test::failures); \
   return test::failures ? 1 : 0; }

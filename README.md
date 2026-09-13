@@ -71,6 +71,20 @@ npx serve build/wasm                                    # open /viewer.html
 The same RHI runs on WebGL2 (`ENG_GL_ES`); only the window hints and the main loop differ.
 The simulator bridge is native-only, so the web build currently ships the model viewer.
 
+## Tests
+
+```bash
+cmake --preset mac-debug && cmake --build --preset mac-debug
+ctest --preset mac-debug        # 7 tests, ~5 s: math, JSON, GLB/EMOD, track LUT vs TS, compass, profile, sim bridge
+ctest --preset mac-debug-gpu    # golden image (opens a window; compares tests/golden/coupling.ppm)
+```
+
+Tests live in `tests/` (one executable each, `tests/check.h` is the whole framework). `test_track`
+compares the C++ track geometry with a dump of the TypeScript engine (`tests/ref/mojokerto_track.json`;
+regenerate with `cd ../ppka-wannabe-2 && npx tsx ../game-engine-experiment/tests/ref/track_ref.ts`).
+`test_bridge` skips when `npx` is missing. After an intentional rendering change run
+`./build/mac-debug/test_golden --update` and commit the new `tests/golden/coupling.ppm`.
+
 ## Layout
 
 ```

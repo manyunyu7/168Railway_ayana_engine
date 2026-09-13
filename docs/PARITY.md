@@ -95,4 +95,4 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
 | Texture compression (ETC2/ASTC/BC) in EMOD | ❌ | raw RGBA today; required before mobile |
 | GLES3 backend + Android EGL, Flutter `Texture` plugin | ❌ | prerequisite: C++ sim port (no Node on Android) |
 | WebAssembly (WebGL2) | ❌ | |
-| Automated tests (`ctest`: math, parsers, LUT vs TS, golden images) | ❌ | planned |
+| Automated tests (`ctest`: math, parsers, LUT vs TS, golden images) | ✅ | `tests/`, `ctest --preset mac-debug` (+ `mac-debug-gpu`) |

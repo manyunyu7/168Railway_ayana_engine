@@ -67,6 +67,19 @@
           "label": "gpu"
         }
       }
+    },
+    {
+      "name": "mac-debug-gpu",
+      "configurePreset": "mac-debug",
+      "output": {
+        "outputOnFailure": true,
+        "verbosity": "verbose"
+      },
+      "filter": {
+        "include": {
+          "label": "gpu"
+        }
+      }
     }
   ]
 }

@@ -1,6 +1,6 @@
 # Engine test suite (ctest). Each test is a small executable using tests/check.h (no framework).
 # Exit codes: 0 pass, 1 fail, 77 skipped (SKIP_RETURN_CODE). GPU tests carry the label `gpu` and are
-# excluded by the presets (`ctest --preset mac-debug -L gpu` runs them alone).
+# excluded by the `mac-debug` preset (`ctest --preset mac-debug-gpu` runs them alone).
 
 function(engine_test name)
   add_executable(${name} ${name}.cpp ${ARGN})

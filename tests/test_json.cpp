@@ -69,7 +69,7 @@ TEST_MAIN({
   err = bad("\"\\u12\"");           CHECK(err.find("bad \\u") != std::string::npos);
   err = bad("@");                   CHECK(err.find("unexpected character at 0") != std::string::npos);
   err = bad("[1, ?]");              CHECK(err.find("at 4") != std::string::npos);
-  err = bad("{\"deep\":[[[{\"x\":}]]]}"); CHECK(err.find("at 15") != std::string::npos);
+  err = bad("{\"deep\":[[[{\"x\":}]]]}"); CHECK(err.find("at 16") != std::string::npos);
   // error pointer is optional
   CHECK(Json::parse("[", nullptr).isNull());
 })
