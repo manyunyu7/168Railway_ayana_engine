@@ -32,7 +32,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
 | Multi-UV, wrap modes, emissive strength, linear MR maps, texture transform | ✅ | `gltf.cpp`, EMOD v4 (`tools/glbinfo` to audit) |
 | glTF animation clips (node TRS, LINEAR/STEP; CUBICSPLINE as LINEAR) | ✅ | `gltf.cpp`, EMOD v7, `scrubAnimation`/`computeWorld`, `ModelRenderer::draw(..., worldOverride)`; `glbinfo` lists clips |
 | Box fallback for missing models | ✅ | |
-| **Last KRL cab flipped** (`krl-8` last car: yaw+π, −roll, −pitch) | ❌ | small fix in `train_visual.cpp` |
+| Last KRL cab flipped (`krl-8` last car: yaw+π, −roll, −pitch) | ✅ | `train_visual.cpp` (`nryJr205KuhaBadan` last car) |
 | Door animation (`pintu-kiri/kanan` clips scrubbed by dwell) | ✅ | `train_visual.cpp`: `tPintu` runs in sim time (clock delta), opens while `dwell` and not `istirahat`, both clips at the same time as `setelPintu` (the reference opens both sides; there is no platform-side selection). Only the JR205 set carries the clips (`glbinfo`); `traintest ENG_DOORS=1` forces dwell |
 | Pantograph clips frozen at last frame | ✅ | `rolling_stock.cpp` `restLocal/restWorld` (`panto-*` at `duration`) |
 | Body sway (§7.5), cant roll | ✅ | `engine/world/sway.h` (`hitungGoyang`, `medan`, `kurvaRel`, `skalaLaju`; `tests/test_sway.cpp`); curvature from the bridge's coupler tangents `t1/t2`; roll into the YZX Euler, naik/geser at the coupler points. Longitudinal `aksel` (cab pitch only) not tracked |
