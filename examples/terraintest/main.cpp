@@ -3,7 +3,8 @@
 // DEM smoothed along the chord) and orbits the station. Drag to orbit, scroll to zoom, WASD to pan.
 // Trees are scattered from the satellite green mask (Vegetation) with the catalog's `vegetasi` models.
 // Env: ENG_DIST/ENG_PITCH/ENG_YAW camera, ENG_AT_CARVE=1 targets the strongest carve, ENG_CAPTURE=file.ppm,
-// ENG_NO_TREES=1 skips vegetation.
+// ENG_NO_TREES=1 skips vegetation, ENG_CLOCK=hh.h sets the sun/cloud tint (default 10:00), ENG_NO_CLOUDS=1 skips clouds.
+// Brush deltas (world.tanah) are applied when the save has them (bks).
 #include "engine/core/json.h"
 #include "engine/core/orbit_camera.h"
 #include "engine/core/window.h"
@@ -11,6 +12,8 @@
 #include "engine/render/sky.h"
 #include "engine/render/text.h"
 #include "engine/world/asset_catalog.h"
+#include "engine/world/cloud_visual.h"
+#include "engine/world/sun.h"
 #include "engine/world/terrain.h"
 #include "engine/world/vegetation.h"
 #include <GLFW/glfw3.h>
@@ -68,6 +71,7 @@ int main(int argc, char** argv) {
       }
       rails.push_back({0, 0, 0, false, 0});   // chain break between segments
     }
+    terrain.setBrushDeltas(doc["world"]["tanah"]);
     const Json& st = doc["world"]["hiasan"]["objek"][0];
     if (st.isObject()) { stationX = st["x"].numberOr(org.ox); stationY = st["y"].numberOr(org.oz); }
   }
@@ -100,11 +104,18 @@ int main(int argc, char** argv) {
     std::printf("vegetation: %zu trees in %d cells, %d models, %.0f ms\n", trees.stats.trees, trees.stats.cells, trees.stats.models, trees.stats.buildMs);
   }
   TextRenderer text; if (!text.load(root + "/assets/font.efnt", err)) std::fprintf(stderr, "font: %s\n", err.c_str());
+  auto envf = [](const char* k, float d) { const char* v = std::getenv(k); return v ? (float)std::atof(v) : d; };
   Lighting light; light.fogDensity = 1.f / 9000; Sky sky; sky.init(); sky.sunDir = light.sunDir;
   light.fogColor = {0.79f, 0.86f, 0.93f};
+  { double lon, lat; worldToLonLat(org.ox, org.oz, lon, lat); applySun(envf("ENG_CLOCK", 10) * 3600.0, lon, lat, light, sky); }
+  CloudVisual clouds;
+  if (!std::getenv("ENG_NO_CLOUDS")) {
+    const double* bb = terrain.dem().bbox;
+    clouds.build((float)(bb[0] - org.ox), (float)(bb[1] - org.oz), (float)(bb[2] - org.ox), (float)(bb[3] - org.oz));
+    std::printf("clouds: %d sprites\n", clouds.count());
+  }
   OrbitCamera cam;
   cam.target = org.toScene(stationX, stationY, terrain.groundHeight(stationX, stationY));
-  auto envf = [](const char* k, float d) { const char* v = std::getenv(k); return v ? (float)std::atof(v) : d; };
   cam.distance = envf("ENG_DIST", 500); cam.pitch = radians(envf("ENG_PITCH", 28)); cam.yaw = radians(envf("ENG_YAW", -30));
   cam.near = 1; cam.far = 40000;
 
@@ -136,6 +147,7 @@ int main(int argc, char** argv) {
     terrain.draw(renderer, &fr);
     trees.draw(renderer, cam.position(), &fr);
     renderer.flushTransparent();
+    clouds.draw(vp, cam.view(), cam.position(), sky, light, dt);
     char hud[256];
     std::snprintf(hud, sizeof hud, "%s  tiles %d+%d  patches %d  verts %zu  tris %zu  draws %u culled %u  trees %u/%zu  target (%.0f, %.0f) h %.1f", map.c_str(),
                   s.nearTiles, s.farTiles, s.patches, s.vertices, s.triangles, renderer.drawCalls, renderer.culled, trees.stats.drawn, trees.stats.trees, wx, wy, cam.target.y);
@@ -149,6 +161,6 @@ int main(int argc, char** argv) {
     }
     win.swapBuffers();
   }
-  trees.destroy(); catalog.destroy(); terrain.destroy(); renderer.shutdown(); text.shutdown(); sky.shutdown(); win.close();
+  clouds.destroy(); trees.destroy(); catalog.destroy(); terrain.destroy(); renderer.shutdown(); text.shutdown(); sky.shutdown(); win.close();
   return 0;
 }

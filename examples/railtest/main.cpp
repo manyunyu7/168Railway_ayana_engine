@@ -2,7 +2,10 @@
 // vertical profile (synthetic terrain), rail/bridge meshes, signals and points arrows, and shows
 // them with an orbit camera centred on the station. With --sim the map is loaded through the
 // TypeScript bridge and the session is stepped so signal aspects and point settings are real.
-// Env: ENG_CAPTURE=file.ppm (frame 30, exit), ENG_VIEW=dist,yaw,pitch, ENG_TARGET=signal:<name>|point:<nodeId>|x,z
+// When assets/terrain/<map>.dem/.sat exist (tools/fetch_tiles) the real DEM drives the profile and the
+// carved ground is drawn; otherwise a synthetic sine terrain is used.
+// Env: ENG_CAPTURE=file.ppm (frame 30, exit), ENG_VIEW=dist,yaw,pitch,
+// ENG_TARGET=signal:<name>|point:<nodeId>|seg:<id>|bridge:<n>|tunnel:<n>|x,z (bridge/tunnel: n-th such segment)
 #include "engine/core/json.h"
 #include "engine/core/orbit_camera.h"
 #include "engine/core/window.h"
@@ -14,6 +17,7 @@
 #include "engine/world/rail_builder.h"
 #include "engine/world/rail_profile.h"
 #include "engine/world/signal_visual.h"
+#include "engine/world/terrain.h"
 #include "engine/world/track_graph.h"
 #include <chrono>
 #include <cmath>
@@ -68,16 +72,21 @@ int main(int argc, char** argv) {
       stations.push_back({sc["pos"]["x"].numberOr(0), sc["pos"]["y"].numberOr(0), 160});
       if (stations.size() == 1) { stX = stations[0].wx; stY = stations[0].wy; }
     }
-  SineHeight dem;
-  float demBase = dem.rawHeight(graph.origin().ox, graph.origin().oz);
+  SineHeight sine;
+  Terrain terrain; std::string mapName = path.substr(path.find_last_of('/') + 1); mapName = mapName.substr(0, mapName.find('.'));
+  bool haveTerrain = terrain.load(std::string(ENG_SOURCE_DIR) + "/assets/terrain/" + mapName + ".dem", std::string(ENG_SOURCE_DIR) + "/assets/terrain/" + mapName + ".sat", err);
+  if (!haveTerrain) std::printf("no terrain tiles (%s) — synthetic ground\n", err.c_str());
+  const HeightSource& dem = haveTerrain ? (const HeightSource&)terrain.dem() : sine;
+  float demBase = haveTerrain ? terrain.dem().demBase : sine.rawHeight(graph.origin().ox, graph.origin().oz);
   VerticalProfile profile; profile.build(graph, dem, stations, demBase);
   RailBuilder rails; rails.build(graph, profile, &dem, demBase);
+  if (haveTerrain) { terrain.setBrushDeltas(world["tanah"]); terrain.setRails(rails.samples()); terrain.build(); }
   SignalVisuals signals; signals.build(graph, profile, world["trackside"]);
   PointVisuals points; points.build(graph, profile);
   double buildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-  std::printf("graph %zu nodes %zu segs %d points %.3f km | profile %d chains gmax %.1f permille | rails %d chunks %u tris %d piers (%.1f ms) | %zu signals | total %.1f ms\n",
+  std::printf("graph %zu nodes %zu segs %d points %.3f km | profile %d chains gmax %.1f permille | rails %d chunks %u tris %d piers, %d bridge segs (%d truss, %d viaduct), %d tunnel segs (%.1f ms) | %zu signals | total %.1f ms\n",
               graph.nodes.size(), graph.segments.size(), graph.pointCount(), graph.totalLength() / 1000, profile.chainCount(),
-              profile.gmax() * 1000, rails.stats().chunks, rails.stats().tris, rails.stats().piers, rails.stats().buildMs,
+              profile.gmax() * 1000, rails.stats().chunks, rails.stats().tris, rails.stats().piers, rails.stats().bridgeSegs, rails.stats().trussSegs, rails.stats().viaductSegs, rails.stats().tunnelSegs, rails.stats().buildMs,
               signals.signals().size(), buildMs);
 
   auto applySim = [&]() {
@@ -117,6 +126,13 @@ int main(int argc, char** argv) {
       int si = graph.segIndex(t.substr(4));
       if (si >= 0) { TrackSample sm = graph.sampleAt(si, graph.length(si) / 2); cam.target = graph.origin().toScene(sm.wx, sm.wy, profile.railHeight(si, graph.length(si) / 2)); }
     }
+    else if (t.rfind("bridge:", 0) == 0 || t.rfind("tunnel:", 0) == 0) {   // n-th bridge/tunnel segment, camera at its middle
+      RailKind want = t[0] == 'b' ? RailKind::Bridge : RailKind::Tunnel; int n = std::atoi(t.c_str() + 7), k = 0;
+      for (size_t si = 0; si < graph.segments.size(); ++si) if (graph.segments[si].kind == want && k++ == n) {
+        TrackSample sm = graph.sampleAt((int)si, graph.length(si) / 2); cam.target = graph.origin().toScene(sm.wx, sm.wy, profile.railHeight((int)si, graph.length(si) / 2));
+        std::printf("target %s %d = seg %s (%.0f m)\n", t.c_str(), n, graph.segments[si].id.c_str(), graph.length(si));
+      }
+    }
     else if (t.rfind("point:", 0) == 0) { for (const PointInstance& p : points.points()) if (p.nodeId == t.substr(6)) cam.target = p.pos; }
     else { float x, z; if (std::sscanf(tg, "%f,%f", &x, &z) == 2) { cam.target.x = x; cam.target.z = z; } }
   }
@@ -141,6 +157,7 @@ int main(int argc, char** argv) {
     Frustum fr(vp);
     sky.draw(vp.inverse(), cam.position());
     renderer.beginFrame(vp, cam.position(), light);
+    if (haveTerrain) terrain.draw(renderer, &fr);
     rails.draw(renderer, &fr);
     signals.draw(renderer, cam.position(), &fr);
     points.draw(renderer, &fr);
@@ -168,7 +185,7 @@ int main(int argc, char** argv) {
     }
     win.swapBuffers();
   }
-  rails.destroy(); signals.destroy(); points.destroy();
+  rails.destroy(); signals.destroy(); points.destroy(); terrain.destroy();
   renderer.shutdown(); text.shutdown(); sky.shutdown(); win.close();
   if (useSim) sim.stop();
   return 0;

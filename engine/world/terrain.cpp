@@ -175,15 +175,61 @@ void Terrain::addChord(vec3 a, vec3 b, float ba, float bb) {
 }
 
 void Terrain::setRails(std::span<const RailSample> samples) {
-  railGrid_.clear();
+  railGrid_.clear(); bridgeGrid_.clear();
   for (size_t i = 1; i < samples.size(); ++i) {
     const RailSample &p = samples[i - 1], &q = samples[i];
-    if (!p.atGrade || !q.atGrade) continue;
     vec3 a = origin_.toScene(p.wx, p.wy, p.railY), b = origin_.toScene(q.wx, q.wy, q.railY);
     float dx = a.x - b.x, dz = a.z - b.z;
     if (dx * dx + dz * dz > CHORD_MAX * CHORD_MAX) continue;
-    addChord(a, b, p.mouthBlend, q.mouthBlend);
+    if (p.atGrade && q.atGrade) addChord(a, b, p.mouthBlend, q.mouthBlend);
+    if (p.bridgeBlend >= 0 && q.bridgeBlend >= 0) {   // deck bottom chord (medan3d.ts tambahJbtRuas)
+      int64_t k = cellKey((int)std::floor((a.x + b.x) * 0.5f / GRID_CELL), (int)std::floor((a.z + b.z) * 0.5f / GRID_CELL));
+      bridgeGrid_[k].push_back({a.x, a.z, a.y + DECK_BOTTOM, b.x, b.z, b.y + DECK_BOTTOM, p.bridgeBlend, q.bridgeBlend});
+    }
   }
+}
+
+void Terrain::setBrushDeltas(const Json& tanah) {
+  delta_.clear();
+  if (!tanah.isObject()) return;
+  const Json& d = tanah["delta"];
+  if (!d.isObject()) return;
+  for (const auto& [key, v] : d.obj) {
+    int gx = 0, gz = 0;
+    if (std::sscanf(key.c_str(), "%d,%d", &gx, &gz) != 2) continue;
+    delta_[cellKey(gx, gz)] = (float)v.numberOr(0);
+  }
+}
+
+// Bilinear brush delta on the 8 m grid (medan3d.ts deltaDi).
+float Terrain::brushDelta(double wx, double wy) const {
+  if (delta_.empty()) return 0;
+  double fx = wx / DELTA_GRID, fz = wy / DELTA_GRID;
+  int gx = (int)std::floor(fx), gz = (int)std::floor(fz);
+  float sx = (float)(fx - gx), sz = (float)(fz - gz);
+  auto d = [&](int a, int b) { auto it = delta_.find(cellKey(a, b)); return it == delta_.end() ? 0.f : it->second; };
+  float a = d(gx, gz) * (1 - sx) + d(gx + 1, gz) * sx, b = d(gx, gz + 1) * (1 - sx) + d(gx + 1, gz + 1) * sx;
+  return a * (1 - sz) + b * sz;
+}
+
+bool Terrain::nearestDeck(float x, float z, float& dOut, float& yOut, float& bOut) const {
+  if (bridgeGrid_.empty()) return false;
+  int cx = (int)std::floor(x / GRID_CELL), cz = (int)std::floor(z / GRID_CELL);
+  const int r = (int)std::ceil(BRIDGE_OUTER / GRID_CELL);
+  float best = 1e30f;
+  for (int i = -r; i <= r; ++i)
+    for (int j = -r; j <= r; ++j) {
+      auto it = bridgeGrid_.find(cellKey(cx + i, cz + j));
+      if (it == bridgeGrid_.end()) continue;
+      for (const Chord& p : it->second) {
+        float dx = p.x2 - p.x, dz = p.z2 - p.z, L2 = dx * dx + dz * dz;
+        float t = L2 > 0 ? std::clamp(((x - p.x) * dx + (z - p.z) * dz) / L2, 0.f, 1.f) : 0.f;
+        float d = std::hypot(p.x + dx * t - x, p.z + dz * t - z);
+        if (d < best) { best = d; yOut = p.y + (p.y2 - p.y) * t; bOut = p.b + (p.b2 - p.b) * t; }
+      }
+    }
+  dOut = best;
+  return best < 1e30f;
 }
 
 bool Terrain::nearestRail(float x, float z, Nearest& out) const {
@@ -221,14 +267,24 @@ float Terrain::railDistance(float x, float z) const {
   return nearestRail(x, z, n) ? n.d : 1e30f;
 }
 
+// tanahTerukir: DEM + brush delta -> rail carve -> bridge trough (lowering only).
 float Terrain::groundHeight(double wx, double wy) const {
-  float h = dem_.heightScene(wx, wy);
-  if (railGrid_.empty()) return h;
+  float h = dem_.heightScene(wx, wy) + brushDelta(wx, wy);
+  if (railGrid_.empty() && bridgeGrid_.empty()) return h;
+  float x = (float)(wx - origin_.ox), z = (float)(wy - origin_.oz);
   Nearest n;
-  if (nearestRail((float)(wx - origin_.ox), (float)(wy - origin_.oz), n) && n.d <= CARVE_OUTER && n.b > 0) {
+  if (nearestRail(x, z, n) && n.d <= CARVE_OUTER && n.b > 0) {
     float t = n.d <= CARVE_INNER ? 1.f : 1 - (n.d - CARVE_INNER) / (CARVE_OUTER - CARVE_INNER);
     float w = smoothstep01(t) * n.b;
     h = h * (1 - w) + (carveBase(n) + PLATEAU_OFFSET) * w;
+  }
+  float jd, jy, jb;
+  if (nearestDeck(x, z, jd, jy, jb) && jd <= BRIDGE_OUTER && jb > 0) {
+    float ceiling = jy - BRIDGE_CLEAR;
+    if (h > ceiling) {
+      float t = jd <= BRIDGE_INNER ? 1.f : 1 - (jd - BRIDGE_INNER) / (BRIDGE_OUTER - BRIDGE_INNER);
+      h += (ceiling - h) * smoothstep01(t) * jb;
+    }
   }
   return h;
 }

@@ -21,14 +21,15 @@ inline vec3 sunDirection(double clockSec, double lonDeg, double latDeg, float* e
 inline vec3 rgb(unsigned hex) { return {((hex >> 16) & 255) / 255.f, ((hex >> 8) & 255) / 255.f, (hex & 255) / 255.f}; }
 
 // Interpolate the light ladder (fog, hemi sky, hemi ground, sun colour, sun intensity, ambient, zenith, horizon).
-struct LightRung { float el; unsigned fog, hemiSky, hemiGround, sunColor; float sun, ambient; unsigned zenith, horizon; };
+// `cloud` = sprite tint column `awan` (uji3dLangit.ts:113-118).
+struct LightRung { float el; unsigned fog, hemiSky, hemiGround, sunColor; float sun, ambient; unsigned zenith, horizon, cloud; };
 inline const LightRung LADDER[] = {
-  {-18, 0x121a2b, 0x44577a, 0x161c26, 0x8ea2cc, 0.26f, 0.72f, 0x0a1020, 0x18223a},
-  {-4,  0x2f3a52, 0x4a5f86, 0x1a2230, 0xff8f63, 0.55f, 0.84f, 0x152340, 0x3a3a52},
-  {2,   0xc98a5e, 0x7f9bc4, 0x3a3630, 0xffb070, 1.70f, 0.95f, 0x2f5f9c, 0xd39a76},
-  {12,  0xd6c1a6, 0xa8c4e6, 0x4d4a40, 0xffd9a8, 2.45f, 1.20f, 0x3f7dbf, 0xd8cbb8},
-  {32,  0xbdd0e4, 0xbcd6f0, 0x52524a, 0xfff2dc, 3.00f, 1.50f, 0x4a8bc9, 0xc4d8ec},
-  {75,  0xc8dcef, 0xcadff5, 0x53534a, 0xfffaf0, 3.20f, 1.60f, 0x4f92cf, 0xc7dcef},
+  {-18, 0x121a2b, 0x44577a, 0x161c26, 0x8ea2cc, 0.26f, 0.72f, 0x0a1020, 0x18223a, 0x27303f},
+  {-4,  0x2f3a52, 0x4a5f86, 0x1a2230, 0xff8f63, 0.55f, 0.84f, 0x152340, 0x3a3a52, 0x6a6178},
+  {2,   0xc98a5e, 0x7f9bc4, 0x3a3630, 0xffb070, 1.70f, 0.95f, 0x2f5f9c, 0xd39a76, 0xffc79a},
+  {12,  0xd6c1a6, 0xa8c4e6, 0x4d4a40, 0xffd9a8, 2.45f, 1.20f, 0x3f7dbf, 0xd8cbb8, 0xffe8d2},
+  {32,  0xbdd0e4, 0xbcd6f0, 0x52524a, 0xfff2dc, 3.00f, 1.50f, 0x4a8bc9, 0xc4d8ec, 0xfdfdff},
+  {75,  0xc8dcef, 0xcadff5, 0x53534a, 0xfffaf0, 3.20f, 1.60f, 0x4f92cf, 0xc7dcef, 0xffffff},
 };
 
 inline void applySun(double clockSec, double lonDeg, double latDeg, Lighting& light, Sky& sky) {
@@ -46,7 +47,7 @@ inline void applySun(double clockSec, double lonDeg, double latDeg, Lighting& li
   light.groundColor = mixc(a.hemiGround, b.hemiGround) * (2.0f * amb / 1.6f) * 0.55f;
   light.fogColor = mixc(a.fog, b.fog);
   sky.zenith = mixc(a.zenith, b.zenith); sky.horizon = mixc(a.horizon, b.horizon);
-  sky.ground = mixc(a.fog, b.fog) * 0.8f; sky.sunDir = dir;
+  sky.ground = mixc(a.fog, b.fog) * 0.8f; sky.sunDir = dir; sky.cloudTint = mixc(a.cloud, b.cloud);
 }
 
 // Inverse Mercator (spec §2.1), world y is south-positive.

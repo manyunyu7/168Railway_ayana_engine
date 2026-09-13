@@ -21,6 +21,9 @@ struct RailSample {
   float railY;        // scene y of the rail head
   bool atGrade;       // false on bridges/tunnels (skipped by carving)
   float mouthBlend;   // 0..1 weight near tunnel mouths (1 = full carve)
+  // Bridge trough (§4.2, JBT_*): < 0 = not a bridge sample; otherwise the 0..1 weight of the ground
+  // lowering under the deck (ramps to 0 over JBT_RAMP at the ends that meet the embankment).
+  float bridgeBlend = -1;
 };
 
 } // namespace eng

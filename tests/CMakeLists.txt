@@ -16,6 +16,7 @@ engine_test(test_track)
 engine_test(test_compass ${CMAKE_SOURCE_DIR}/examples/ppka/compass.cpp)
 engine_test(test_profile)
 engine_test(test_sway)
+engine_test(test_terrain)
 engine_test(test_bridge)
 set_tests_properties(test_bridge PROPERTIES LABELS "node")
 

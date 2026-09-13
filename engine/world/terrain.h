@@ -13,6 +13,7 @@
 //               layers 2.. = detail (z16/z17 around the track and stations, spec DETAIL_TANAH); the ground
 //               mesh textures every 153 m block with the finest present layer covering it.
 #pragma once
+#include "engine/core/json.h"
 #include "engine/math/geometry.h"
 #include "engine/render/model_renderer.h"
 #include "engine/world/coords.h"
@@ -36,6 +37,9 @@ constexpr float BALLAST_FOOT = -0.580f;                      // BALAS_KAKI
 constexpr float PLATEAU_OFFSET = BALLAST_FOOT - 0.04f;       // plateau below the rail head
 constexpr float GRID_CELL = 64;                              // SEL_GRID (rail hash grid)
 constexpr float CHORD_MAX = 20;                              // consecutive RailSamples further apart start a new chord
+constexpr float DELTA_GRID = 8;                              // KISI_DELTA (brush deltas, world.tanah)
+constexpr float DECK_BOTTOM = BALLAST_FOOT - 1.4f;          // DEK_BAWAH (deck slab bottom rel. rail head)
+constexpr float BRIDGE_INNER = 7, BRIDGE_OUTER = 26, BRIDGE_CLEAR = 1.5f;   // JBT_DALAM / JBT_LUAR / JBT_RUANG
 // BLOK_TANAH is 128 m in the reference (19 per tile); 16 per tile (152.9 m) keeps blocks aligned with the
 // z16 (4×4) and z17 (2×2) detail tile grids so every block has exactly one texture.
 constexpr int BLOCKS_PER_TILE = 16;
@@ -93,8 +97,13 @@ public:
   // Reads the two data files; the world origin becomes the track-node bbox centre.
   bool load(const std::string& demPath, const std::string& satPath, std::string& error);
   // Registers rail centreline chords for carving. Consecutive at-grade samples closer than
-  // CHORD_MAX form a chord; call before build().
+  // CHORD_MAX form a chord; consecutive bridge samples (bridgeBlend >= 0) form deck chords for the
+  // trough under the slab. Call before build().
   void setRails(std::span<const RailSample> samples);
+  // Brush deltas `world.tanah` ({kisi, delta:{"gx,gz": m}}), bilinear on the 8 m grid, added to the DEM
+  // before carving (§4.1). Accepts a missing/null object. Call before build().
+  void setBrushDeltas(const Json& tanah);
+  float brushDelta(double wx, double wy) const;
   void build();      // ground meshes + textures (needs a GL context)
   void draw(ModelRenderer& r, const Frustum* frustum = nullptr);
   void destroy();
@@ -123,13 +132,15 @@ private:
 
   void addChord(vec3 a, vec3 b, float ba, float bb);
   bool nearestRail(float x, float z, Nearest& out) const;
+  bool nearestDeck(float x, float z, float& d, float& y, float& b) const;
   float carveBase(const Nearest& n) const;
   void buildNearTile(int tx, int ty);
   Tile buildFarTile(const SatLayer& far, int tx, int ty);
   void upload(Tile& t, MeshBuilder& mb, const SatLayer* layer, int tx, int ty, vec3 pos);
 
   Dem dem_; SatImage sat_; WorldOrigin origin_;
-  std::unordered_map<int64_t, std::vector<Chord>> railGrid_;
+  std::unordered_map<int64_t, std::vector<Chord>> railGrid_, bridgeGrid_;
+  std::unordered_map<int64_t, float> delta_;   // brush deltas keyed by grid cell
   std::vector<Tile> near_, far_;
   Tile backdrop_{};
   Material ground_, backdropMat_;
