@@ -65,11 +65,26 @@ Maps known to work: `mojokerto` (one station, 64 trains), `bks` (Bekasi, 3 stati
 
 ```bash
 brew install emscripten
-cmake --preset wasm && cmake --build --preset wasm      # -> build/wasm/viewer.html (+ .wasm 200 KB)
-npx serve build/wasm                                    # open /viewer.html
+cmake --preset wasm && cmake --build --preset wasm      # -> build/wasm/index.html + viewer.js/.wasm (210 KB) + font
+web/build-models.sh                                     # cc203 / wilis / KRL -> build/wasm/models/*.emod (ETC2, ~6 MB each)
+npx serve -l 8766 build/wasm                            # open http://127.0.0.1:8766/index.html
 ```
-The same RHI runs on WebGL2 (`ENG_GL_ES`); only the window hints and the main loop differ.
+The same RHI runs on WebGL2 (`ENG_GL_ES`); only the window hints and the main loop differ. Nothing but the
+font is preloaded: models are streamed with `emscripten_fetch` (`engine/core/fetch.h`) when the page calls the
+exported `viewer_load(url)`; `web/index.html` has the model dropdown, FPS and download readouts.
 The simulator bridge is native-only, so the web build currently ships the model viewer.
+
+### Textures (EMOD v5)
+
+`convert --target web|desktop|android` stores every texture GPU-ready with its full mip chain: **ETC2**
+(RGB / RGBA+EAC) for web and Android, **BC1/BC3** for desktop (macOS GL exposes S3TC only). Sources: the
+Basis Universal KTX2 twins the reference project ships (`public/model3d/ktx2/<berkas>`, found automatically,
+transcoded with the BinomialLLC transcoder in `tools/third_party/basisu`), otherwise the GLB's PNG encoded by
+`tools/texcomp` (own ETC1/EAC encoder, stb_dxt). Web files also carry a 256 px RGBA8 fallback per texture for
+browsers without `WEBGL_compressed_texture_etc` (Chromium has it everywhere; desktop Firefox/Safari may not);
+`--fallback 0` drops it. The runtime uploads the first variant `rhi::supports()` and never decodes anything.
+CC203 went from 22.3 MB (raw RGBA) to 4.8 MB desktop / 6.1 MB web. `fetch_tiles --target web` also writes
+per-tile files (`assets/terrain/<map>/{dem,sat/<layer>}/<z>_<x>_<y>.bin` + `index.json`) for a streaming client.
 
 ## Tests
 
@@ -94,7 +109,9 @@ engine/   math · rhi (GPU layer) · core (window, cameras, JSON) · asset (GLB,
 bridge/   sim-bridge.ts — JSON-lines front end for the TypeScript simulation
 examples/ ppka (the game) · viewer · railtest · terraintest · traintest · tracktest · simtest · cube
 tools/    offline converters (the only place third-party decoders are allowed):
-          convert (GLB → .emod) · fetch_tiles (DEM/imagery → .dem/.sat) · fontgen (TTF → .efnt)
+          convert (GLB → .emod, KTX2 transcoding) · fetch_tiles (DEM/imagery → .dem/.sat + per-tile files)
+          fontgen (TTF → .efnt) · texcomp (ETC1/EAC + BC encoders shared by the converters)
+web/      index.html demo page, build-models.sh
 docs/     world-spec.md (how the reference three.js scene is built, with exact constants)
 ```
 

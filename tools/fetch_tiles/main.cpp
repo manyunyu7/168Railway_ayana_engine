@@ -2,7 +2,11 @@
 // for the formats). Downloads Terrarium DEM tiles (z13 core, z10 far) and satellite tiles (z14 near
 // composed from --sat-detail sub-tiles, one coarse far layer, and z16/z17 detail layers along the track
 // and around stations) with curl, decodes with stb_image.
-//   fetch_tiles <map> [--maps DIR] [--out DIR] [--cache DIR] [--sat-detail 15] [--sat-size 512]
+//   fetch_tiles <map> [--maps DIR] [--out DIR] [--cache DIR] [--sat-detail 15] [--sat-size 512] [--target desktop|web]
+// Besides the monolithic files (read by the native app) every tile is also written on its own for streaming
+// clients: <out>/<map>/dem/<z>_<x>_<y>.bin (f32[n*n] Terrarium metres, row-major), <out>/<map>/sat/<layer>/<z>_<x>_<y>.bin
+// (one directory per satellite layer since two layers may share a zoom; EIMG image record: RGBA8 for --target desktop, ETC2 + 128 px RGBA8 fallback for --target web) and
+// <out>/<map>/index.json (bbox, layers with zoom/tile range/size/present tiles).
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_HDR
 #define STBI_NO_PSD
@@ -11,6 +15,9 @@
 #include "tools/third_party/stb_image.h"
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include "tools/third_party/stb_image_resize2.h"
+#define TEXCOMP_IMPLEMENTATION
+#include "tools/texcomp/texcomp.h"
+#include "engine/asset/emod.h"
 
 #include "engine/core/json.h"
 #include "engine/world/slippy.h"
@@ -97,12 +104,14 @@ int main(int argc, char** argv) {
   const char* tmp = std::getenv("TMPDIR");
   std::string cacheDir = std::string(tmp ? tmp : "/tmp") + "/eng-tile-cache";
   int satDetail = 15, satSize = 512;
+  texcomp::Options tex; tex.fallback = 128;
   for (int i = 2; i + 1 < argc; i += 2) {
     if (!std::strcmp(argv[i], "--maps")) mapsDir = argv[i + 1];
     else if (!std::strcmp(argv[i], "--out")) outDir = argv[i + 1];
     else if (!std::strcmp(argv[i], "--cache")) cacheDir = argv[i + 1];
     else if (!std::strcmp(argv[i], "--sat-detail")) satDetail = std::atoi(argv[i + 1]);
     else if (!std::strcmp(argv[i], "--sat-size")) satSize = std::atoi(argv[i + 1]);
+    else if (!std::strcmp(argv[i], "--target")) { bool ok; tex.target = texcomp::parseTarget(argv[i + 1], ok); if (!ok) { std::fprintf(stderr, "unknown target %s\n", argv[i + 1]); return 2; } }
     else { std::fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
   }
   auto t0 = std::chrono::steady_clock::now();
@@ -125,6 +134,17 @@ int main(int argc, char** argv) {
 
   int downloads = 0, failed = 0;
   fs::path cache(cacheDir);
+  fs::path tileDir = fs::path(outDir) / map;
+  fs::create_directories(tileDir / "dem"); fs::create_directories(tileDir / "sat");
+  std::string index = "{\n  \"map\": \"" + map + "\",\n  \"bbox\": [" + std::to_string(bb.x0) + ", " + std::to_string(bb.y0) + ", " + std::to_string(bb.x1) + ", " + std::to_string(bb.y1) + "],\n";
+  size_t tileBytes[2] = {0, 0};   // dem, sat
+  auto layerJson = [](const TileRange& r, int px, const std::vector<uint8_t>& present, const char* dir) {
+    std::string j = "    {\"dir\": \"" + std::string(dir) + "\", \"zoom\": " + std::to_string(r.z) + ", \"tx0\": " + std::to_string(r.tx0) + ", \"ty0\": " + std::to_string(r.ty0) +
+                    ", \"nx\": " + std::to_string(r.nx()) + ", \"ny\": " + std::to_string(r.ny()) + ", \"px\": " + std::to_string(px) + ", \"present\": \"";
+    for (uint8_t p : present) j += p ? '1' : '0';
+    return j + "\"}";
+  };
+  auto tileName = [](int z, int x, int y) { return std::to_string(z) + "_" + std::to_string(x) + "_" + std::to_string(y) + ".bin"; };
 
   // ---- DEM: z13 core (bbox ± 5000) and z10 far (bbox ± 2000) ----
   TileRange demRanges[2] = {rangeFor(bb, 5000, 13), rangeFor(bb, 2000, 10)};
@@ -133,6 +153,7 @@ int main(int argc, char** argv) {
   dem.write("EDEM", 4); put32(dem, 1);
   putf64(dem, bb.x0); putf64(dem, bb.y0); putf64(dem, bb.x1); putf64(dem, bb.y1);
   put32(dem, 2);
+  std::vector<std::vector<uint8_t>> demPresent;
   for (const TileRange& r : demRanges) {
     const int n = 256;
     put32(dem, r.z); put32(dem, r.tx0); put32(dem, r.ty0); put32(dem, r.nx()); put32(dem, r.ny()); put32(dem, n);
@@ -153,12 +174,18 @@ int main(int argc, char** argv) {
         for (int i = 0; i < n * n; ++i) dst[i] = px[i * 3] * 256.f + px[i * 3 + 1] + px[i * 3 + 2] / 256.f - 32768.f;
         stbi_image_free(px);
         present[ti] = 1;
+        std::ofstream tf(tileDir / "dem" / tileName(r.z, tx, ty), std::ios::binary);
+        tf.write((const char*)dst, (std::streamsize)n * n * 4); tileBytes[0] += (size_t)n * n * 4;
       }
     dem.write((const char*)present.data(), (std::streamsize)present.size());
     dem.write((const char*)heights.data(), (std::streamsize)(heights.size() * 4));
+    demPresent.push_back(present);
     std::printf("DEM z%d: %dx%d tiles (%d..%d, %d..%d)\n", r.z, r.nx(), r.ny(), r.tx0, r.tx1, r.ty0, r.ty1);
   }
   dem.close();
+  index += "  \"dem\": [\n";
+  for (int i = 0; i < 2; ++i) index += layerJson(demRanges[i], 256, demPresent[(size_t)i], "dem") + (i ? "\n" : ",\n");
+  index += "  ],\n";
 
   // ---- satellite (ESAT v2, sparse): near z14 (bbox ± 2500) composed from z<satDetail> sub-tiles, far z10..12
   // (bbox ± 2000), then detail layers (spec DETAIL_TANAH): z16 @256 within 1500 m of any track node,
@@ -183,9 +210,11 @@ int main(int argc, char** argv) {
   }
   std::ofstream sat(outDir + "/" + map + ".sat", std::ios::binary);
   sat.write("ESAT", 4); put32(sat, 2); put32(sat, (int32_t)layers.size());
-  for (const LayerSpec& L : layers) {
+  for (size_t li = 0; li < layers.size(); ++li) {
+    const LayerSpec& L = layers[li];
     const TileRange& r = L.r;
     int k = 1 << L.sub, srcPx = 256 * k, px = L.px;
+    fs::path layerDir = tileDir / "sat" / std::to_string(li); fs::create_directories(layerDir);
     put32(sat, r.z); put32(sat, r.tx0); put32(sat, r.ty0); put32(sat, r.nx()); put32(sat, r.ny()); put32(sat, px);
     sat.write((const char*)L.present.data(), (std::streamsize)L.present.size());
     std::vector<unsigned char> img((size_t)srcPx * srcPx * 3), out((size_t)px * px * 3);
@@ -223,11 +252,25 @@ int main(int argc, char** argv) {
         else out = img;
         sat.write((const char*)out.data(), (std::streamsize)out.size());
         ok += any;
+        // per-tile image record (RGBA8 raw, or the target's compressed chain + small fallback)
+        Image im; im.width = px; im.height = px; im.channels = 4; im.wrapS = im.wrapT = 1;
+        im.pixels.resize((size_t)px * px * 4);
+        for (size_t i = 0; i < (size_t)px * px; ++i) { std::memcpy(&im.pixels[i * 4], &out[i * 3], 3); im.pixels[i * 4 + 3] = 255; }
+        if (tex.target != texcomp::Target::Desktop) im.variants = texcomp::buildVariants(im.pixels.data(), px, px, false, tex);
+        std::string e2; std::string tp = (layerDir / tileName(r.z, tx, ty)).string();
+        if (!saveImageFile(im, tp, e2)) { std::fprintf(stderr, "%s: %s\n", tp.c_str(), e2.c_str()); ++failed; }
+        std::error_code ec2; tileBytes[1] += fs::file_size(tp, ec2);
       }
     std::printf("satellite z%d @ %d px (%.2f m/px): %d/%d tiles in a %dx%d range (%d with imagery), %.1f MB\n", r.z, px,
                 slippy::tileSizeMeter(r.z) / px, want, r.nx() * r.ny(), r.nx(), r.ny(), ok, (double)want * px * px * 3 / 1e6);
   }
   sat.close();
+  index += "  \"sat\": [\n";
+  for (size_t i = 0; i < layers.size(); ++i) index += layerJson(layers[i].r, layers[i].px, layers[i].present, ("sat/" + std::to_string(i)).c_str()) + (i + 1 < layers.size() ? ",\n" : "\n");
+  index += "  ]\n}\n";
+  { std::ofstream idx(tileDir / "index.json"); idx << index; }
+  std::printf("per-tile: %s/ dem %.1f MB, sat %.1f MB (%s)\n", tileDir.string().c_str(), tileBytes[0] / 1e6, tileBytes[1] / 1e6,
+              tex.target == texcomp::Target::Desktop ? "RGBA8" : "ETC2 + fallback");
 
   std::error_code ec;
   double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();

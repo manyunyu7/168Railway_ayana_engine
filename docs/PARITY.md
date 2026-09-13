@@ -61,7 +61,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
 | Feature | Status | Notes |
 |---|---|---|
 | DEM z13/z10, satellite z14 + detail z16/z17, corridor carving | ✅ | `terrain.cpp`, `tools/fetch_tiles` |
-| Streaming/eviction by distance (`ubinStream.ts`) | ❌ | everything loads at start; fine for one corridor |
+| Streaming/eviction by distance (`ubinStream.ts`) | ❌ | everything loads at start; `fetch_tiles` already writes per-tile files + `index.json` for a streaming loader |
 | Brush deltas `world.tanah.delta`, bridge trough carving | ❌ | |
 | Trees from green mask (instanced) | ✅ | `vegetation.cpp`; `vegMask` not applied |
 | Station buildings from `hiasan.objek` | ✅ | `game.cpp buildWorld()` |
@@ -92,7 +92,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
 | Feature | Status | Notes |
 |---|---|---|
 | macOS (GLFW + OpenGL 4.1) | ✅ | |
-| Texture compression (ETC2/ASTC/BC) in EMOD | ❌ | raw RGBA today; required before mobile |
+| Texture compression (ETC2/BC) in EMOD | ✅ | EMOD v5: `convert --target web\|desktop\|android`, KTX2 twins transcoded, mip chains, RGBA8 fallback; ASTC later |
 | GLES3 backend + Android EGL, Flutter `Texture` plugin | ❌ | prerequisite: C++ sim port (no Node on Android) |
-| WebAssembly (WebGL2) | ❌ | |
+| WebAssembly (WebGL2) | 🟡 | viewer only: streamed models (`engine/core/fetch`), `web/index.html`; no sim bridge, no terrain yet (per-tile files exist) |
 | Automated tests (`ctest`: math, parsers, LUT vs TS, golden images) | ✅ | `tests/`, `ctest --preset mac-debug` (+ `mac-debug-gpu`) |

@@ -5,6 +5,8 @@
 #include "tests/check.h"
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <vector>
 
 using namespace eng;
@@ -196,4 +198,27 @@ TEST_MAIN({
   CHECK(t2.meshes[0].primitives.size() == 4);
   CHECK(std::memcmp(t2.meshes[0].primitives[0].vertices.data(), t.meshes[0].primitives[0].vertices.data(), 4 * sizeof(Vertex)) == 0);
   CHECK(t2.meshes[0].primitives[0].indices == t.meshes[0].primitives[0].indices);
+
+  // v5 variants: a compressed chain plus an RGBA8 fallback round-trip; wrong level sizes are refused
+  Image& v5 = t.images[0]; v5.width = 8; v5.height = 4; v5.pixels.clear();
+  ImageVariant etc; etc.format = TexFormat::ETC2_RGB;
+  etc.mips = {{8, 4, std::vector<uint8_t>(16, 0xAB)}, {4, 2, std::vector<uint8_t>(8, 0xCD)}, {2, 1, std::vector<uint8_t>(8, 1)}, {1, 1, std::vector<uint8_t>(8, 2)}};
+  ImageVariant fb; fb.format = TexFormat::RGBA8; fb.mips = {{2, 1, std::vector<uint8_t>(8, 7)}};
+  v5.variants = {etc, fb};
+  CHECK_MSG(saveEmod(t, path, err), err);
+  Model t3; CHECK_MSG(loadEmod(path, t3, err), err); std::filesystem::remove(path);
+  CHECK(t3.images[0].variants.size() == 2 && t3.images[0].variants[0].format == TexFormat::ETC2_RGB && t3.images[0].variants[0].mips.size() == 4);
+  CHECK(t3.images[0].variants[0].mips[1].width == 4 && t3.images[0].variants[0].mips[1].data == etc.mips[1].data);
+  CHECK(t3.images[0].variants[1].format == TexFormat::RGBA8 && t3.images[0].variants[1].mips[0].data == fb.mips[0].data);
+  CHECK(t3.images[0].pixels.empty() && t3.images[1].pixels.size() == 8);   // plain RGBA8 records are still exposed as pixels
+  v5.variants[0].mips[0].data.resize(15);
+  CHECK(!saveEmod(t, path, err)); CHECK(err.find("mip level") != std::string::npos);
+  CHECK(texLevelBytes(TexFormat::ETC2_RGBA, 5, 5) == 64 && texLevelBytes(TexFormat::BC1, 1, 1) == 8);
+  // standalone image file (terrain tiles)
+  std::string ipath = (std::filesystem::temp_directory_path() / "eng_test.eimg").string();
+  CHECK_MSG(saveImageFile(t.images[1], ipath, err), err);
+  std::ifstream fi(ipath, std::ios::binary); std::vector<uint8_t> ib((std::istreambuf_iterator<char>(fi)), {}); fi.close(); std::filesystem::remove(ipath);
+  Image im2; CHECK_MSG(loadImageFile(ib, im2, err), err);
+  CHECK(im2.width == 2 && im2.linear && im2.pixels == t.images[1].pixels);
+  CHECK(!loadImageFile(std::span<const uint8_t>(ib.data(), 10), im2, err));
 })
