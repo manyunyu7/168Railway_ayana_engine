@@ -16,6 +16,8 @@ struct Image {
   std::vector<uint8_t> encoded;     // raw file bytes (GLB) — empty once decoded
   int width = 0, height = 0, channels = 0;
   std::vector<uint8_t> pixels;      // decoded RGBA8 (engine format)
+  uint8_t wrapS = 0, wrapT = 0;     // glTF sampler wrap of the textures using this image: 0 repeat, 1 clamp, 2 mirror
+  bool linear = false;              // sampled as data (metal/rough, normal, occlusion): upload without sRGB decode
 };
 
 enum class AlphaMode : uint8_t { Opaque, Mask, Blend };
@@ -27,11 +29,14 @@ struct Material {
   vec3 emissive{0, 0, 0};
   int baseColorTex = -1, metalRoughTex = -1, normalTex = -1, emissiveTex = -1, occlusionTex = -1;
   int baseColorUv = 0;              // which TEXCOORD_n the base colour texture samples (glTF texCoord)
+  vec2 uvOffset{0, 0}, uvScale{1, 1}; float uvRotation = 0;   // KHR_texture_transform of the base colour texture; the
+                                    // GLB parser bakes it into the vertex UVs, so this is informational only (not serialised)
   AlphaMode alphaMode = AlphaMode::Opaque;
   float alphaCutoff = 0.5f;
   bool doubleSided = false;
   bool unlit = false;               // KHR_materials_unlit: base colour shown as-is
   bool depthTest = true;            // false = overlay drawn on top (reticles, gizmos); not serialised
+  bool additive = false;            // Blend only: additive blending (light coronas, glows); not serialised
 };
 
 struct Primitive {

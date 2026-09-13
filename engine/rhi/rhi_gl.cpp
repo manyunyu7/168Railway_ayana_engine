@@ -44,7 +44,9 @@ void clear(float r, float g, float b, float a, bool depth) {
 }
 void setDepthWrite(bool on) { glDepthMask(on ? GL_TRUE : GL_FALSE); }
 void setBlend(bool on) { if (on) glEnable(GL_BLEND); else glDisable(GL_BLEND); }
+void setBlendAdditive(bool on) { glBlendFunc(GL_SRC_ALPHA, on ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA); }
 void setCullFace(bool on) { if (on) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE); }
+void setFrontFaceCCW(bool ccw) { glFrontFace(ccw ? GL_CCW : GL_CW); }
 void setDepthTestEnabled(bool on) { if (on) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST); }
 
 Buffer createBuffer(BufferKind kind, std::span<const std::byte> data) {
@@ -150,7 +152,8 @@ float setAnisotropy(float level) {
   return g_aniso;
 }
 
-Texture createTexture(int w, int h, Format f, std::span<const std::byte> pixels, bool mipmap, bool srgb) {
+Texture createTexture(int w, int h, Format f, std::span<const std::byte> pixels, bool mipmap, bool srgb, Wrap wrapS, Wrap wrapT) {
+  auto wrapMode = [](Wrap w) { return w == Wrap::Clamp ? GL_CLAMP_TO_EDGE : w == Wrap::Mirror ? GL_MIRRORED_REPEAT : GL_REPEAT; };
   GLenum fmt = f == Format::RGBA8 ? GL_RGBA : f == Format::RGB8 ? GL_RGB : f == Format::RG8 ? GL_RG : GL_RED;
   GLint internal = f == Format::RGBA8 ? (srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8)
                  : f == Format::RGB8  ? (srgb ? GL_SRGB8 : GL_RGB8)
@@ -159,8 +162,8 @@ Texture createTexture(int w, int h, Format f, std::span<const std::byte> pixels,
   glBindTexture(GL_TEXTURE_2D, t.id);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   glTexImage2D(GL_TEXTURE_2D, 0, internal, w, h, 0, fmt, GL_UNSIGNED_BYTE, pixels.data());
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode(wrapS));
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode(wrapT));
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, mipmap ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
   if (mipmap) glGenerateMipmap(GL_TEXTURE_2D);

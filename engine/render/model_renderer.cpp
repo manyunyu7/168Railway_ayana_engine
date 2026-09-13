@@ -5,9 +5,9 @@
 namespace eng {
 
 void GpuModel::upload(const Model& m) {
-  for (const Image& im : m.images)
-    textures.push_back(rhi::createTexture(im.width, im.height, rhi::Format::RGBA8,
-                                          std::as_bytes(std::span(im.pixels)), true, true));
+  for (const Image& im : m.images)   // colour images are sRGB; metal/rough, normal and occlusion maps are data
+    textures.push_back(rhi::createTexture(im.width, im.height, rhi::Format::RGBA8, std::as_bytes(std::span(im.pixels)), true,
+                                          !im.linear, (rhi::Wrap)im.wrapS, (rhi::Wrap)im.wrapT));
   const rhi::Attribute layout[] = {{0, 3, sizeof(Vertex), 0}, {1, 3, sizeof(Vertex), 12}, {2, 2, sizeof(Vertex), 24}};
   for (const Mesh& me : m.meshes) {
     GpuMesh gm;
@@ -48,7 +48,12 @@ void ModelRenderer::flushTransparent() {
   if (transparent_.empty()) return;
   std::sort(transparent_.begin(), transparent_.end(), [](const DrawItem& a, const DrawItem& b) { return a.depth > b.depth; });
   rhi::setBlend(true); rhi::setDepthWrite(false);
-  for (const DrawItem& d : transparent_) drawItem(d);
+  bool additive = false;
+  for (const DrawItem& d : transparent_) {
+    if (d.material->additive != additive) { additive = d.material->additive; rhi::setBlendAdditive(additive); }
+    drawItem(d);
+  }
+  if (additive) rhi::setBlendAdditive(false);
   rhi::setBlend(false); rhi::setDepthWrite(true);
   transparent_.clear();
 }
@@ -91,6 +96,10 @@ void ModelRenderer::drawItem(const DrawItem& d) {
     rhi::setUniform(u_.hasEmissive, 0); rhi::bindTexture(2, white_);
   }
   rhi::setCullFace(!mt.doubleSided);
+  // mirrored transforms (negative determinant) reverse the triangle winding
+  const auto& w = d.world.m;
+  float det = w[0][0] * (w[1][1] * w[2][2] - w[1][2] * w[2][1]) - w[1][0] * (w[0][1] * w[2][2] - w[0][2] * w[2][1]) + w[2][0] * (w[0][1] * w[1][2] - w[0][2] * w[1][1]);
+  rhi::setFrontFaceCCW(det >= 0);
   rhi::setUniform(u_.instanced, d.instances ? 1 : 0);
   if (d.instances) rhi::drawMeshInstanced(*d.mesh, d.instances); else rhi::drawMesh(*d.mesh);
   ++drawCalls;

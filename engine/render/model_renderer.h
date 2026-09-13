@@ -46,6 +46,7 @@ public:
   void drawInstanced(const GpuModel& model, const mat4& transform, uint32_t count);
   void flushTransparent();   // call after all draws of the frame
   unsigned drawCalls = 0, culled = 0;   // per-frame stats (reset in beginFrame)
+  vec3 eye() const { return eye_; }     // camera position given to beginFrame
 private:
   struct DrawItem { const rhi::Mesh* mesh; const Material* material; const std::vector<rhi::Texture>* textures; rhi::Texture baseTex; mat4 world; float depth; uint32_t instances = 0; };
   void drawItem(const DrawItem& d);

@@ -1,5 +1,8 @@
-// Colour-light signals (docs/world-spec.md §6.2): mast with stripes, head plate, lens rings, hoods;
-// per-signal aspect drives the lit lens' emissive colour. Beyond 900 m a coloured LOD sphere.
+// Colour-light signals (docs/world-spec.md §6.2, reference uji3dSinyal.ts): striped mast, head plate
+// with a semicircular top, lens rings, hoods (visors) with lips, LED-matrix lenses, diamond board with
+// number panel, steel cage with the shunting octagon head, number plate; the lit lens gets two additive
+// camera-facing coronas (silauSinyal). Beyond 900 m a coloured LOD sphere. Pengulang (Semboyan 9C):
+// disc with 14 white LEDs in vertical/diagonal/horizontal bars.
 // Semaphores (§6.3, trackside `bentuk:'mekanik'`): lattice mast, 1-2 arms pivoting at 7.0 m (masuk
 // `… M…`) / 5.5 (keluar) / 5.0 (muka), spectacle glasses; arm angles follow the aspect with a
 // damped spring (k 150, c 15) stepped by animate().
@@ -29,7 +32,11 @@ struct SignalInstance {
   vec3 railPos;                  // on the track axis, for the LOD sphere
   float yaw = 0;
   mat4 world;
-  vec3 lensWorld[3];             // lens centres (scene)
+  vec3 lensWorld[3];             // lens centres (scene); pengulang: all = the centre LED
+  // colour-light head variant (uji3dSinyal.ts OpsiSinyal): diamond board (+ number panel), steel cage,
+  // shunting unit inside the cage; pengulang = 9C disc instead of the head
+  bool board = false, cage = false, shunting = false, pengulang = false;
+  int headVariant = -1;          // index into SignalVisuals' head mesh table
   // semaphore
   bool mechanical = false;
   int arms = 1;                  // 1 or 2 (index 0 = top arm)
@@ -49,6 +56,9 @@ public:
   void setAspect(const std::string& id, Aspect a);
   // Steps the semaphore arm springs; `dt` < 0 = measure real time since the previous call.
   void animate(float dt = -1);
+  // Corona sizing needs the vertical field of view and viewport height (screen-space size floor,
+  // §6.2); `night` brightens the coronas. Optional; defaults 52°, 800 px, day.
+  void setView(float fovY, int viewportH, bool night) { fovY_ = fovY; viewportH_ = viewportH; night_ = night; }
   void draw(ModelRenderer& r, vec3 eye, const Frustum* frustum = nullptr) const;
   // Top lens (or LOD sphere) pixel position of every signal, for screen-space picking (§6.5).
   std::vector<ScreenPoint> screenPositions(const mat4& viewProj, int w, int h, vec3 eye) const;
@@ -57,14 +67,26 @@ public:
   int indexOf(const std::string& id) const;
 
 private:
+  struct HeadMesh { int flags; rhi::Mesh dark, shell; AABB bounds; };   // flags: bit0 3 lamps, 1 board, 2 cage, 3 shunting
   void buildMeshes();
   void buildSemaphoreMeshes();
+  int headFor(int flags);
+  void buildPengulang();
+  void drawHead(ModelRenderer& r, const SignalInstance& s, int lit) const;
+  void drawPengulang(ModelRenderer& r, const SignalInstance& s) const;
+  void drawCorona(ModelRenderer& r, const SignalInstance& s, vec3 lens, vec3 eye, vec4 colour) const;
   void drawSemaphore(ModelRenderer& r, const SignalInstance& s) const;
   static void armTargets(const SignalInstance& s, float out[2]);
   std::vector<SignalInstance> signals_;
-  rhi::Mesh mastYellow_, dark2_, dark3_, lens_, sphere_;
-  Material yellowMat_, darkMat_, unlitMat_, litMat_[3], sphereMat_[3];
-  AABB bodyBounds_;
+  std::vector<HeadMesh> heads_;
+  rhi::Mesh mastYellow_, mastDark_, lens_, sphere_, billboard_;
+  rhi::Mesh pengDark_, pengShell_, pengLed_;
+  std::vector<vec3> pengLedPos_; std::vector<int> pengLedLine_;   // line: 0 red/horizontal, 1 yellow/diagonal, 2 green/vertical, 3 centre
+  rhi::Texture lensTex_{}, coronaTex_{};
+  Material yellowMat_, darkMat_, shellMat_, unlitMat_, litMat_[3], whiteMat_, sphereMat_[3];
+  Material coronaMat_;
+  mutable std::vector<Material> coronaPool_;   // per-frame corona materials (see drawCorona)
+  float fovY_ = 0.9075f; int viewportH_ = 800; bool night_ = false;
   // semaphore: lattice masts per pivot height (0 masuk 7.0, 1 keluar 5.5, 2 muka 5.0), arm parts
   rhi::Mesh semMast_[3], semMastDark_[3], semLamp_, armYellow_, armDark_, spectacle_, glass_;
   Material steelMat_, glassMat_[3];   // glass: red, green, yellow

@@ -23,7 +23,9 @@ void setViewport(int w, int h);
 void clear(float r, float g, float b, float a, bool depth = true);
 void setDepthWrite(bool on);
 void setBlend(bool on);
+void setBlendAdditive(bool on);   // true: src*alpha + dst (light coronas); false: normal alpha blend
 void setCullFace(bool on);
+void setFrontFaceCCW(bool ccw);   // false for mirrored (negative-determinant) transforms so culling stays correct
 void setDepthTestEnabled(bool on);
 
 Buffer createBuffer(BufferKind kind, std::span<const std::byte> data);
@@ -55,7 +57,9 @@ void    setUniform(int loc, int v);
 // Anisotropic filtering level applied to textures created afterwards (clamped to the hardware maximum;
 // no-op when GL_EXT_texture_filter_anisotropic is missing). Returns the level in effect.
 float   setAnisotropy(float level);
-Texture createTexture(int w, int h, Format f, std::span<const std::byte> pixels, bool mipmap = true, bool srgb = false);
+enum class Wrap : uint8_t { Repeat, Clamp, Mirror };   // matches Image::wrapS/T encoding
+Texture createTexture(int w, int h, Format f, std::span<const std::byte> pixels, bool mipmap = true, bool srgb = false,
+                      Wrap wrapS = Wrap::Repeat, Wrap wrapT = Wrap::Repeat);
 void    destroyTexture(Texture t);
 void    bindTexture(int slot, Texture t);
 
