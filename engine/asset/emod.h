@@ -16,7 +16,7 @@
 
 namespace eng {
 
-constexpr uint32_t EMOD_VERSION = 2;   // v1 files (no node extras) still load
+constexpr uint32_t EMOD_VERSION = 3;   // v1 (no node extras) and v2 (TEXCOORD_0 only) files still load; v3 = material UV set
 
 bool saveEmod(const Model& m, const std::string& path, std::string& error);
 bool loadEmod(const std::string& path, Model& out, std::string& error);

@@ -26,9 +26,11 @@ struct Material {
   float metallic = 1, roughness = 1;
   vec3 emissive{0, 0, 0};
   int baseColorTex = -1, metalRoughTex = -1, normalTex = -1, emissiveTex = -1, occlusionTex = -1;
+  int baseColorUv = 0;              // which TEXCOORD_n the base colour texture samples (glTF texCoord)
   AlphaMode alphaMode = AlphaMode::Opaque;
   float alphaCutoff = 0.5f;
   bool doubleSided = false;
+  bool unlit = false;               // KHR_materials_unlit: base colour shown as-is
 };
 
 struct Primitive {

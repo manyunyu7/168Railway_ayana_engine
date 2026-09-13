@@ -36,7 +36,7 @@ void ModelRenderer::init() {
   auto L = [&](const char* n) { return rhi::uniformLocation(prog_, n); };
   u_ = {L("uViewProj"), L("uModel"), L("uEye"), L("uSunDir"), L("uSunColor"), L("uSkyColor"), L("uGroundColor"),
         L("uBaseColor"), L("uEmissive"), L("uMetallic"), L("uRoughness"), L("uAlphaCutoff"),
-        L("uHasBaseTex"), L("uHasMRTex"), L("uHasEmissiveTex"), L("uAlphaMode"), L("uFogColor"), L("uFogDensity"), L("uInstanced")};
+        L("uHasBaseTex"), L("uHasMRTex"), L("uHasEmissiveTex"), L("uAlphaMode"), L("uFogColor"), L("uFogDensity"), L("uUnlit"), L("uInstanced")};
   rhi::useProgram(prog_);
   rhi::setUniform(L("uBaseTex"), 0); rhi::setUniform(L("uMRTex"), 1); rhi::setUniform(L("uEmissiveTex"), 2);
   const uint8_t px[4] = {255, 255, 255, 255};
@@ -76,6 +76,7 @@ void ModelRenderer::drawItem(const DrawItem& d) {
   rhi::setUniform(u_.roughness, mt.roughness);
   rhi::setUniform(u_.alphaCutoff, mt.alphaCutoff);
   rhi::setUniform(u_.alphaMode, (int)mt.alphaMode);
+  rhi::setUniform(u_.unlit, mt.unlit ? 1 : 0);
   auto bind = [&](int slot, int tex, int flagLoc) {
     bool has = d.textures && tex >= 0 && tex < (int)d.textures->size();
     rhi::setUniform(flagLoc, has ? 1 : 0);

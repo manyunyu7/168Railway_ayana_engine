@@ -231,13 +231,12 @@ void Game::onClick(double mx, double my, int w, int h) {
 
 void Game::stepSim(double realDt) {
   if (paused_) return;
-  // sim dt capped like the web client (0.1 s real → ×timeScale); step in ≤0.5 s chunks
-  simAccum_ += std::fmin(realDt, 0.1) * timeScale_;
-  while (simAccum_ >= 0.05) {
-    double dt = std::fmin(simAccum_, 0.5);
-    sim_.step(dt); simAccum_ -= dt;
-    for (const SimLogLine& l : sim_.state().log) pushMessage(l.text);
-  }
+  // like the web client: one step per frame, real dt capped at 0.1 s, scaled; the sim splits
+  // internally into <= 0.5 s substeps so large time scales stay stable
+  double dt = std::fmin(realDt, 0.1) * timeScale_;
+  if (dt <= 0) return;
+  sim_.step(dt);
+  for (const SimLogLine& l : sim_.state().log) pushMessage(l.text);
   applySimState();
 }
 

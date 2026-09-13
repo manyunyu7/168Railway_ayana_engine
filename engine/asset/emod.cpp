@@ -35,7 +35,7 @@ bool saveEmod(const Model& m, const std::string& path, std::string& err) {
     w.str(mt.name); w.put(mt.baseColor); w.put(mt.metallic); w.put(mt.roughness); w.put(mt.emissive);
     w.put((int32_t)mt.baseColorTex); w.put((int32_t)mt.metalRoughTex); w.put((int32_t)mt.normalTex);
     w.put((int32_t)mt.emissiveTex); w.put((int32_t)mt.occlusionTex);
-    w.put((uint8_t)mt.alphaMode); w.put(mt.alphaCutoff); w.put((uint8_t)mt.doubleSided);
+    w.put((uint8_t)mt.alphaMode); w.put(mt.alphaCutoff); w.put((uint8_t)mt.doubleSided); w.put((uint8_t)mt.unlit);
   }
   w.put((uint32_t)m.meshes.size());
   for (const Mesh& me : m.meshes) {
@@ -78,6 +78,7 @@ bool loadEmod(const std::string& path, Model& m, std::string& err) {
     mt.baseColorTex = r.get<int32_t>(); mt.metalRoughTex = r.get<int32_t>(); mt.normalTex = r.get<int32_t>();
     mt.emissiveTex = r.get<int32_t>(); mt.occlusionTex = r.get<int32_t>();
     mt.alphaMode = (AlphaMode)r.get<uint8_t>(); mt.alphaCutoff = r.get<float>(); mt.doubleSided = r.get<uint8_t>() != 0;
+    if (ver >= 3) mt.unlit = r.get<uint8_t>() != 0;
   }
   m.meshes.resize(r.get<uint32_t>());
   for (Mesh& me : m.meshes) {

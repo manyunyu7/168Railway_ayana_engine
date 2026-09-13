@@ -31,7 +31,7 @@ uniform vec3 uEye, uSunDir, uSunColor, uSkyColor, uGroundColor;
 uniform vec4 uBaseColor;
 uniform vec3 uEmissive;
 uniform float uMetallic, uRoughness, uAlphaCutoff;
-uniform int uHasBaseTex, uHasMRTex, uHasEmissiveTex, uAlphaMode; // 0 opaque 1 mask 2 blend
+uniform int uHasBaseTex, uHasMRTex, uHasEmissiveTex, uAlphaMode, uUnlit; // 0 opaque 1 mask 2 blend
 uniform vec3 uFogColor;
 uniform float uFogDensity;   // 0 = off
 uniform sampler2D uBaseTex, uMRTex, uEmissiveTex;
@@ -50,6 +50,7 @@ void main() {
   vec4 base = uBaseColor;
   if (uHasBaseTex == 1) base *= texture(uBaseTex, vUV);   // sRGB texture → linear by GPU
   if (uAlphaMode == 1 && base.a < uAlphaCutoff) discard;
+  if (uUnlit == 1) { oColor = vec4(pow(base.rgb, vec3(1.0/2.2)), uAlphaMode == 2 ? base.a : 1.0); return; }
   float metallic = uMetallic, roughness = uRoughness;
   if (uHasMRTex == 1) { vec3 mr = texture(uMRTex, vUV).rgb; roughness *= mr.g; metallic *= mr.b; }
   roughness = clamp(roughness, 0.04, 1.0);

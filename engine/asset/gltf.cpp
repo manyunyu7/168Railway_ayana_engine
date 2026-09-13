@@ -144,7 +144,7 @@ bool loadGlb(std::span<const uint8_t> bytes, Model& out, std::string& err) {
     if (pbr.has("baseColorFactor")) mat.baseColor = {(float)pbr["baseColorFactor"][0].num, (float)pbr["baseColorFactor"][1].num, (float)pbr["baseColorFactor"][2].num, (float)pbr["baseColorFactor"][3].num};
     mat.metallic = (float)pbr["metallicFactor"].numberOr(1);
     mat.roughness = (float)pbr["roughnessFactor"].numberOr(1);
-    if (pbr.has("baseColorTexture")) mat.baseColorTex = tex(pbr["baseColorTexture"]);
+    if (pbr.has("baseColorTexture")) { mat.baseColorTex = tex(pbr["baseColorTexture"]); mat.baseColorUv = pbr["baseColorTexture"]["texCoord"].intOr(0); }
     if (pbr.has("metallicRoughnessTexture")) mat.metalRoughTex = tex(pbr["metallicRoughnessTexture"]);
     if (m.has("normalTexture")) mat.normalTex = tex(m["normalTexture"]);
     if (m.has("emissiveTexture")) mat.emissiveTex = tex(m["emissiveTexture"]);
@@ -154,6 +154,7 @@ bool loadGlb(std::span<const uint8_t> bytes, Model& out, std::string& err) {
     mat.alphaMode = am == "BLEND" ? AlphaMode::Blend : am == "MASK" ? AlphaMode::Mask : AlphaMode::Opaque;
     mat.alphaCutoff = (float)m["alphaCutoff"].numberOr(0.5);
     mat.doubleSided = m["doubleSided"].boolOr(false);
+    mat.unlit = m["extensions"].has("KHR_materials_unlit");
     out.materials.push_back(std::move(mat));
   }
 
@@ -165,10 +166,14 @@ bool loadGlb(std::span<const uint8_t> bytes, Model& out, std::string& err) {
       Primitive prim; prim.material = pr["material"].intOr(-1);
       const Json& at = pr["attributes"];
       if (!at.has("POSITION")) continue;
-      Accessor pos, nrm, uv; bool hasN = at.has("NORMAL"), hasUV = at.has("TEXCOORD_0");
+      // one UV set per vertex: take the set the material's base colour texture samples
+      int uvSet = prim.material >= 0 && prim.material < (int)out.materials.size() ? out.materials[(size_t)prim.material].baseColorUv : 0;
+      std::string uvKey = "TEXCOORD_" + std::to_string(uvSet);
+      if (!at.has(uvKey)) uvKey = "TEXCOORD_0";
+      Accessor pos, nrm, uv; bool hasN = at.has("NORMAL"), hasUV = at.has(uvKey);
       if (!ctx.accessor(at["POSITION"].intOr(0), pos)) return false;
       if (hasN && !ctx.accessor(at["NORMAL"].intOr(0), nrm)) return false;
-      if (hasUV && !ctx.accessor(at["TEXCOORD_0"].intOr(0), uv)) return false;
+      if (hasUV && !ctx.accessor(at[uvKey].intOr(0), uv)) return false;
       prim.vertices.resize(pos.count);
       prim.boundsMin = {1e30f, 1e30f, 1e30f}; prim.boundsMax = -prim.boundsMin;
       for (size_t i = 0; i < pos.count; ++i) {

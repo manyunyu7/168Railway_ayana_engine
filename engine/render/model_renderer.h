@@ -53,7 +53,7 @@ private:
   rhi::Program prog_;
   rhi::Texture white_;   // 1x1 fallback so every sampler unit has a texture
   struct { int viewProj, model, eye, sunDir, sunColor, skyColor, groundColor, baseColor, emissive, metallic, roughness,
-           alphaCutoff, hasBase, hasMR, hasEmissive, alphaMode, fogColor, fogDensity, instanced; } u_{};
+           alphaCutoff, hasBase, hasMR, hasEmissive, alphaMode, fogColor, fogDensity, unlit, instanced; } u_{};
   std::vector<DrawItem> transparent_;
   vec3 eye_;
 };
