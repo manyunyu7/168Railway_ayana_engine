@@ -9,6 +9,10 @@ add_compile_options(-Wall -Wextra -Werror -ffp-contract=off)
 add_library(engine STATIC
   engine/rhi/rhi_gl.cpp
   engine/core/window.cpp
+  engine/core/json.cpp
+  engine/asset/gltf.cpp
+  engine/asset/emod.cpp
+  engine/render/model_renderer.cpp
 )
 target_include_directories(engine PUBLIC ${CMAKE_SOURCE_DIR})
 
@@ -25,3 +29,10 @@ endif()
 # ---- examples ----
 add_executable(cube examples/cube/main.cpp)
 target_link_libraries(cube PRIVATE engine)
+add_executable(viewer examples/viewer/main.cpp)
+target_link_libraries(viewer PRIVATE engine)
+
+# ---- tools (offline; may use third-party decoders) ----
+add_executable(convert tools/convert/main.cpp)
+target_link_libraries(convert PRIVATE engine)
+target_compile_options(convert PRIVATE -Wno-error -O2)
