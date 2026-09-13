@@ -182,6 +182,19 @@ function tickS40() {
   }
 }
 
+/** Level-crossing barriers: `World.jplClosed` (a train within 350 m on any track within 25 m of the
+ *  crossing, along the current point settings) — the web 3D layer evaluates it every 0.25 s of sim
+ *  time (bangun3d.ts perbaruiJPL), so the result is cached for that long. */
+let jplAt = -1;
+let jplCache: { id: string; closed: boolean }[] = [];
+function jplState() {
+  if (jplAt >= 0 && session.clock - jplAt < 0.25 && session.clock >= jplAt) return jplCache;
+  jplAt = session.clock;
+  jplCache = [...world.scenery.values()].filter((o: any) => o.kind === 'jpl')
+    .map((o: any) => ({ id: o.id, closed: world.jplClosed(o) }));
+  return jplCache;
+}
+
 function dynamicState() {
   ixl.beginAspectFrame();   // aspectOf caches per frame
   const signals = [...world.trackside.values()].filter((o: any) => o.kind === 'signal')
@@ -206,7 +219,7 @@ function dynamicState() {
     clock: r2(session.clock), score: session.score, violations: session.violations,
     pending: session.pending.length,
     trains: session.trains.map(trainState),
-    points, signals, occupancy, routes, log: fresh,
+    points, signals, occupancy, routes, jpl: jplState(), log: fresh,
   };
 }
 
@@ -219,7 +232,7 @@ function cmdLoad(c: any) {
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
   world = World.fromJSON(data.world ?? data);
   ixl = new Interlocking(world);
-  session = null; ai = null; logSeen = 0; panelCache = null;
+  session = null; ai = null; logSeen = 0; panelCache = null; jplAt = -1;
   mapName = path.basename(file, '.json');
   const def = data.session ?? null;
   (globalThis as any).__ppkaDef = def;

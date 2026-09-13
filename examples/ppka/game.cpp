@@ -31,6 +31,7 @@ bool Game::init(Window& win, const GameOptions& opt) {
   for (const Json& s : sim_.world()["scenery"].arr)
     if (s["kind"].stringOr("") == "station") { stationScene_ = origin_.toScene(s["pos"]["x"].num, s["pos"]["y"].num, 0); break; }
 
+  if (const char* t = std::getenv("ENG_TARGET")) { double wx, wy; if (std::sscanf(t, "%lf,%lf", &wx, &wy) == 2) stationScene_ = origin_.toScene(wx, wy, 0); }   // debug: aim at a world point
   orbit_.target = stationScene_; orbit_.distance = 160; orbit_.pitch = radians(18); orbit_.yaw = radians(35);
   orbit_.near = 1; orbit_.far = 40000; orbit_.fovY = radians(52);
   if (const char* v = std::getenv("ENG_VIEW")) std::sscanf(v, "%f,%f,%f", &orbit_.distance, &orbit_.yaw, &orbit_.pitch);   // debug: dist,yaw,pitch
@@ -70,6 +71,13 @@ bool Game::buildWorld() {
   signals_.build(graph_, profile_, world["trackside"]);
   points_.build(graph_, profile_);
   routes_.init(&graph_, &profile_);
+  auto ground = [this](double wx, double wy) { return terrain_.groundHeight(wx, wy); };
+  boards_.build(graph_, profile_, world, origin_, ground, root + "/assets/font.efnt");
+  jpl_.build(graph_, world, origin_, ground);
+  // baked OSM city: slug = map name; `bks` shares its geography with the `bekasi` bake (Bekasi Timur–Cibitung)
+  if (!std::getenv("ENG_NO_CITY")) {   // debug: ENG_NO_CITY=1 skips the city (fps comparison)
+    std::string slug = opt_.map == "bks" ? "bekasi" : opt_.map;
+    city_.build(root + "/../ppka-wannabe-2/public/kota/" + slug + ".json", origin_, graph_, ground); }
   if (!catalog_.load()) std::fprintf(stderr, "catalog: %s\n", catalog_.error().c_str());
   stock_.init(catalog_); trains_.init(stock_);
   // hiasan objects (spec §5.4): position on carved ground, yaw = rot degrees
@@ -92,10 +100,10 @@ bool Game::buildWorld() {
   float gy = terrain_.groundHeight(stationScene_.x + origin_.ox, stationScene_.z + origin_.oz);
   stationScene_.y = gy; orbit_.target = stationScene_; fly_.position.y = gy + 30;
   double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-  char m[240];
-  std::snprintf(m, sizeof m, "world built in %.0f ms: %.1f km track, %d points, %zu signals, rails %u tris, terrain %zu tris, %zu hiasan, %zu trees",
-                ms, graph_.totalLength() / 1000, graph_.pointCount(), signals_.signals().size(), rails_.stats().tris, terrain_.stats.triangles, scenery_.size(), trees_.stats.trees);
-  pushMessage(m);
+  char m[400];
+  std::snprintf(m, sizeof m, "world built in %.0f ms: %.1f km track, %d points, %zu signals, rails %u tris, terrain %zu tris, %zu hiasan, %zu trees, %zu boards, %zu jpl, city %zu bldg/%u tris/%d meshes (%.0f ms)",
+                ms, graph_.totalLength() / 1000, graph_.pointCount(), signals_.signals().size(), rails_.stats().tris, terrain_.stats.triangles, scenery_.size(), trees_.stats.trees, boards_.stats.boards, jpl_.crossings().size(), city_.stats.buildings, city_.stats.tris, city_.stats.meshes, city_.stats.buildMs);
+  pushMessage(m); std::printf("%s\n", m);
   if (std::getenv("ENG_TERRAIN_DEBUG")) {
     double wx, wy; origin_.toWorld(stationScene_, wx, wy);
     int li = terrain_.finestLayerAt(wx, wy);
@@ -113,10 +121,11 @@ void Game::applySimState() {
   signals_.animate();
   routes_.update(st);
   trains_.update(st, origin_, &profile_);
+  jpl_.setState(st.jpl);
 }
 
 void Game::shutdown() {
-  sim_.stop(); compass_.shutdown(); trains_.shutdown(); trees_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy(); routes_.destroy();
+  sim_.stop(); compass_.shutdown(); trains_.shutdown(); trees_.destroy(); boards_.destroy(); jpl_.destroy(); city_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy(); routes_.destroy();
   renderer_.shutdown(); sky_.shutdown(); text_.shutdown();
 }
 
@@ -396,6 +405,10 @@ void Game::render(Window& win) {
   { double hh = std::fmod(sim_.state().clock / 3600.0, 24.0); signals_.setView(useFly_ ? fly_.fovY : orbit_.fovY, h, hh < 6 || hh >= 18); }
   signals_.draw(renderer_, eye, &frustum);
   points_.draw(renderer_, &frustum);
+  boards_.draw(renderer_, &frustum);
+  jpl_.animate(paused_ ? 0.f : (float)std::fmin(realDt_, 0.1) * (float)std::fmax(1.0, timeScale_));
+  jpl_.draw(renderer_, &frustum);
+  city_.draw(renderer_, &frustum);
   updateHover();
   routes_.draw(renderer_);   // blended ribbons before the trains' own transparent parts
   if (!hoverId_.empty() && !hoverOnPanel_) {
@@ -423,6 +436,7 @@ void Game::render(Window& win) {
 
 void Game::frame(Window& win, double realDt) {
   fps_ = fps_ * 0.95 + (realDt > 0 ? 1.0 / realDt : 0) * 0.05;
+  realDt_ = realDt;
   handleInput(win, realDt);
   // debug: ENG_AUTOCLICK=signal|point clicks the nearest-to-centre visible object at frame 40;
   // ENG_AUTOHOVER=signal|point pins the hover cursor on it from frame 40 on.

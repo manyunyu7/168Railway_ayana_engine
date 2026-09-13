@@ -8,6 +8,9 @@
 #include "engine/render/text.h"
 #include "engine/sim/sim_process.h"
 #include "engine/world/asset_catalog.h"
+#include "engine/world/board_visual.h"
+#include "engine/world/city_visual.h"
+#include "engine/world/jpl_visual.h"
 #include "engine/world/coords.h"
 #include "engine/world/point_visual.h"
 #include "engine/world/rail_builder.h"
@@ -74,7 +77,7 @@ private:
   bool keyPrev_[512] = {};
   std::deque<std::string> messages_;
   int frame_ = 0;
-  double fps_ = 0;
+  double fps_ = 0, realDt_ = 0;
   mat4 viewProj_; int screenW_ = 1, screenH_ = 1;
   bool ready_ = false;
   bool buildWorld();
@@ -82,6 +85,7 @@ private:
   // world
   TrackGraph graph_; Terrain terrain_; VerticalProfile profile_; RailBuilder rails_;
   SignalVisuals signals_; PointVisuals points_; RouteVisuals routes_;
+  TracksideBoards boards_; JplVisuals jpl_; CityVisuals city_;
   AssetCatalog catalog_; RollingStock stock_; TrainVisuals trains_;
   struct Placed { GpuModel* model; mat4 xf; AABB bounds; };
   std::vector<Placed> scenery_;      // hiasan objects (station building etc.)

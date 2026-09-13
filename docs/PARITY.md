@@ -52,8 +52,8 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
 | Pengulang 9C | ✅ | `awn.json` |
 | Points arrows, padlock, glow (§6.4) | ✅ | `skalaWesel` distance scale missing |
 | Route ribbons, occupancy, hover preview, tooltips | ✅ | `route_visual.cpp` |
-| Trackside boards (s35, taspat, km post), 10G stop mark | ❌ | `uji3dPapan.ts` |
-| JPL level-crossing gates (`bangun3d.ts:657-691`) | ❌ | needs `distToTrainAhead` via bridge |
+| Trackside boards (s35, taspat, km post), 10G stop mark, buffer stop, scenery `platform` box | ✅ | `board_visual.cpp`; text atlas rasterised from `font.efnt`; 5 draw calls per corridor. `dirmarker`/trackmarks are not drawn (as in TS) |
+| JPL level-crossing gates (`bangun3d.ts:657-691`) | ✅ | `jpl_visual.cpp`; `step` returns `jpl:[{id,closed}]` (`World.jplClosed`, cached 0.25 s sim time); arm 5 s, lamps blink 460 ms. Road strip not drawn |
 | Rail "ikonik" yellow line when far | ❌ | |
 
 ## Terrain & scenery
@@ -66,7 +66,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
 | Trees from green mask (instanced) | ✅ | `vegetation.cpp`; `vegMask` not applied |
 | Station buildings from `hiasan.objek` | ✅ | `game.cpp buildWorld()` |
 | `hiasan.garis` spline objects (fences, LAA poles, platforms) | ❌ | `uji3dSpline.ts` |
-| Baked OSM city `public/kota/<slug>.json` (buildings) | ❌ | `kota3d.ts`; bks has data |
+| Baked OSM city `public/kota/<slug>.json` (buildings) | ✅ | `city_visual.cpp`; per 640 m chunk × palette meshes (no vertex colours), frustum-culled; bks uses the `bekasi` bake (alias in `game.cpp`). Roads not drawn (as in TS); `hijau`/`pohon` data unused |
 | Procedural KRL station | ❌ | `uji3dStasiunKRL.ts` |
 | Clouds | ❌ | |
 

@@ -74,6 +74,8 @@ Response = the **dynamic state**:
   signals: [{id, aspect:"red"|"yellow"|"green"}],
   occupancy: [{seg, iv:[[trainId, a, b], ...]}],          only segments with an interval
   routes:  [{id, entry, exit, exitLabel, segs, released, sepurSalah, izinTerisi}],
+  jpl:     [{id, closed}],                                 every scenery `jpl`; World.jplClosed (train within 350 m on
+                                                           any track within 25 m), re-evaluated every 0.25 s of sim time
   log:     [{t, kind:"info"|"good"|"bad", text}]           only lines NEW since the previous step/state
 }
 ```
@@ -186,7 +188,7 @@ state is needed. Segment sepur/jalur come from the renderer's lane classificatio
 `eng::SimProcess` (`engine/sim/sim_process.h`) spawns the bridge with fork/exec (cwd = PPKA root,
 `npx tsx`), blocks on one line per command, parses with `eng::Json` and fills `SimState`
 (`SimTrain{... vehicles[{model,sarana,kind,length,x,y,heading,seg,s,x1,y1,x2,y2,seg2,s2}]}`, `SimPoint{id,setting,lockedBy}`, `SimSignal{id,aspect}`, `SimRoute{id,entry,exit,exitLabel,segs,released}`,
-`SimOccupancy{seg, intervals[{train,a,b}]}`, `SimTrain.tungguS40/s40Siap`, new log lines); `preview(signal)` wraps the `preview` command.
+`SimOccupancy{seg, intervals[{train,a,b}]}`, `SimJpl{id,closed}`, `SimTrain.tungguS40/s40Siap`, new log lines); `preview(signal)` wraps the `preview` command.
 Player commands: `setTimeScale(k)`, `setClock("HH:MM")`, `beriS40(train)`, `hapusKA(train)`, `trainDetail(train)`,
 `routeMenu(signal)` (raw `Json`), and `panel()` → typed `PanelLayout` (segments/points/signals/berths/portals/
 stations/jalur, `posOnSeg(seg, s, x, y, tx, ty)` interpolating the schematic polyline; cached after the first call). Raw responses stay available in `lastResponse()`; `world()`/`summary()` keep the load
