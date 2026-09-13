@@ -1,5 +1,6 @@
 #include "engine/asset/gltf.h"
 #include "engine/core/json.h"
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -133,10 +134,22 @@ bool loadGlb(std::span<const uint8_t> bytes, Model& out, std::string& err) {
     img.encoded.assign(ptr, ptr + len);
     out.images.push_back(std::move(img));
   }
-  // textures: map texture index -> image index
+  // textures: map texture index -> image index; the sampler's wrap mode is recorded on the image
+  // (one image is in practice referenced by one texture; the last one wins otherwise)
   std::vector<int> texToImage;
-  for (const Json& t : doc["textures"].arr) texToImage.push_back(t["source"].intOr(-1));
-  auto tex = [&](const Json& info) { int i = info["index"].intOr(-1); return i >= 0 && i < (int)texToImage.size() ? texToImage[(size_t)i] : -1; };
+  for (const Json& t : doc["textures"].arr) {
+    int img = t["source"].intOr(-1);
+    texToImage.push_back(img);
+    if (img < 0 || img >= (int)out.images.size() || !t.has("sampler")) continue;
+    const Json& sm = doc["samplers"][(size_t)t["sampler"].intOr(0)];
+    auto wrap = [](int w) -> uint8_t { return w == 33071 ? 1 : w == 33648 ? 2 : 0; };
+    out.images[(size_t)img].wrapS = wrap(sm["wrapS"].intOr(10497)); out.images[(size_t)img].wrapT = wrap(sm["wrapT"].intOr(10497));
+  }
+  auto tex = [&](const Json& info, bool linear = false) {
+    int i = info["index"].intOr(-1); int img = i >= 0 && i < (int)texToImage.size() ? texToImage[(size_t)i] : -1;
+    if (linear && img >= 0) out.images[(size_t)img].linear = true;
+    return img;
+  };
 
   for (const Json& m : doc["materials"].arr) {
     Material mat; mat.name = m["name"].stringOr("");
@@ -144,12 +157,23 @@ bool loadGlb(std::span<const uint8_t> bytes, Model& out, std::string& err) {
     if (pbr.has("baseColorFactor")) mat.baseColor = {(float)pbr["baseColorFactor"][0].num, (float)pbr["baseColorFactor"][1].num, (float)pbr["baseColorFactor"][2].num, (float)pbr["baseColorFactor"][3].num};
     mat.metallic = (float)pbr["metallicFactor"].numberOr(1);
     mat.roughness = (float)pbr["roughnessFactor"].numberOr(1);
-    if (pbr.has("baseColorTexture")) { mat.baseColorTex = tex(pbr["baseColorTexture"]); mat.baseColorUv = pbr["baseColorTexture"]["texCoord"].intOr(0); }
-    if (pbr.has("metallicRoughnessTexture")) mat.metalRoughTex = tex(pbr["metallicRoughnessTexture"]);
-    if (m.has("normalTexture")) mat.normalTex = tex(m["normalTexture"]);
-    if (m.has("emissiveTexture")) mat.emissiveTex = tex(m["emissiveTexture"]);
-    if (m.has("occlusionTexture")) mat.occlusionTex = tex(m["occlusionTexture"]);
+    if (pbr.has("baseColorTexture")) {
+      const Json& bt = pbr["baseColorTexture"];
+      mat.baseColorTex = tex(bt); mat.baseColorUv = bt["texCoord"].intOr(0);
+      const Json& tt = bt["extensions"]["KHR_texture_transform"];   // baked into the vertex UVs below
+      if (!tt.isNull()) {
+        mat.uvOffset = {(float)tt["offset"][0].numberOr(0), (float)tt["offset"][1].numberOr(0)};
+        mat.uvScale = {(float)tt["scale"][0].numberOr(1), (float)tt["scale"][1].numberOr(1)};
+        mat.uvRotation = (float)tt["rotation"].numberOr(0);
+        if (tt.has("texCoord")) mat.baseColorUv = tt["texCoord"].intOr(mat.baseColorUv);
+      }
+    }
+    if (pbr.has("metallicRoughnessTexture")) mat.metalRoughTex = tex(pbr["metallicRoughnessTexture"], true);
+    if (m.has("normalTexture")) mat.normalTex = tex(m["normalTexture"], true);
+    if (m.has("emissiveTexture")) mat.emissiveTex = tex(m["emissiveTexture"]);   // sRGB per spec
+    if (m.has("occlusionTexture")) mat.occlusionTex = tex(m["occlusionTexture"], true);
     if (m.has("emissiveFactor")) mat.emissive = {(float)m["emissiveFactor"][0].num, (float)m["emissiveFactor"][1].num, (float)m["emissiveFactor"][2].num};
+    mat.emissive = mat.emissive * (float)m["extensions"]["KHR_materials_emissive_strength"]["emissiveStrength"].numberOr(1);
     std::string am = m["alphaMode"].stringOr("OPAQUE");
     mat.alphaMode = am == "BLEND" ? AlphaMode::Blend : am == "MASK" ? AlphaMode::Mask : AlphaMode::Opaque;
     mat.alphaCutoff = (float)m["alphaCutoff"].numberOr(0.5);
@@ -174,6 +198,10 @@ bool loadGlb(std::span<const uint8_t> bytes, Model& out, std::string& err) {
       if (!ctx.accessor(at["POSITION"].intOr(0), pos)) return false;
       if (hasN && !ctx.accessor(at["NORMAL"].intOr(0), nrm)) return false;
       if (hasUV && !ctx.accessor(at[uvKey].intOr(0), uv)) return false;
+      // KHR_texture_transform of the base colour texture, baked: uv' = offset + R(rotation) * (scale * uv)
+      const Material* pm = prim.material >= 0 && prim.material < (int)out.materials.size() ? &out.materials[(size_t)prim.material] : nullptr;
+      bool xform = pm && (pm->uvOffset.x != 0 || pm->uvOffset.y != 0 || pm->uvScale.x != 1 || pm->uvScale.y != 1 || pm->uvRotation != 0);
+      float cr = xform ? std::cos(pm->uvRotation) : 1, sr = xform ? std::sin(pm->uvRotation) : 0;
       prim.vertices.resize(pos.count);
       prim.boundsMin = {1e30f, 1e30f, 1e30f}; prim.boundsMax = -prim.boundsMin;
       for (size_t i = 0; i < pos.count; ++i) {
@@ -181,6 +209,7 @@ bool loadGlb(std::span<const uint8_t> bytes, Model& out, std::string& err) {
         v.pos = {pos.readFloat(i, 0), pos.readFloat(i, 1), pos.readFloat(i, 2)};
         if (hasN) v.normal = {nrm.readFloat(i, 0), nrm.readFloat(i, 1), nrm.readFloat(i, 2)};
         if (hasUV) v.uv = {uv.readFloat(i, 0), uv.readFloat(i, 1)};
+        if (xform) { vec2 t{v.uv.x * pm->uvScale.x, v.uv.y * pm->uvScale.y}; v.uv = {pm->uvOffset.x + cr * t.x - sr * t.y, pm->uvOffset.y + sr * t.x + cr * t.y}; }
         prim.boundsMin = vmin(prim.boundsMin, v.pos); prim.boundsMax = vmax(prim.boundsMax, v.pos);
       }
       if (pr.has("indices")) {

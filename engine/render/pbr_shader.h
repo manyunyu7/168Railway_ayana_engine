@@ -50,6 +50,7 @@ void main() {
   vec4 base = uBaseColor;
   if (uHasBaseTex == 1) base *= texture(uBaseTex, vUV);   // sRGB texture → linear by GPU
   if (uAlphaMode == 1 && base.a < uAlphaCutoff) discard;
+  if (uAlphaMode == 2 && base.a < 0.02) discard;   // blend writes depth: keep cut-out holes open
   if (uUnlit == 1) { oColor = vec4(pow(base.rgb, vec3(1.0/2.2)), uAlphaMode == 2 ? base.a : 1.0); return; }
   float metallic = uMetallic, roughness = uRoughness;
   if (uHasMRTex == 1) { vec3 mr = texture(uMRTex, vUV).rgb; roughness *= mr.g; metallic *= mr.b; }

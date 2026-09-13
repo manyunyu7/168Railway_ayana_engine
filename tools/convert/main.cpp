@@ -37,17 +37,20 @@ int main(int argc, char** argv) {
     unsigned char* px = stbi_load_from_memory(im.encoded.data(), (int)im.encoded.size(), &w, &h, &c, 4);
     if (!px) { std::fprintf(stderr, "image %zu (%s): decode failed: %s\n", i, im.mime.c_str(), stbi_failure_reason()); return 1; }
     int ow = w, oh = h;
-    while (w > maxTex || h > maxTex) { w /= 2; h /= 2; }
+    // budget: no side above 2*maxTex and at most (2*maxTex)^2 pixels — with 512: a 4096x2048 livery atlas
+    // keeps 1024x512, a 4096x4096 loco atlas 1024x1024 (at 512x512 the numbers were unreadable)
+    while ((size_t)w * h > (size_t)4 * maxTex * maxTex || w > 2 * maxTex || h > 2 * maxTex) { w = w > 1 ? w / 2 : 1; h = h > 1 ? h / 2 : 1; }
     if (w != ow || h != oh) {
       unsigned char* rs = (unsigned char*)std::malloc((size_t)w * h * 4);
-      stbir_resize_uint8_srgb(px, ow, oh, 0, rs, w, h, 0, STBIR_RGBA);
+      if (im.linear) stbir_resize_uint8_linear(px, ow, oh, 0, rs, w, h, 0, STBIR_RGBA);   // data maps: no sRGB curve
+      else stbir_resize_uint8_srgb(px, ow, oh, 0, rs, w, h, 0, STBIR_RGBA);
       stbi_image_free(px); px = rs;
     }
     im.width = w; im.height = h; im.channels = 4;
     im.pixels.assign(px, px + (size_t)w * h * 4);
     (w != ow) ? std::free(px) : stbi_image_free(px);
     im.encoded.clear(); im.encoded.shrink_to_fit();
-    std::printf("  image %zu: %dx%d -> %dx%d\n", i, ow, oh, w, h);
+    std::printf("  image %zu: %dx%d -> %dx%d%s%s\n", i, ow, oh, w, h, im.linear ? " linear" : "", im.wrapS == 1 || im.wrapT == 1 ? " clamp" : "");
   }
 
   if (!saveEmod(model, argv[2], err)) { std::fprintf(stderr, "EMOD: %s\n", err.c_str()); return 1; }

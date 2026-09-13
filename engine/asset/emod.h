@@ -2,7 +2,7 @@
 // the runtime never decodes PNG/JPEG. Little-endian, versioned.
 //
 //   magic "EMOD" u32 version
-//   u32 nImages  { u16 w, u16 h, u8 channels(4), u8 pad[3], bytes[w*h*4] }
+//   u32 nImages  { u16 w, u16 h, u8 channels(4), u8 wrapS, u8 wrapT, u8 linear (v4+; were pad), bytes[w*h*4] }
 //   u32 nMaterials { name, vec4 baseColor, f metallic, f roughness, vec3 emissive,
 //                    i32 baseColorTex, metalRoughTex, normalTex, emissiveTex, occlusionTex,
 //                    u8 alphaMode, f alphaCutoff, u8 doubleSided }
@@ -16,7 +16,8 @@
 
 namespace eng {
 
-constexpr uint32_t EMOD_VERSION = 3;   // v1 (no node extras) and v2 (TEXCOORD_0 only) files still load; v3 = material UV set
+constexpr uint32_t EMOD_VERSION = 4;   // v1 (no node extras), v2 (TEXCOORD_0 only), v3 (material UV set) still load;
+                                       // v4 = image wrap/colour-space flags, emissive strength and UV transforms baked in
 
 bool saveEmod(const Model& m, const std::string& path, std::string& error);
 bool loadEmod(const std::string& path, Model& out, std::string& error);

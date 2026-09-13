@@ -47,10 +47,14 @@ void ModelRenderer::shutdown() { rhi::destroyProgram(prog_); rhi::destroyTexture
 void ModelRenderer::flushTransparent() {
   if (transparent_.empty()) return;
   std::sort(transparent_.begin(), transparent_.end(), [](const DrawItem& a, const DrawItem& b) { return a.depth > b.depth; });
-  rhi::setBlend(true); rhi::setDepthWrite(false);
+  // Blend items keep writing depth (as three.js does): most BLEND materials in our assets are cut-out
+  // textures (bogie spokes, decals) that would otherwise show everything behind them through their
+  // opaque parts; fully transparent texels are discarded by the shader so holes stay holes. Additive
+  // glows never write depth.
+  rhi::setBlend(true);
   bool additive = false;
   for (const DrawItem& d : transparent_) {
-    if (d.material->additive != additive) { additive = d.material->additive; rhi::setBlendAdditive(additive); }
+    if (d.material->additive != additive) { additive = d.material->additive; rhi::setBlendAdditive(additive); rhi::setDepthWrite(!additive); }
     drawItem(d);
   }
   if (additive) rhi::setBlendAdditive(false);

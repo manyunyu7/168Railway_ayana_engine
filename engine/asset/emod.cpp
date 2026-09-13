@@ -27,7 +27,8 @@ bool saveEmod(const Model& m, const std::string& path, std::string& err) {
   w.put((uint32_t)m.images.size());
   for (const Image& im : m.images) {
     if (im.pixels.empty() || im.channels != 4) { err = "image not decoded to RGBA8"; return false; }
-    w.put((uint16_t)im.width); w.put((uint16_t)im.height); w.put((uint8_t)4); uint8_t pad[3] = {}; w.bytes(pad, 3);
+    w.put((uint16_t)im.width); w.put((uint16_t)im.height); w.put((uint8_t)4);
+    w.put(im.wrapS); w.put(im.wrapT); w.put((uint8_t)(im.linear ? 1 : 0));
     w.bytes(im.pixels.data(), im.pixels.size());
   }
   w.put((uint32_t)m.materials.size());
@@ -69,7 +70,8 @@ bool loadEmod(const std::string& path, Model& m, std::string& err) {
   m = {};
   m.images.resize(r.get<uint32_t>());
   for (Image& im : m.images) {
-    im.width = r.get<uint16_t>(); im.height = r.get<uint16_t>(); im.channels = r.get<uint8_t>(); uint8_t pad[3]; r.bytes(pad, 3);
+    im.width = r.get<uint16_t>(); im.height = r.get<uint16_t>(); im.channels = r.get<uint8_t>();
+    im.wrapS = r.get<uint8_t>(); im.wrapT = r.get<uint8_t>(); im.linear = r.get<uint8_t>() != 0;   // zero (= repeat, sRGB) before v4
     im.pixels.resize((size_t)im.width * im.height * im.channels); r.bytes(im.pixels.data(), im.pixels.size());
   }
   m.materials.resize(r.get<uint32_t>());
