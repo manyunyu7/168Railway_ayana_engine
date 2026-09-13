@@ -17,6 +17,9 @@
 #include <cstdlib>
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+// Module.heap() returns the current Wasm heap view (HEAPU8 is reassigned on memory growth and not exported
+// by default); the page copies transcoded mip data into buffers from viewer_alloc through it.
+EM_JS(void, installHeapAccessor, (), { Module['heap'] = () => HEAPU8; });
 #endif
 
 using namespace eng;
@@ -159,6 +162,9 @@ int main(int argc, char** argv) {
   const char* path = argv[1];
 #endif
   static App app; g_app = &app;
+#ifdef __EMSCRIPTEN__
+  installHeapAccessor();
+#endif
   Window& win = app.win;
   if (!win.open(1280, 800, "engine — viewer")) return 1;
   rhi::init();

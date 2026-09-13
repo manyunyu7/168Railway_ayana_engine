@@ -18,42 +18,55 @@
 <div id="bar">
   <strong>Ayana viewer (WebGL2)</strong>
   <label>model <select id="model">
-    <option value="models/cc203.emod">CC203 locomotive</option>
-    <option value="models/wilis.emod">K1 Wilis livery</option>
-    <option value="models/krl-kuha.emod">KRL JR205 cab car</option>
+    <option value="cc203" data-emod="models/cc203.emod" data-ktx2="models/ktx2/pk-cc203.glb">CC203 locomotive</option>
+    <option value="wilis" data-emod="models/wilis.emod" data-ktx2="models/ktx2/nry-k1-25-wilis-badan.glb">K1 Wilis livery</option>
+    <option value="krl-kuha" data-emod="models/krl-kuha.emod" data-ktx2="models/ktx2/nry-jr205-kuha-badan-v2.glb">KRL JR205 cab car</option>
   </select></label>
-  <span id="stats"><span id="fps">– fps</span><span id="size">download –</span><span id="wasm"></span></span>
+  <span id="stats"><span id="fps">– fps</span><span id="size">download –</span><span id="tex"></span><span id="wasm"></span></span>
   <span id="status">loading runtime…</span>
 </div>
 <canvas id="canvas" tabindex="1" oncontextmenu="event.preventDefault()"></canvas>
-<script>
-  // Emscripten glue: canvas + main-loop; models are streamed via viewer_load (emscripten_fetch).
-  const status = document.getElementById('status'), fps = document.getElementById('fps'), size = document.getElementById('size');
-  let pending = 0, downloaded = 0;
-  var Module = {
-    canvas: document.getElementById('canvas'),
+<script type="module">
+  // Emscripten glue: canvas + main loop. Geometry (.emod, v6 placeholders) is streamed by the engine itself
+  // (viewer_load -> emscripten_fetch); the textures come from the reference project's KTX2 GLB, transcoded in a
+  // worker (ktx2.js) and pushed through viewer_texture_begin/mip/end.
+  import { streamTextures } from './ktx2.js';
+  const $ = id => document.getElementById(id);
+  const status = $('status'), fps = $('fps'), size = $('size'), tex = $('tex'), sel = $('model');
+  let pending = 0, gen = 0;
+  window.Module = {
+    canvas: $('canvas'),
     print: t => console.log(t),
     printErr: t => console.error(t),
     setStatus: t => { if (t) status.textContent = t; },
     onRuntimeInitialized() {
       status.textContent = '';
-      const sel = document.getElementById('model');
-      const load = () => { pending = performance.now(); status.textContent = 'loading ' + sel.value + ' …'; Module.ccall('viewer_load', null, ['string'], [sel.value]); };
+      const load = () => {
+        const opt = sel.selectedOptions[0], myGen = ++gen;
+        pending = performance.now(); tex.textContent = ''; size.textContent = 'download –';
+        status.textContent = 'loading ' + opt.dataset.emod + ' …';
+        Module.ccall('viewer_load', null, ['string'], [opt.dataset.emod]);
+        const waitGeometry = new Promise(r => { const t = setInterval(() => { if (Module._viewer_ready() || gen !== myGen) { clearInterval(t); r(); } }, 50); });
+        waitGeometry.then(() => {
+          if (gen !== myGen) return;
+          const geometry = Module._viewer_bytes();
+          size.textContent = 'geometry ' + (geometry / 1048576).toFixed(2) + ' MB in ' + (performance.now() - pending).toFixed(0) + ' ms';
+          status.textContent = 'textures …';
+          return streamTextures(Module, opt.dataset.ktx2, t => { if (gen === myGen) status.textContent = t; }, () => gen === myGen).then(s => {
+            if (gen !== myGen) return;
+            size.textContent = 'download ' + ((geometry + s.bytes) / 1048576).toFixed(2) + ' MB (geometry ' + (geometry / 1024).toFixed(0) + ' KB + textures ' + (s.bytes / 1024).toFixed(0) + ' KB) in ' + (performance.now() - pending).toFixed(0) + ' ms';
+            tex.textContent = s.count + ' textures ' + s.format + ': transcode ' + s.transcodeMs.toFixed(0) + ' ms, upload ' + s.uploadMs.toFixed(0) + ' ms';
+            status.textContent = ''; window.viewerStats = { geometry, ...s };   // for automated checks
+          });
+        }).catch(e => { status.textContent = String(e.message || e); console.error(e); });
+      };
       sel.addEventListener('change', load);
       load();
-      setInterval(() => {
-        fps.textContent = Module._viewer_fps().toFixed(0) + ' fps';
-        if (pending && Module._viewer_ready()) {
-          downloaded = Module._viewer_bytes();
-          size.textContent = 'download ' + (downloaded / 1048576).toFixed(2) + ' MB in ' + (performance.now() - pending).toFixed(0) + ' ms';
-          status.textContent = ''; pending = 0;
-        }
-      }, 250);
+      setInterval(() => { fps.textContent = Module._viewer_fps().toFixed(0) + ' fps'; }, 250);
     }
   };
-  // wasm + js size readout
-  fetch('viewer.wasm', { method: 'HEAD' }).then(r => { const n = r.headers.get('content-length'); if (n) document.getElementById('wasm').textContent = 'wasm ' + (n / 1024).toFixed(0) + ' KB'; }).catch(() => {});
+  fetch('viewer.wasm', { method: 'HEAD' }).then(r => { const n = r.headers.get('content-length'); if (n) $('wasm').textContent = 'wasm ' + (n / 1024).toFixed(0) + ' KB'; }).catch(() => {});
+  const s = document.createElement('script'); s.src = 'viewer.js'; s.async = true; document.body.appendChild(s);
 </script>
-<script async src="viewer.js"></script>
 </body>
 </html>
