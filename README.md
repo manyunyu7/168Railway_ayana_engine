@@ -72,6 +72,11 @@ tools/    offline converters (the only place third-party decoders are allowed):
 docs/     world-spec.md (how the reference three.js scene is built, with exact constants)
 ```
 
+## Roadmap / what is still missing
+
+See **[docs/PARITY.md](docs/PARITY.md)** — the feature-by-feature checklist against the reference
+three.js client, plus the working rules for contributors.
+
 ## Principles
 
 * Everything the runtime executes is our code; third-party code (stb) lives only in offline tools.
