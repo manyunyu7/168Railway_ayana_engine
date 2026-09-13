@@ -7,7 +7,16 @@
 #include "engine/render/sky.h"
 #include "engine/render/text.h"
 #include "engine/sim/sim_process.h"
+#include "engine/world/asset_catalog.h"
 #include "engine/world/coords.h"
+#include "engine/world/point_visual.h"
+#include "engine/world/rail_builder.h"
+#include "engine/world/rail_profile.h"
+#include "engine/world/rolling_stock.h"
+#include "engine/world/signal_visual.h"
+#include "engine/world/terrain.h"
+#include "engine/world/track_graph.h"
+#include "engine/world/train_visual.h"
 #include <deque>
 #include <string>
 
@@ -45,11 +54,15 @@ private:
   double fps_ = 0;
   mat4 viewProj_; int screenW_ = 1, screenH_ = 1;
   bool ready_ = false;
-  friend class GameWorldAccess;
-public:
-  // integration points (filled as world modules land)
-  struct WorldModules;
-  WorldModules* world_ = nullptr;
+  bool buildWorld();
+  void applySimState();
+  // world
+  TrackGraph graph_; Terrain terrain_; VerticalProfile profile_; RailBuilder rails_;
+  SignalVisuals signals_; PointVisuals points_;
+  AssetCatalog catalog_; RollingStock stock_; TrainVisuals trains_;
+  struct Placed { GpuModel* model; mat4 xf; AABB bounds; };
+  std::vector<Placed> scenery_;      // hiasan objects (station building etc.)
+  std::string hoverId_;
 };
 
 } // namespace eng

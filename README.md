@@ -16,3 +16,14 @@ Layout: `engine/math`, `engine/rhi` (GPU layer), `engine/core` (window, camera, 
 `engine/asset` (GLB parser, EMOD format), `engine/render` (PBR), `engine/sim` (SimProcess: PPKA TypeScript
 simulation as a child process, protocol in `bridge/PROTOCOL.md`), `examples/`, `tools/` (offline converters —
 the only place third-party decoders are allowed).
+
+## Playable PPKA scene
+
+```bash
+./build/mac-debug/fetch_tiles mojokerto          # once: DEM + satellite tiles -> assets/terrain/
+./build/mac-release/ppka mojokerto 07:00          # map, start clock; --no-ai for manual dispatching
+```
+Controls: LMB drag = orbit, scroll = zoom, F = fly camera (WASD/QE, RMB look, Shift = fast),
+click a signal = set/cancel route, click a point arrow = flip, space = pause, +/- = time scale, Esc = quit.
+The simulation runs in the original TypeScript engine via `bridge/sim-bridge.ts` (Node); see `bridge/PROTOCOL.md`.
+Module tests: `tracktest`, `railtest`, `terraintest`, `traintest`, `simtest`.

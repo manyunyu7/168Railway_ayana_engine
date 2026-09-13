@@ -22,15 +22,26 @@ void Game::drawHud(int w, int h) {
   text_.draw(top, pad, pad * 0.5f, white, 0.8f);
 
   // train list (right)
-  float x = (float)w - 420, y = lh + pad * 2;
-  text_.rect(x - pad, y - pad * 0.5f, 420, lh * ((float)st.trains.size() + 1) + pad, panel);
+  float x = (float)w - 430, y = lh + pad * 2;
+  text_.rect(x - pad, y - pad * 0.5f, 430, lh * ((float)st.trains.size() + 1) + pad, panel);
   text_.draw("Trains", x, y, dim, 0.8f); y += lh;
   for (const SimTrain& t : st.trains) {
     char line[160];
-    std::snprintf(line, sizeof line, "%-7s %-16.16s %5.0f km/h %s", t.no.c_str(), t.name.c_str(), t.speed * 3.6f, t.state.c_str());
-    text_.draw(line, x, y, t.hold.empty() ? white : warn, 0.8f);
-    if (!t.hold.empty()) text_.draw(t.hold, x + 300, y, warn, 0.65f);
+    std::snprintf(line, sizeof line, "%-6.6s %-14.14s %4.0f km/h %-5.5s %s", t.no.c_str(), t.name.c_str(), t.speed * 3.6f, t.state.c_str(), t.hold.c_str());
+    text_.draw(line, x, y, t.hold.empty() ? white : warn, 0.7f);
     y += lh;
+  }
+
+  // train labels projected from 3D
+  for (const TrainLabel& l : trains_.labels()) {
+    vec4 c = viewProj_ * vec4(l.anchor, 1);
+    if (c.w <= 0) continue;
+    float sx = (c.x / c.w * 0.5f + 0.5f) * (float)w, sy = (1 - (c.y / c.w * 0.5f + 0.5f)) * (float)h;
+    if (sx < 0 || sx > w || sy < 0 || sy > h) continue;
+    char lab[96]; std::snprintf(lab, sizeof lab, "KA %s %s  %.0f", l.no.c_str(), l.name.c_str(), l.speed * 3.6f);
+    float tw = text_.measure(lab, 0.7f);
+    text_.rect(sx - tw / 2 - 4, sy - lh, tw + 8, lh, {0.05f, 0.2f, 0.4f, 0.75f});
+    text_.draw(lab, sx - tw / 2, sy - lh + 2, white, 0.7f);
   }
 
   // messages (bottom-left)
