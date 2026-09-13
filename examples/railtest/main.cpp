@@ -5,7 +5,8 @@
 // When assets/terrain/<map>.dem/.sat exist (tools/fetch_tiles) the real DEM drives the profile and the
 // carved ground is drawn; otherwise a synthetic sine terrain is used.
 // Env: ENG_CAPTURE=file.ppm (frame 30, exit), ENG_VIEW=dist,yaw,pitch,
-// ENG_TARGET=signal:<name>|point:<nodeId>|seg:<id>|bridge:<n>|tunnel:<n>|x,z (bridge/tunnel: n-th such segment)
+// ENG_TARGET=signal:<name>|point:<nodeId>|seg:<id>|bridge:<n>|tunnel:<n>|krl|x,z (bridge/tunnel: n-th such segment),
+// ENG_TEST_KRL=<tracks> plants a procedural KRL station (KrlStation) at the first station, aligned with the rails
 #include "engine/core/json.h"
 #include "engine/core/orbit_camera.h"
 #include "engine/core/window.h"
@@ -17,6 +18,7 @@
 #include "engine/world/rail_builder.h"
 #include "engine/world/rail_profile.h"
 #include "engine/world/signal_visual.h"
+#include "engine/world/krl_station.h"
 #include "engine/world/terrain.h"
 #include "engine/world/track_graph.h"
 #include <chrono>
@@ -102,6 +104,24 @@ int main(int argc, char** argv) {
   }
 
   ModelRenderer renderer; renderer.init();
+  KrlStation krl; mat4 krlXf = mat4::identity();
+  if (const char* k = std::getenv("ENG_TEST_KRL")) {
+    KrlOptions ko; ko.tracks = std::max(1, std::atoi(k));
+    krl.build(ko);
+    // nearest segment to the station: yaw from its tangent, y from the rail head
+    double best = 1e30; int bs = 0; double bsS = 0;
+    for (size_t si = 0; si < graph.segments.size(); ++si)
+      for (double sv = 0; sv <= graph.length(si); sv += 10) {
+        TrackSample sm = graph.sampleAt((int)si, sv); double d = std::hypot(sm.wx - stX, sm.wy - stY);
+        if (d < best) { best = d; bs = (int)si; bsS = sv; }
+      }
+    TrackSample sm = graph.sampleAt(bs, bsS);
+    vec3 pos = graph.origin().toScene(sm.wx, sm.wy, profile.railHeight(bs, bsS));
+    // local +X along the rails: scene tangent (tx, ty) -> yaw about Y (scene z = world y)
+    float yaw = std::atan2(-(float)sm.ty, (float)sm.tx);
+    krlXf = mat4::translation(pos) * mat4::rotationY(yaw);
+    std::printf("krl station: %d tracks, %d parts, %u tris (%.1f ms) at seg %s s=%.0f, %zu canopy openings\n", ko.tracks, krl.stats.parts, krl.stats.tris, krl.stats.buildMs, graph.segments[(size_t)bs].id.c_str(), bsS, krl.openings().size());
+  }
   TextRenderer text; if (!text.load(std::string(ENG_SOURCE_DIR) + "/assets/font.efnt", err)) std::fprintf(stderr, "font: %s\n", err.c_str());
   Lighting light; light.fogDensity = 1.f / 6000; Sky sky; sky.init(); sky.sunDir = light.sunDir;
   OrbitCamera cam;
@@ -133,6 +153,7 @@ int main(int argc, char** argv) {
         std::printf("target %s %d = seg %s (%.0f m)\n", t.c_str(), n, graph.segments[si].id.c_str(), graph.length(si));
       }
     }
+    else if (t == "krl") { cam.target = krlXf.transformPoint({0, 3, 0}); }
     else if (t.rfind("point:", 0) == 0) { for (const PointInstance& p : points.points()) if (p.nodeId == t.substr(6)) cam.target = p.pos; }
     else { float x, z; if (std::sscanf(tg, "%f,%f", &x, &z) == 2) { cam.target.x = x; cam.target.z = z; } }
   }
@@ -159,6 +180,7 @@ int main(int argc, char** argv) {
     renderer.beginFrame(vp, cam.position(), light);
     if (haveTerrain) terrain.draw(renderer, &fr);
     rails.draw(renderer, &fr);
+    if (krl.stats.parts) krl.draw(renderer, krlXf, &fr);
     signals.draw(renderer, cam.position(), &fr);
     points.draw(renderer, &fr);
     renderer.flushTransparent();
@@ -185,7 +207,7 @@ int main(int argc, char** argv) {
     }
     win.swapBuffers();
   }
-  rails.destroy(); signals.destroy(); points.destroy(); terrain.destroy();
+  rails.destroy(); signals.destroy(); points.destroy(); terrain.destroy(); krl.destroy();
   renderer.shutdown(); text.shutdown(); sky.shutdown(); win.close();
   if (useSim) sim.stop();
   return 0;
