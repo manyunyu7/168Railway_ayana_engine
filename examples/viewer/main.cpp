@@ -1,7 +1,9 @@
 // Example 2: model viewer. `viewer model.emod` — drag to orbit, scroll to zoom.
 // Models are loaded through fetchFile: synchronously on desktop, streamed with emscripten_fetch on the web,
 // where the page (web/index.html) calls the exported viewer_load(url) to switch models and polls
-// viewer_fps() / viewer_bytes() for the readouts.
+// viewer_fps() / viewer_bytes() for the readouts. Textures may arrive separately (geometry-only EMOD, v6
+// placeholders): the page transcodes KTX2 in JS (web/ktx2.js) and streams the GPU blocks through
+// viewer_texture_begin / viewer_texture_mip / viewer_texture_end.
 #include "engine/asset/emod.h"
 #include "engine/core/fetch.h"
 #include "engine/core/orbit_camera.h"
@@ -23,6 +25,9 @@ struct App {
   Window win; GpuModel gpu; ModelRenderer renderer; TextRenderer text; Lighting light; Sky sky; OrbitCamera cam;
   std::string path, status; double mxPrev = 0, myPrev = 0; bool dragging = false; int frame = 0;
   bool loading = false, ready = false; size_t bytes = 0; double loadMs = 0;
+  struct ImageHint { int source; uint8_t wrapS, wrapT; bool linear, placeholder; };
+  std::vector<ImageHint> images;        // per image of the loaded model: wrap / colour-space hints + external source index
+  Image incoming; ImageVariant incomingVar; int incomingIndex = -1;   // texture being streamed in by the host
   double fps = 0, fpsAccum = 0; int fpsFrames = 0; double lastTime = 0;
   void load(const std::string& url);
   void step();
@@ -40,6 +45,7 @@ void App::load(const std::string& url) {
     if (!loadEmod(r.bytes, model, err)) { status = err; std::fprintf(stderr, "%s\n", err.c_str()); return; }
     if (ready) gpu.destroy();
     gpu.upload(model);
+    images.clear(); for (const Image& im : model.images) images.push_back({im.source, im.wrapS, im.wrapT, im.linear, im.placeholder()});
     bytes = r.bytes.size(); ready = true; status.clear();
     loadMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     std::printf("loaded %s (%.1f MB) in %.0f ms: %zu nodes, %zu textures\n", path.c_str(), bytes / 1e6, loadMs, gpu.nodes.size(), gpu.textures.size());
@@ -66,6 +72,83 @@ int viewer_bytes() { return g_app ? (int)g_app->bytes : 0; }   // size of the mo
 EMSCRIPTEN_KEEPALIVE
 #endif
 int viewer_ready() { return g_app && g_app->ready && !g_app->loading; }
+
+// ---- texture streaming (C ABI for the page) ----
+// Format codes = eng::TexFormat: 0 RGBA8, 1 ETC2_RGB, 2 ETC2_RGBA, 3 BC1, 4 BC3, 5 BC7.
+static const rhi::Format kFormatMap[] = {rhi::Format::RGBA8, rhi::Format::ETC2_RGB, rhi::Format::ETC2_RGBA, rhi::Format::BC1, rhi::Format::BC3, rhi::Format::BC7};
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+int viewer_supports(int format) { return format >= 0 && format <= 5 && rhi::supports(kFormatMap[format]); }
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+int viewer_image_count() { return g_app && g_app->ready ? (int)g_app->images.size() : 0; }
+// Per-image hints of the loaded model: source index in the external texture file (-1 = stored in the EMOD),
+// and flags = wrapS | wrapT << 8 | linear << 16 | placeholder << 17.
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+int viewer_image_source(int i) { return g_app && i >= 0 && i < (int)g_app->images.size() ? g_app->images[(size_t)i].source : -1; }
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+int viewer_image_flags(int i) {
+  if (!g_app || i < 0 || i >= (int)g_app->images.size()) return 0;
+  const App::ImageHint& im = g_app->images[(size_t)i];
+  return im.wrapS | im.wrapT << 8 | (im.linear ? 1 : 0) << 16 | (im.placeholder ? 1 : 0) << 17;
+}
+// Heap buffer for the host's mip data (Module._malloc is not exported by default): alloc/free in the Wasm heap.
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+void* viewer_alloc(int bytes) { return bytes > 0 ? std::malloc((size_t)bytes) : nullptr; }
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+void viewer_free(void* p) { std::free(p); }
+// Streams one texture: begin(image, w, h, format, mips, srgb, wrapS, wrapT), mip(level, ptr, bytes) per level
+// (the host copies the transcoded blocks into the Wasm heap first), end() uploads and swaps it into the model.
+// Returns 0 on a bad argument; end() returns the GL texture id (0 = upload failed).
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+int viewer_texture_begin(int image, int width, int height, int format, int mipCount, int srgb, int wrapS, int wrapT) {
+  if (!g_app || !g_app->ready || image < 0 || image >= (int)g_app->gpu.textures.size() || format < 0 || format > 5 || mipCount < 1 || width < 1 || height < 1) return 0;
+  App& a = *g_app;
+  a.incomingIndex = image; a.incoming = {}; a.incomingVar = {};
+  a.incoming.width = width; a.incoming.height = height; a.incoming.channels = 4;
+  a.incoming.wrapS = (uint8_t)wrapS; a.incoming.wrapT = (uint8_t)wrapT; a.incoming.linear = !srgb;
+  a.incomingVar.format = (TexFormat)format; a.incomingVar.mips.resize((size_t)mipCount);
+  int w = width, h = height;
+  for (MipLevel& l : a.incomingVar.mips) { l.width = w; l.height = h; w = w > 1 ? w / 2 : 1; h = h > 1 ? h / 2 : 1; }
+  return 1;
+}
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+int viewer_texture_mip(int level, const uint8_t* data, int bytes) {
+  if (!g_app || g_app->incomingIndex < 0 || level < 0 || level >= (int)g_app->incomingVar.mips.size() || !data || bytes < 0) return 0;
+  MipLevel& l = g_app->incomingVar.mips[(size_t)level];
+  if ((size_t)bytes != texLevelBytes(g_app->incomingVar.format, l.width, l.height)) { std::fprintf(stderr, "texture mip %d: %d bytes, expected %zu\n", level, bytes, texLevelBytes(g_app->incomingVar.format, l.width, l.height)); return 0; }
+  l.data.assign(data, data + bytes);
+  return 1;
+}
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+int viewer_texture_end() {
+  if (!g_app || g_app->incomingIndex < 0) return 0;
+  App& a = *g_app; int i = a.incomingIndex; a.incomingIndex = -1;
+  for (const MipLevel& l : a.incomingVar.mips) if (l.data.empty()) { std::fprintf(stderr, "texture %d: missing mip level\n", i); return 0; }
+  a.incoming.variants = {std::move(a.incomingVar)};
+  rhi::Texture t = uploadImage(a.incoming);
+  a.incoming = {}; a.incomingVar = {};
+  if (!t.id) return 0;
+  rhi::destroyTexture(a.gpu.textures[(size_t)i]); a.gpu.textures[(size_t)i] = t;
+  if ((size_t)i < a.images.size()) a.images[(size_t)i].placeholder = false;   // resident now
+  return (int)t.id;
+}
 }
 
 int main(int argc, char** argv) {
