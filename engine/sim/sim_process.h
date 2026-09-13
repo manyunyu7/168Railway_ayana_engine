@@ -4,6 +4,7 @@
 #pragma once
 #include "engine/core/json.h"
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace eng {
@@ -21,6 +22,7 @@ struct SimTrain {
   double x = 0, y = 0;
   float speed = 0, s = 0, heading = 0, length = 0;
   int dir = 1;
+  bool tungguS40 = false, s40Siap = false;   // Semboyan 40 gate: waiting / button may be offered
   std::vector<SimVehicle> vehicles;
 };
 struct SimPoint { std::string id, lockedBy; int setting = 0; };
@@ -37,6 +39,24 @@ struct SimState {
   std::vector<SimRoute> routes;          // active routes (segs minus released = still locked)
   std::vector<SimOccupancy> occupancy;   // only segments with an interval
   std::vector<SimLogLine> log;       // only lines new since the previous step
+};
+
+// Schematic control table ("meja layan", engine/panel.ts PanelLayout). Panel units; the web
+// draws y scaled by `yScale` (3). Static per loaded world — fetched once with panel().
+struct PanelSeg { std::string id, a, b, sepur; int jalur = 0; float len = 0; std::vector<float> pts; std::vector<float> cum; };   // pts = x0,y0,x1,y1,...; cum = metres at each vertex
+struct PanelPoint { std::string id, facing; std::string legs[2]; float x = 0, y = 0; };
+struct PanelObj { std::string id, kind, name, seg, signalType, station; float s = 0, x = 0, y = 0, tx = 1, ty = 0; int dir = 1, lampu = 3, jalur = 0; };
+struct PanelStation { std::string code, label; float x0 = 0, y0 = 0, x1 = 0, y1 = 0; };
+struct PanelJalur { std::string station; int n = 0; float x = 0, y = 0; };
+struct PanelLayout {
+  bool ok = false; float yScale = 3; float x0 = 0, y0 = 0, x1 = 0, y1 = 0;   // bbox
+  std::vector<PanelSeg> segments; std::vector<PanelPoint> points;
+  std::vector<PanelObj> signals, berths, portals;
+  std::vector<PanelStation> stations; std::vector<PanelJalur> jalur;
+  const PanelSeg* seg(const std::string& id) const { auto it = segIndex.find(id); return it == segIndex.end() ? nullptr : &segments[it->second]; }
+  // Panel position + tangent at `s` metres along a segment (interpolates the schematic polyline).
+  bool posOnSeg(const std::string& seg, float s, float& x, float& y, float& tx, float& ty) const;
+  std::unordered_map<std::string, size_t> segIndex;
 };
 
 class SimProcess {
@@ -71,6 +91,14 @@ public:
   const Json& routes(const std::string& signalId);
   const Json& preview(const std::string& signalId);                  // hover preview: path along current points
   const Json& command(const std::string& jsonLine);                  // raw: any command object
+  // Player-facing commands mirroring the web UI (see PROTOCOL.md).
+  const Json& setTimeScale(double k);                                // session.timeScale (bridge is authoritative; send real dt to step)
+  const Json& setClock(const std::string& hhmm);                     // web "Set jam": session restarted at that clock
+  const Json& beriS40(const std::string& train);                     // Semboyan 40 (train id or number)
+  const Json& hapusKA(const std::string& train);                     // force-remove a train (-2000)
+  const Json& trainDetail(const std::string& train);                 // train sheet payload
+  const Json& routeMenu(const std::string& signal);                  // beginner-mode destinations
+  const PanelLayout& panel();                                        // schematic layout (cached after first call)
 
   const Json& lastResponse() const { return last_; }
   const SimState& state() const { return state_; }                   // from the last step()
@@ -95,6 +123,7 @@ private:
   std::string buf_, err_;
   Json last_, world_, summary_;
   SimState state_;
+  PanelLayout panel_;
   double lastMs_ = 0, startupMs_ = 0;
   size_t lastBytes_ = 0;
 };

@@ -19,6 +19,8 @@
 #include "engine/world/track_graph.h"
 #include "engine/world/train_visual.h"
 #include "examples/ppka/compass.h"
+#include "examples/ppka/panel_view.h"
+#include "examples/ppka/ui.h"
 #include "engine/world/vegetation.h"
 #include <deque>
 #include <string>
@@ -39,8 +41,23 @@ private:
   void stepSim(double realDt);
   void render(Window& win);
   void drawHud(int w, int h);
+  void drawUi(int w, int h);           // top bar, train list + detail card, route menu, clock prompt
   void pushMessage(const std::string& s);
   void onClick(double mx, double my, int w, int h);
+  // Player actions — the single path for 3D clicks, panel clicks and menus: sim command → applySimState.
+  void clickSignal(const std::string& id);   // expert mode: set along the points / cancel
+  void flipPoint(const std::string& id);
+  void openRouteMenu(const std::string& sigId, float sx, float sy);   // beginner mode: destinations
+  void chooseRoute(int index);
+  void closeMenus() { menu_.open = false; clockPrompt_ = false; confirmHapus_ = false; }
+  void selectTrain(const std::string& id, bool jump);
+  void refreshDetail(bool force = false);
+  void setTimeScale(double k);
+  void setPaused(bool p);
+  void setClock(const std::string& hhmm);
+  void giveS40(const std::string& id);
+  void removeTrain(const std::string& id);
+  void afterCommand() { sim_.step(0); applySimState(); previewAt_ = -1; refreshDetail(true); }
   // Screen-space pick (§6.5): fills sigId or ptId (one of them) for a window-space cursor position.
   void pickAt(double mx, double my, int w, int h, std::string& sigId, std::string& ptId) const;
   void updateHover();
@@ -75,6 +92,16 @@ private:
   std::string hoverTip_, hoverAction_; bool hoverReject_ = false;
   double forceHoverX_ = -1, forceHoverY_ = -1;   // debug: ENG_AUTOHOVER pins the cursor on an object
   double previewAt_ = -1;           // last preview request time (s), -1 = none pending for this hover
+  // ---- player UI (immediate mode) ----
+  PanelView panel_; Ui ui_;
+  bool pemula_ = false;             // route mode: beginner (menu of destinations) vs expert (click = trace along points)
+  bool hoverOnPanel_ = false;       // hover/tooltip refer to the meja layan, not the 3D scene
+  float fmx_ = 0, fmy_ = 0;         // cursor in framebuffer px
+  bool pendingClick_ = false; float pcx_ = 0, pcy_ = 0;   // click waiting for the UI pass (framebuffer px)
+  bool panelDrag_ = false, panelResize_ = false, uiPress_ = false;
+  std::string selectedTrain_; Json detail_; double detailAt_ = -1; bool confirmHapus_ = false;
+  struct RouteMenu { bool open = false; std::string signal, name; Json data; std::vector<std::string> lit; float x = 0, y = 0; } menu_;
+  bool clockPrompt_ = false; std::string clockText_;
 };
 
 } // namespace eng

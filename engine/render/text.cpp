@@ -1,4 +1,5 @@
 #include "engine/render/text.h"
+#include <cmath>
 #include <cstring>
 #include <fstream>
 
@@ -79,6 +80,42 @@ void TextRenderer::rect(float x, float y, float w, float h, vec4 col) {
   verts_.push_back({x + w, y + h, -1, 0, col.x, col.y, col.z, col.w});
   verts_.push_back({x, y + h, -1, 0, col.x, col.y, col.z, col.w});
   for (uint32_t i : {0u, 1u, 2u, 0u, 2u, 3u}) idx_.push_back(b + i);
+}
+
+void TextRenderer::line(float x0, float y0, float x1, float y1, float w, vec4 col) {
+  float dx = x1 - x0, dy = y1 - y0, l = std::sqrt(dx * dx + dy * dy);
+  if (l < 1e-4f) { circle(x0, y0, w / 2, col, 8); return; }
+  float nx = -dy / l * w / 2, ny = dx / l * w / 2;
+  uint32_t b = (uint32_t)verts_.size();
+  verts_.push_back({x0 + nx, y0 + ny, -1, 0, col.x, col.y, col.z, col.w});
+  verts_.push_back({x1 + nx, y1 + ny, -1, 0, col.x, col.y, col.z, col.w});
+  verts_.push_back({x1 - nx, y1 - ny, -1, 0, col.x, col.y, col.z, col.w});
+  verts_.push_back({x0 - nx, y0 - ny, -1, 0, col.x, col.y, col.z, col.w});
+  for (uint32_t i : {0u, 1u, 2u, 0u, 2u, 3u}) idx_.push_back(b + i);
+}
+
+void TextRenderer::circle(float cx, float cy, float r, vec4 col, int n) {
+  uint32_t b = (uint32_t)verts_.size();
+  verts_.push_back({cx, cy, -1, 0, col.x, col.y, col.z, col.w});
+  for (int i = 0; i < n; ++i) {
+    float a = (float)i / (float)n * 6.2831853f;
+    verts_.push_back({cx + std::cos(a) * r, cy + std::sin(a) * r, -1, 0, col.x, col.y, col.z, col.w});
+  }
+  for (int i = 0; i < n; ++i) { idx_.push_back(b); idx_.push_back(b + 1 + (uint32_t)i); idx_.push_back(b + 1 + (uint32_t)((i + 1) % n)); }
+}
+
+void TextRenderer::ring(float cx, float cy, float r, float w, vec4 col, int n) {
+  uint32_t b = (uint32_t)verts_.size();
+  float r0 = r - w / 2, r1 = r + w / 2;
+  for (int i = 0; i < n; ++i) {
+    float a = (float)i / (float)n * 6.2831853f, c = std::cos(a), s = std::sin(a);
+    verts_.push_back({cx + c * r0, cy + s * r0, -1, 0, col.x, col.y, col.z, col.w});
+    verts_.push_back({cx + c * r1, cy + s * r1, -1, 0, col.x, col.y, col.z, col.w});
+  }
+  for (int i = 0; i < n; ++i) {
+    uint32_t a0 = b + 2 * (uint32_t)i, a1 = b + 2 * (uint32_t)((i + 1) % n);
+    for (uint32_t k : {a0, a0 + 1, a1 + 1, a0, a1 + 1, a1}) idx_.push_back(k);
+  }
 }
 
 void TextRenderer::flush(int sw, int sh) {

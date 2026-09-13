@@ -19,6 +19,10 @@ public:
   float lineHeight(float scale = 1) const { return (ascent_ - descent_ + lineGap_) * scale; }
   // Filled rectangle (for HUD panels); drawn in submission order together with text.
   void rect(float x, float y, float w, float h, vec4 color);
+  // Line segment of pixel `width` and filled disc, same batch as rects/text (HUD schematics).
+  void line(float x0, float y0, float x1, float y1, float width, vec4 color);
+  void circle(float cx, float cy, float r, vec4 color, int segments = 16);
+  void ring(float cx, float cy, float r, float width, vec4 color, int segments = 20);
   void flush(int screenW, int screenH);   // render everything queued this frame
 private:
   struct Glyph { float x0, y0, x1, y1, xoff, yoff, xadvance; };

@@ -122,11 +122,72 @@ interlocking/bersama signal (cannot be operated by hand).
 `World.balikWesel` — the single human entry for point flips. `{ok:true, setting, leg}` or
 `{ok:false, reason:"terkunci"|"terinjak"|"bukan wesel", ka, setting, locked}`.
 
+## Player commands (mirror the web UI paths)
+
+### `{"cmd":"set_time_scale","k":8}`
+Sets `session.timeScale`. **The bridge is authoritative for time**: `step` takes REAL seconds and the
+session multiplies by its own scale (web game loop). `start` accepts `timeScale` too. `{ok, timeScale}`.
+
+### `{"cmd":"set_clock","clock":"07:30"}`
+The web "Set jam" (`ui/waktu.ts restartSessionAt`) does not fast-forward: it rebuilds the session from
+the GAPEKA at the new start clock. Same here — equivalent to `start` again with the previous options
+(`ai`, `s40`, `warm`) and the current time scale. **Caveat:** live trains vanish and re-spawn (warm start),
+routes/points/score reset, the log restarts. `{ok, ..., restarted:true}`.
+
+### `{"cmd":"beri_s40","train":"89"}` (train id or number)
+Semboyan 40 (`ui/s40.ts berikanS40`) without the 40→41→35 audio ritual: sets `s40Diberi` at once.
+The gate itself (`tickS40`, dwell branch only — no BLB detection) runs inside `step` when `s40` is on:
+`start {ai:false}` turns it on (the player holds every station), `start {s40:true|false}` overrides.
+Trains then report `tungguS40` (held) and `s40Siap` (exit signal clear → button may be offered).
+`{ok}` or `{ok:false, reason:"tidak menunggu S40"|"sinyal keluar belum aman"}`.
+
+### `{"cmd":"hapus_ka","train":"89"}`
+`Session.hapusKA`: force-removes the train, −2000 (`PENALTI_HAPUS`), session marked impure.
+`{ok, train, no, penalty, score}`.
+
+### `{"cmd":"train_detail","train":"89"}`
+Train sheet payload (`ui/panelKereta.ts`): `{ok, id, no, name, consist, cars:[{kind,sarana,len}], kelas,
+state, kendali, speed, limit, maxSpeed, delay (s, telatKini), hold, holdDist, holdSignal,
+nextStop:{trackmark,arr,dep}|null, spawnPortal, spawnTime, exitPortal, exitTime, exitBerth,
+stops:[{trackmark,arr,dep,actArr,actDep}], jadwal:[{cls:"done"|"now"|"next", ls, name, plan, actual, late, meets}]
+(ui/jadwal.ts susunJadwal, en-dash replaced by "-"), lookahead:[{d,v,why}] (first 5),
+tungguS40, s40Siap, s40Diberi, log:[{t,kind,text}] (lines naming this train)}`.
+
+### `{"cmd":"route_menu","signal":"BKS MB1"}`
+Beginner-mode menu (`ui/rute.ts kandidatMenu`): `findRoutes` (wrong-line branches included) deduplicated
+per destination (straightest wins, `dedupPerTujuan`), entry signals sorted by track number, wrong-line
+entries last. `{ok, signal, name, manual, active, activeLabel, cancellable,
+candidates:[{index, exitLabel, exitSignal, exitName, dist, segs, sepurSalah, dm, blocked:<tolak>|null, blockedText}],
+prunes:[{reason,n}]}` (`prunes` = why the search found nothing). Choose with `set_route {from, index}`
+(pass `sepurSalah:true` for a wrong-line entry — the web asks for confirmation first). Route mode
+(pemula/ahli) itself is client-side; the engine has no notion of it.
+
+### `{"cmd":"panel"}`
+The schematic control table (`engine/panel.ts PanelLayout`, what the web draws in panel mode and on the
+3D floating table). Static per loaded world; panel units, y drawn scaled by `yScale` (3):
+
+```
+{ ok, key, yScale, bbox:{x0,y0,x1,y1},
+  segments:[{id,a,b,len, pts:[x0,y0,x1,y1,...], cum:[m at each vertex], sepur:"lurus"|"belok"|null, jalur:n|null}],
+  nodes:[{id,x,y,deg}], points:[{id,x,y,facing,legs:[normal,reverse]}],
+  signals:[{id,kind,name,seg,s,dir,x,y,tx,ty,signalType,lampu,bentuk,station}],
+  berths:[{... trackmarks, sepur, jalur}], portals:[{...}],
+  stations:[{code,label,x0,y0,x1,y1,signals}],     bbox of the station's interlocking signals (renderer.ts ensureAreaStasiun)
+  jalur:[{station,n,x,y}],                         "JALUR n" pill positions (drawPanelJalur)
+  scenery:[{id,kind,code,label,x,y}] }
+```
+`segments[].pts/cum` is the exact schematic polyline, so per-step state (occupied intervals, locked route
+segments, vehicles from `seg,s`/`seg2,s2`) is drawn by interpolating along it — no extra per-step panel
+state is needed. Segment sepur/jalur come from the renderer's lane classification (`ensureSepur`).
+
 ### `{"cmd":"ping"}`, `{"cmd":"quit"}`
 
 ## C++ side
 `eng::SimProcess` (`engine/sim/sim_process.h`) spawns the bridge with fork/exec (cwd = PPKA root,
 `npx tsx`), blocks on one line per command, parses with `eng::Json` and fills `SimState`
 (`SimTrain{... vehicles[{model,sarana,kind,length,x,y,heading,seg,s,x1,y1,x2,y2,seg2,s2}]}`, `SimPoint{id,setting,lockedBy}`, `SimSignal{id,aspect}`, `SimRoute{id,entry,exit,exitLabel,segs,released}`,
-`SimOccupancy{seg, intervals[{train,a,b}]}`, new log lines); `preview(signal)` wraps the `preview` command. Raw responses stay available in `lastResponse()`; `world()`/`summary()` keep the load
+`SimOccupancy{seg, intervals[{train,a,b}]}`, `SimTrain.tungguS40/s40Siap`, new log lines); `preview(signal)` wraps the `preview` command.
+Player commands: `setTimeScale(k)`, `setClock("HH:MM")`, `beriS40(train)`, `hapusKA(train)`, `trainDetail(train)`,
+`routeMenu(signal)` (raw `Json`), and `panel()` → typed `PanelLayout` (segments/points/signals/berths/portals/
+stations/jalur, `posOnSeg(seg, s, x, y, tx, ty)` interpolating the schematic polyline; cached after the first call). Raw responses stay available in `lastResponse()`; `world()`/`summary()` keep the load
 result. `examples/simtest` exercises everything and prints latency/size statistics.

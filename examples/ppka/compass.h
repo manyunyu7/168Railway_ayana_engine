@@ -37,6 +37,8 @@ public:
   bool update(OrbitCamera& cam, double mx, double my, int w, int h, bool rightDown, bool ctrl,
               bool left, bool right, bool up, bool down, float dt, const mat4& invViewProj);
   void draw(ModelRenderer& r, const OrbitCamera& cam);
+  // Fly the focus to a scene point (train selection); the orbit offset is kept.
+  void jumpTo(OrbitCamera& cam, vec3 target) { jump_ = {cam.target, target, 0, true}; gliding_ = false; wake(); }
   bool visible() const { return opacity_ > 0.01f; }
   int azimuth(const OrbitCamera& cam) const;
 
