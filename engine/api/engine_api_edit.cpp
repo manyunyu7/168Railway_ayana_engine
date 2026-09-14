@@ -160,6 +160,39 @@ KEEP int eng_terrain_delta(const char* json) {
   if (!err.empty()) { std::fprintf(stderr, "[ayana] terrain_delta: %s\n", err.c_str()); return 0; }
   return c.scene->terrainDelta(*c.world, t);
 }
+// {h: raw DEM metres at the rail head (hand-written value when pinned), tulis, grad: [permille to each neighbour]}
+// (editorRel3d.ts infoTinggiNode); "" = unknown node.
+KEEP const char* eng_node_info(const char* nodeId) {
+  EngEditCtx c; if (!live(c) || !nodeId) return "";
+  const TrackGraph& g = c.scene->graph(); const VerticalProfile& pr = c.scene->profile();
+  int ni = g.nodeIndex(nodeId); if (ni < 0 || !pr.built()) return "";
+  auto rawAt = [&](int idx) {
+    const TrackNode& n = g.nodes[(size_t)idx];
+    if (n.hasHeight) return n.height;
+    if (n.segs.empty()) return (double)c.scene->terrain().rawHeight(n.wx, n.wy);
+    const TrackSegment& s = g.segments[(size_t)n.segs[0]];
+    return pr.rawHeight(n.segs[0], s.a == idx ? 0.0 : s.length);
+  };
+  const TrackNode& n = g.nodes[(size_t)ni];
+  double h = rawAt(ni);
+  std::string grad;
+  for (int si : n.segs) {
+    const TrackSegment& s = g.segments[(size_t)si];
+    if (s.length <= 1) continue;
+    double other = rawAt(s.a == ni ? s.b : s.a);
+    char b[48]; std::snprintf(b, sizeof b, "%s%.3f", grad.empty() ? "" : ",", (other - h) / s.length * 1000);
+    grad += b;
+  }
+  char b[400];
+  std::snprintf(b, sizeof b, "{\"h\":%.3f,\"tulis\":%s,\"grad\":[%s]}", h, n.hasHeight ? "true" : "false", grad.c_str());
+  return editRet(b);
+}
+KEEP int eng_veg_mask(const char* json) {
+  EngEditCtx c; if (!live(c)) return 0;
+  std::string err; Json a = Json::parse(json && *json ? json : "null", &err);
+  if (!err.empty()) { std::fprintf(stderr, "[ayana] veg_mask: %s\n", err.c_str()); return 0; }
+  return c.scene->vegMask(*c.world, a);
+}
 KEEP int eng_track_edit(const char* worldJson) {
   EngEditCtx c; if (!live(c) || !worldJson) return 0;
   std::string err; Json w = Json::parse(worldJson, &err);
@@ -176,7 +209,28 @@ KEEP void eng_highlight(const char* id, int mode) {
   EngEditCtx c; if (!eng_edit_ctx(c) || !c.scene) return;
   std::string s = id ? id : ""; size_t k = s.find(':');
   if (mode <= 0 || k == std::string::npos) { c.scene->setHighlight("", -1, WorldScene::HighlightMode::Off); return; }
-  c.scene->setHighlight(s.substr(0, k), std::atoi(s.c_str() + k + 1), mode == 2 ? WorldScene::HighlightMode::Locked : WorldScene::HighlightMode::Selected);
+  std::string kind = s.substr(0, k), rest = s.substr(k + 1);
+  WorldScene::HighlightMode m = mode == 2 ? WorldScene::HighlightMode::Locked : WorldScene::HighlightMode::Selected;
+  if (kind == "node") { c.scene->setHighlight(kind, -1, m, rest); return; }
+  if (kind == "segment") { size_t k2 = rest.find(':'); c.scene->setHighlight(kind, -1, m, k2 == std::string::npos ? rest : rest.substr(0, k2)); return; }
+  c.scene->setHighlight(kind, std::atoi(rest.c_str()), m);
+}
+KEEP void eng_node_handles(int on, int tier) {
+  EngEditCtx c; if (!eng_edit_ctx(c) || !c.scene) return;
+  c.scene->setNodeHandles(on != 0, tier);
+}
+KEEP int eng_ghost_lines(const char* json) {
+  EngEditCtx c; if (!eng_edit_ctx(c) || !c.scene || !c.ready) return 0;
+  std::string err; Json a = Json::parse(json && *json ? json : "[]", &err);
+  if (!err.empty()) return 0;
+  std::vector<std::vector<std::pair<double, double>>> lines;
+  for (const Json& line : a.arr) {
+    std::vector<std::pair<double, double>> pts;
+    for (const Json& p : line.arr) pts.emplace_back(p["x"].numberOr(0), p["y"].numberOr(0));
+    lines.push_back(std::move(pts));
+  }
+  c.scene->setGhostLines(lines);
+  return 1;
 }
 KEEP void eng_gizmo(const char* kind, double wx, double wy, float h, float yaw, float scale, int axisHover) {
   EngEditCtx c; if (!eng_edit_ctx(c) || !c.scene) return;

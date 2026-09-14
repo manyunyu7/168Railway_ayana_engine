@@ -73,10 +73,15 @@ void Vegetation::scatter(const Terrain& terrain, Cell& cell) {
     float sum = rgb[0] + rgb[1] + rgb[2] + 1e-6f;
     float exg = (2 * rgb[1] - rgb[0] - rgb[2]) / sum, v = std::max({rgb[0], rgb[1], rgb[2]});
     float green = std::clamp((exg - EXG_MIN) / EXG_RANGE, 0.f, 1.f);
-    if (green <= 0) continue;
+    if (green <= 0 && mask_.empty()) continue;
     float dark = std::clamp((meanV + DARK_OFFSET - v) / DARK_RANGE, 0.f, 1.f);
     float p = green * (BASE_WEIGHT + (1 - BASE_WEIGHT) * dark);
-    if (acak(x, z, 5) >= p) continue;
+    if (!mask_.empty()) {   // player brush wins over the imagery (vegetasi.ts tebarSel vegMask)
+      int vm = maskAt(wx, wy);
+      if (vm < 0) continue;
+      if (vm > 0) p = std::max(p, 0.9f);
+    }
+    if (p <= 0 || acak(x, z, 5) >= p) continue;
     if (terrain.railDistance((float)x, (float)z) < CLEARANCE) continue;
     bool blocked = false;
     for (const AABB& b : exclude_) if (x >= b.min.x && x <= b.max.x && z >= b.min.z && z <= b.max.z) { blocked = true; break; }
@@ -91,6 +96,39 @@ void Vegetation::scatter(const Terrain& terrain, Cell& cell) {
   if (!cell.trees.empty()) { cell.bounds.expand({(float)x0, cell.bounds.min.y, (float)z0}); cell.bounds.expand({(float)(x0 + CELL), cell.bounds.max.y, (float)(z0 + CELL)}); }
 }
 
+int Vegetation::maskAt(double wx, double wy) const {
+  for (size_t i = mask_.size(); i-- > 0;) {
+    const Stamp& s = mask_[i];
+    double dx = wx - s.x, dy = wy - s.y;
+    if (dx * dx + dy * dy <= s.r * s.r) return s.a;
+  }
+  return 0;
+}
+
+void Vegetation::dirtyCellsUnder(const Stamp& st, const WorldOrigin& org) {
+  double x = st.x - org.ox, z = st.y - org.oz;
+  int c0x = (int)std::floor((x - st.r) / CELL), c1x = (int)std::floor((x + st.r) / CELL);
+  int c0z = (int)std::floor((z - st.r) / CELL), c1z = (int)std::floor((z + st.r) / CELL);
+  for (Cell& c : cells_)
+    if (c.cx >= c0x && c.cx <= c1x && c.cz >= c0z && c.cz <= c1z) c.key = -2;
+}
+
+void Vegetation::setMask(std::vector<Stamp> stamps) {
+  // stamps equal up to the common prefix are untouched; everything after the first difference (in the old
+  // AND the new list) marks its cells for a re-scatter. Needs the origin: taken from the first update().
+  size_t common = 0;
+  while (common < mask_.size() && common < stamps.size()) {
+    const Stamp& a = mask_[common]; const Stamp& b = stamps[common];
+    if (a.x != b.x || a.y != b.y || a.r != b.r || a.a != b.a) break;
+    ++common;
+  }
+  pendingDirty_.clear();
+  for (size_t i = common; i < mask_.size(); ++i) pendingDirty_.push_back(mask_[i]);
+  for (size_t i = common; i < stamps.size(); ++i) pendingDirty_.push_back(stamps[i]);
+  mask_ = std::move(stamps);
+  if (!pendingDirty_.empty()) { scan_ = 0; scanning_ = true; }
+}
+
 void Vegetation::setDensity(float k) {
   density = std::max(0.f, k);
   for (Cell& c : cells_) c.key = -2;   // every cell re-scattered on the next update() passes
@@ -102,6 +140,7 @@ void Vegetation::update(const Terrain& terrain, int maxCells) {
   if (terrain.imageryVersion() != version_) { version_ = terrain.imageryVersion(); scan_ = 0; scanning_ = true; }
   if (!scanning_) return;
   const WorldOrigin& org = terrain.origin();
+  if (!pendingDirty_.empty()) { for (const Stamp& s : pendingDirty_) dirtyCellsUnder(s, org); pendingDirty_.clear(); }
   int done = 0;
   for (; scan_ < cells_.size(); ++scan_) {
     Cell& c = cells_[scan_];
@@ -159,7 +198,7 @@ void Vegetation::draw(ModelRenderer& r, vec3 eye, const Frustum* frustum) {
 
 void Vegetation::destroy() {
   for (ModelSlot& m : models_) rhi::destroyBuffer(m.instances);
-  models_.clear(); cells_.clear(); exclude_.clear(); scanning_ = false; scan_ = 0;
+  models_.clear(); cells_.clear(); exclude_.clear(); scanning_ = false; scan_ = 0; pendingDirty_.clear();
 }
 
 } // namespace eng

@@ -162,9 +162,18 @@ int eng_garis_set(const char* json);        // {"index":i, kelas, naik, titik:[{
 int eng_node_height(const char* nodeId, double h, int hasHeight);   // hand-written `tinggi` (raw DEM m); hasHeight 0 = follow the DEM. Takes effect at eng_rails_rebuild
 double eng_rails_rebuild(void);             // profile + rails + terrain chords + signals / points / boards / JPL re-placed; returns ms (< 1 s on Mojokerto)
 int eng_terrain_delta(const char* json);    // the whole world.tanah ({kisi:8, delta:{"gx,gz":m}}) or "null" -> only the tiles whose cells changed are re-cut; hiasan / garis re-placed
+const char* eng_node_info(const char* nodeId);   // JSON {h: raw DEM m at the rail head (the pin when hand-written), tulis, grad:[permille per neighbour]}
+                                                 // (editorRel3d.ts infoTinggiNode), "" = unknown node / no profile yet
+int eng_veg_mask(const char* json);         // the whole world.vegMask ([{x,y,r,a}] world m, last stamp wins; a -1 clear / +1 plant) or "null";
+                                            // only the tree cells under stamps that differ from the previous list are re-scattered
 int eng_track_edit(const char* worldJson);  // full graph rebuild for the rail editor (new save "world" object; terrain data kept; decor rebuilt from resident models)
 // Overlays (drawn after the world; gizmo / ukur depth-test-off like the compass):
-void eng_highlight(const char* id, int mode);   // "hiasan:<i>" | "garis:<i>"; mode 0 off, 1 selected (blue box), 2 locked (amber)
+void eng_highlight(const char* id, int mode);   // "hiasan:<i>" | "garis:<i>" (box: 1 blue, 2 amber locked) | "node:<id>" (green sphere on the
+                                                // handle) | "segment:<id>[:s]" (amber ribbon along the centreline); mode 0 off
+void eng_node_handles(int on, int tier);        // editorRel3d.ts node dots (rail head + 0.6): points orange, hand-written magenta, ends white,
+                                                // plain blue; tier 1 = the important ones only (points / hand-written / ends)
+int eng_ghost_lines(const char* json);          // [[{x,y},...],...] editor preview polylines (drag ghost / chain draw) 0.9 m over the rail
+                                                // head near each point, thin blue; "[]" clears
 // kind "rotate" (ring + needle + knob: uji3dTata cincin), "move" (ring + 4 arrows), "" hides. wx/wy world, h scene height
 // of the ring plane, yaw radians (three convention), scale = ring radius m, axisHover 0 none 1 ring 2 knob 3..6 arrows.
 void eng_gizmo(const char* kind, double wx, double wy, float h, float yaw, float scale, int axisHover);
@@ -172,6 +181,18 @@ int eng_gizmo_hit(float x, float y);            // 0 none, 1 ring (thick 0.7..1.
 float eng_gizmo_angle(float x, float y);        // cursor angle in the ring plane (rad, three convention), 1e9 = miss
 int eng_ghost(const char* modelId, double wx, double wy, float rotDeg, float skala);   // translucent blue model at the cursor (uji3dTata hantu); "" hides
 int eng_ukur_line(const char* json);            // [{x,y},...] world polyline drawn 0.4 m over the ground; "[]" / "" clears. Labels: the host projects the points (eng_project)
+
+// ---- markers (engine_api_markers.cpp; engine/app/markers.h) — a batch of world-space editor markers (spline handles,
+// trackside / scenery markers, measurement lines) replaced as a whole from JSON and drawn after the world overlays:
+// [{"id","kind":"sphere|disc|cube|diamond|cone|polyline","x","y","naik","hm":0|1,"h","color":"#rrggbb","alpha","size",
+//   "px","depth":false,"yaw","label":false,"pts":[{x,y,naik,hm,h}]}]. x/y world; height = ground (hm 0) / rail head
+// (hm 1) at the point + naik, or `h` absolute (scene m). size in metres (radius / edge / cone length / ribbon width);
+// px > 0 = a point marker keeps that css screen radius; depth false = overlay (drawn over the world); yaw radians
+// (three convention; cone tip along +X); label = listed by eng_markers_screen. "[]" / "" clears.
+int eng_markers(const char* json);
+int eng_markers_count(void);
+const char* eng_markers_pick(float x, float y, float maxPx);   // id of the nearest marker within maxPx css px (0 = 16), "" = none
+const char* eng_markers_screen(void);                          // JSON [{id, x, y (css px, top of the marker), d (m), v (on screen)}] of the `label` markers
 
 #ifdef __cplusplus
 }

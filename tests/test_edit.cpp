@@ -135,11 +135,27 @@ int main() {
   CHECK_MSG(ms < 8000, "rails rebuild (debug + sanitizers)");
 #endif
   CHECK_NEAR(scene.profile().railHeight(seg0, sAt), 6.0, 0.6);
+  {   // node info: the pin is reported raw (demBase 0 on flat ground), hand-written, one gradient per neighbour
+    Json ni2 = Json::parse(eng_node_info(nodeId.c_str()), &err); CHECK_MSG(err.empty(), err);
+    CHECK_NEAR(ni2["h"].numberOr(-1), 6.0, 1e-6); CHECK(ni2["tulis"].boolOr(false)); CHECK_EQ(ni2["grad"].size(), (size_t)2);
+    CHECK(std::fabs(ni2["grad"][0].numberOr(0)) > 0.01);   // 6 m over a few hundred metres = tens of permille
+    CHECK(eng_node_info("no-such-node")[0] == '\0');
+  }
   { bool found = false; for (const Json& n : (*c.world)["graph"]["nodes"].arr) if (n["id"].stringOr("") == nodeId) { found = true; CHECK_NEAR(n["y"].numberOr(-1), 6.0, 1e-9); } CHECK(found); }
   CHECK(eng_node_height(nodeId.c_str(), 0, 0));
   CHECK(!g.nodes[(size_t)ni].hasHeight);
   eng_rails_rebuild();
   CHECK_NEAR(scene.profile().railHeight(seg0, sAt), before, 1e-3);
+  { Json ni2 = Json::parse(eng_node_info(nodeId.c_str()), &err); CHECK(!ni2["tulis"].boolOr(true)); CHECK_NEAR(ni2["h"].numberOr(-1), before, 1e-3); }
+  // editor overlays: node handles, node / segment highlight, ghost polylines draw without GL errors
+  eng_node_handles(1, 0);
+  eng_highlight(("node:" + nodeId).c_str(), 1);
+  eng_frame(0.016f);
+  eng_highlight(("segment:" + g.segments[(size_t)seg0].id + ":12.5").c_str(), 1);
+  { char gl[200]; std::snprintf(gl, sizeof gl, "[[{\"x\":%.1f,\"y\":%.1f},{\"x\":%.1f,\"y\":%.1f}]]", g.nodes[(size_t)ni].wx, g.nodes[(size_t)ni].wy, g.nodes[(size_t)ni].wx + 40, g.nodes[(size_t)ni].wy + 10); CHECK(eng_ghost_lines(gl)); }
+  eng_frame(0.016f);
+  eng_node_handles(0, 0); eng_highlight("", 0); eng_ghost_lines("[]");
+  eng_frame(0.016f);
 
   // ---- brush deltas: a +3 m node far from the rails lifts the ground there (bilinear peak at the grid node)
   double bx = ground[0] + 400, by = ground[1] + 400;
@@ -152,6 +168,12 @@ int main() {
   CHECK(eng_terrain_delta("null"));
   CHECK_NEAR(scene.groundHeight(gx * 8.0, gz * 8.0), h0, 1e-4);
   CHECK(!(*c.world)["tanah"].isObject());
+
+  // ---- tree mask: stamps stored in the save, only the cells under them re-scattered (no imagery here: cells stay empty)
+  { char vm[200]; std::snprintf(vm, sizeof vm, "[{\"x\":%.0f,\"y\":%.0f,\"r\":40,\"a\":-1}]", ground[0], ground[1]);
+    CHECK(eng_veg_mask(vm)); CHECK_EQ((*c.world)["vegMask"].size(), (size_t)1); CHECK_EQ(scene.trees().mask().size(), (size_t)1);
+    eng_frame(0.016f);
+    CHECK(eng_veg_mask("null")); CHECK(!(*c.world)["vegMask"].isArray()); CHECK(scene.trees().mask().empty()); }
 
   // ---- full track edit: the same save again rebuilds everything and stays ready
   size_t segs = g.segments.size();

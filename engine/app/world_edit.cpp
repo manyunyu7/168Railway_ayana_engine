@@ -248,6 +248,7 @@ double WorldScene::railsRebuild(const Json& world, const std::string& fontPath) 
   boards_.build(graph_, profile_, world, origin_, ground, fontPath);
   jpl_.build(graph_, world, origin_, ground);
   if (decor_) hiasanRefresh(world);
+  ov_.segMeshId.clear();   // the highlight ribbon follows the new profile
   applyState(state_, 1);
   return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
@@ -286,6 +287,43 @@ bool WorldScene::trackEdit(const Json& world, const std::string& mapSlug, const 
   return true;
 }
 
+bool WorldScene::vegMask(Json& world, const Json& stamps) {
+  std::vector<Vegetation::Stamp> list;
+  if (stamps.isArray()) {
+    for (const Json& s : stamps.arr) {
+      if (!s.isObject()) continue;
+      Vegetation::Stamp st{s["x"].numberOr(0), s["y"].numberOr(0), s["r"].numberOr(0), s["a"].numberOr(0) < 0 ? -1 : 1};
+      if (st.r > 0) list.push_back(st);
+    }
+    world.obj["vegMask"] = stamps;
+  } else world.obj.erase("vegMask");
+  trees_.setMask(std::move(list));
+  return true;
+}
+
+float WorldScene::railHeadNear(double wx, double wy) const {
+  int bestSeg = -1; double bestS = 0, bd = 250.0 * 250.0;
+  for (size_t si = 0; si < graph_.segments.size(); ++si) {
+    const TrackSegment& sg = graph_.segments[si];
+    if (wx < sg.bx0 - 250 || wx > sg.bx1 + 250 || wy < sg.by0 - 250 || wy > sg.by1 + 250) continue;
+    for (const TrackSegment::Lut& l : sg.lut) {
+      double d = (l.px - wx) * (l.px - wx) + (l.py - wy) * (l.py - wy);
+      if (d < bd) { bd = d; bestSeg = (int)si; bestS = l.s; }
+    }
+  }
+  return bestSeg < 0 ? terrain_.groundHeight(wx, wy) : profile_.railHeight(bestSeg, bestS);
+}
+
+bool WorldScene::nodeHandlePos(int ni, vec3& out) const {
+  if (ni < 0 || ni >= (int)graph_.nodes.size()) return false;
+  const TrackNode& n = graph_.nodes[(size_t)ni];
+  float h;
+  if (!n.segs.empty()) { const TrackSegment& s = graph_.segments[(size_t)n.segs[0]]; h = profile_.railHeight(n.segs[0], s.a == ni ? 0.0 : s.length); }
+  else h = terrain_.groundHeight(n.wx, n.wy);
+  out = origin_.toScene(n.wx, n.wy, h + 0.6f);
+  return true;
+}
+
 // ------------------------------------------------------------------ overlays
 void WorldScene::buildOverlayMeshes() {
   if (ov_.built) return;
@@ -304,6 +342,12 @@ void WorldScene::buildOverlayMeshes() {
   { MeshBuilder b; b.box({-KNOB_R, -KNOB_R, -KNOB_R}, {KNOB_R, KNOB_R, KNOB_R}); ov_.knob = b.upload(); }
   { MeshBuilder b; b.box({1.1f, -0.03f, -0.03f}, {1.5f, 0.03f, 0.03f}); b.quad({1.5f, 0, -0.14f}, {1.5f, 0, 0.14f}, {1.72f, 0, 0}, {1.72f, 0, 0}); ov_.arrow = b.upload(); }
   { MeshBuilder b; b.box({0, 0, 0}, {1, 1, 1}); ov_.unitBox = b.upload(); }
+  {   // unit sphere (lat / long, 8 x 12) for the node handles and the node highlight
+    MeshBuilder b; const int NL = 8, NM = 12;
+    auto at = [](int i, int j) { float th = PI * (float)i / NL, ph = 2 * PI * (float)j / NM; return vec3{std::sin(th) * std::cos(ph), std::cos(th), std::sin(th) * std::sin(ph)}; };
+    for (int i = 0; i < NL; ++i) for (int j = 0; j < NM; ++j) b.quad(at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1));
+    ov_.sphere = b.upload();
+  }
   auto mat = [](vec3 c, float a, bool depth) { Material m; m.name = "overlay"; m.baseColor = {c.x, c.y, c.z, a}; m.emissive = c; m.metallic = 0; m.roughness = 1; m.doubleSided = true; m.unlit = true; m.depthTest = depth; if (a < 1) m.alphaMode = AlphaMode::Blend; return m; };
   ov_.hlMat = mat(rgb(0x4a9fe8u), 1, true);
   ov_.gizmoMat = mat(rgb(0x4a9fe8u), 0.55f, false);
@@ -311,15 +355,39 @@ void WorldScene::buildOverlayMeshes() {
   ov_.needleMat = mat(rgb(0xffd479u), 1, false);
   ov_.ghostMat = mat(rgb(0x4a9fe8u), 0.42f, true);
   ov_.ukurMat = mat(rgb(0xffd479u), 0.9f, false);
+  ov_.handleMat = mat(rgb(0x5da8f2u), 1, false);
+  ov_.ghostLineMat = mat(rgb(0x4a9fe8u), 0.9f, false);
 }
 
 void WorldScene::destroyOverlays() {
   if (!ov_.built) return;
-  for (rhi::Mesh* m : {&ov_.ring, &ov_.thickRing, &ov_.needle, &ov_.knob, &ov_.arrow, &ov_.bar, &ov_.unitBox, &ov_.ukurMesh}) { rhi::destroyMesh(*m); *m = {}; }
-  ov_.built = false; ov_.ukur.clear(); ov_.hlMode = HighlightMode::Off; ov_.gizmoKind.clear(); ov_.ghostId.clear();
+  for (rhi::Mesh* m : {&ov_.ring, &ov_.thickRing, &ov_.needle, &ov_.knob, &ov_.arrow, &ov_.bar, &ov_.unitBox, &ov_.sphere, &ov_.ukurMesh, &ov_.ghostLines, &ov_.segMesh}) { rhi::destroyMesh(*m); *m = {}; }
+  ov_.built = false; ov_.ukur.clear(); ov_.hlMode = HighlightMode::Off; ov_.gizmoKind.clear(); ov_.ghostId.clear(); ov_.handles = false; ov_.ghostLineCount = 0; ov_.segMeshId.clear();
 }
 
-void WorldScene::setHighlight(const std::string& kind, int index, HighlightMode mode) { ov_.hlKind = kind; ov_.hlIndex = index; ov_.hlMode = mode; }
+void WorldScene::setHighlight(const std::string& kind, int index, HighlightMode mode, const std::string& id) { ov_.hlKind = kind; ov_.hlIndex = index; ov_.hlMode = mode; ov_.hlId = id; }
+void WorldScene::setNodeHandles(bool on, int tier) { ov_.handles = on; ov_.handleTier = tier; }
+
+// Thin ribbon + vertical fin along a scene polyline (reads from every angle; the same shape as the ukur line).
+static void ribbon(MeshBuilder& b, const std::vector<vec3>& pts, float halfWidth, float fin) {
+  for (size_t i = 1; i < pts.size(); ++i) {
+    vec3 a = pts[i - 1], c = pts[i]; vec3 d = c - a; d.y = 0; float l = length(d); if (l < 1e-3f) continue;
+    vec3 n = vec3{-d.z, 0, d.x} / l * halfWidth;
+    b.quad(a - n, a + n, c + n, c - n);
+    if (fin > 0) b.quad(a, a + vec3{0, fin, 0}, c + vec3{0, fin, 0}, c);
+  }
+}
+
+void WorldScene::setGhostLines(const std::vector<std::vector<std::pair<double, double>>>& lines) {
+  rhi::destroyMesh(ov_.ghostLines); ov_.ghostLines = {}; ov_.ghostLineCount = 0;
+  MeshBuilder b;
+  for (const auto& line : lines) {
+    std::vector<vec3> pts;
+    for (const auto& [wx, wy] : line) pts.push_back(origin_.toScene(wx, wy, railHeadNear(wx, wy) + 0.9f));
+    if (pts.size() >= 2) { ribbon(b, pts, 0.18f, 0.35f); ++ov_.ghostLineCount; }
+  }
+  if (ov_.ghostLineCount) ov_.ghostLines = b.upload();
+}
 void WorldScene::setGizmo(const std::string& kind, vec3 pos, float yaw, float scale, int axisHover) {
   ov_.gizmoKind = kind; ov_.gizmoPos = pos; ov_.gizmoYaw = yaw; ov_.gizmoScale = std::fmax(0.05f, scale); ov_.gizmoHover = axisHover;
 }
@@ -365,7 +433,6 @@ bool WorldScene::gizmoAngle(const Ray& ray, float& angle) const {
 
 void WorldScene::drawOverlays(vec3 eye, float fovY) {
   buildOverlayMeshes();
-  (void)fovY;
   // selection box: 12 bars along the placed model's bounds (Box3Helper), blue / amber when locked
   if (ov_.hlMode != HighlightMode::Off) {
     AABB b; bool have = false;
@@ -390,6 +457,46 @@ void WorldScene::drawOverlays(vec3 eye, float fovY) {
       }
     }
   }
+  // screen-sized helpers: radius in metres for `px` pixels at distance d
+  const float perPx = 2 * std::tan(fovY / 2) / (float)std::max(1, viewportH_);
+  auto sphereAt = [&](vec3 p, float radius, const Material& m) { renderer_.drawMesh(ov_.sphere, m, {}, mat4::translation(p) * mat4::scale({radius, radius, radius})); };
+  // node handles (editorRel3d.ts segarkanTitikRel): every node with a segment, 4.5 px dots, semantic colours
+  if (ov_.handles) {
+    Material m = ov_.handleMat;
+    for (size_t ni = 0; ni < graph_.nodes.size(); ++ni) {
+      const TrackNode& n = graph_.nodes[ni];
+      if (n.segs.empty()) continue;
+      bool wesel = n.isPoint(), penting = wesel || n.hasHeight || n.segs.size() == 1;
+      if (ov_.handleTier == 1 && !penting) continue;
+      vec3 p; if (!nodeHandlePos((int)ni, p)) continue;
+      float d = length(p - eye); if (d > 2500) continue;
+      vec3 c = wesel ? rgb(0xffb82eu) : n.hasHeight ? rgb(0xf359ccu) : n.segs.size() == 1 ? rgb(0xf2f2f2u) : rgb(0x5da8f2u);
+      m.baseColor = {c.x, c.y, c.z, 1}; m.emissive = c;
+      sphereAt(p, std::fmax(0.25f, 4.5f * d * perPx), m);
+    }
+  }
+  // node highlight (sorotNode: green sphere, screen-sized like the point arrows) / segment ribbon (gambarSorotSeg)
+  if (ov_.hlMode != HighlightMode::Off && ov_.hlKind == "node") {
+    vec3 p;
+    if (nodeHandlePos(graph_.nodeIndex(ov_.hlId), p)) {
+      Material m = ov_.handleMat; vec3 c = rgb(0x39c07au); m.baseColor = {c.x, c.y, c.z, 1}; m.emissive = c;
+      sphereAt(p, std::fmax(0.8f, length(p - eye) / 190), m);
+    }
+  }
+  if (ov_.hlMode != HighlightMode::Off && ov_.hlKind == "segment") {
+    int si = graph_.segIndex(ov_.hlId);
+    if (si >= 0) {
+      if (ov_.segMeshId != ov_.hlId) {
+        rhi::destroyMesh(ov_.segMesh); ov_.segMesh = {}; ov_.segMeshId = ov_.hlId;
+        std::vector<vec3> pts;
+        for (const TrackSegment::Lut& l : graph_.segments[(size_t)si].lut) pts.push_back(origin_.toScene(l.px, l.py, profile_.railHeight(si, l.s) + 0.9f));
+        MeshBuilder b; ribbon(b, pts, 0.3f, 0.4f);
+        if (!b.indices.empty()) ov_.segMesh = b.upload();
+      }
+      if (ov_.segMesh.indexCount) renderer_.drawMesh(ov_.segMesh, ov_.ukurMat, {}, mat4::identity());
+    }
+  }
+  if (ov_.ghostLineCount && ov_.ghostLines.indexCount) renderer_.drawMesh(ov_.ghostLines, ov_.ghostLineMat, {}, mat4::identity());
   // ghost
   if (!ov_.ghostId.empty()) {
     if (GpuModel* m = catalog_.model(ov_.ghostId)) {

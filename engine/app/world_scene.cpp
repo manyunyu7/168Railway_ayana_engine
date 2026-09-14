@@ -132,6 +132,7 @@ void WorldScene::buildDecor(const Json& world, bool testGaris, const Json* summa
   std::vector<AABB> footprints;
   for (const Placed& p : scenery_) footprints.push_back(p.bounds);
   trees_.build(terrain_, catalog_, footprints);
+  { Json none; vegMask(const_cast<Json&>(world), world["vegMask"].isArray() ? world["vegMask"] : none); }   // player brush mask from the save
   stock_.forget();
   decor_ = true;
   double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -167,6 +168,7 @@ void WorldScene::draw(const mat4& viewProj, const mat4& view, vec3 eye, float fo
                       float fogDensity, bool drawTrains) {
   { double lon, lat; worldToLonLat(origin_.ox, origin_.oz, lon, lat); applySun(clock, lon, lat, light_, sky_); }
   light_.fogDensity = fogDensity;
+  viewportH_ = std::max(1, viewportH);
   sky_.draw(viewProj.inverse(), eye);
   renderer_.beginFrame(viewProj, eye, light_);
   Frustum frustum(viewProj);

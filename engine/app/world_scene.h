@@ -168,10 +168,25 @@ public:
   // graph, then railsRebuild() and the hiasan / garis re-placed from it. The terrain (DEM, imagery, tiles:
   // re-cut lazily), city, clouds and trees stay; the scene origin is kept.
   bool trackEdit(const Json& world, const std::string& mapSlug, const std::string& fontPath, const Json* summary);
+  // Tree brush (world.vegMask, dunia3d.ts sapuPohon): `stamps` = the whole [{x, y, r, a}] list (or null to clear),
+  // stored in `world`; only the cells under stamps that differ from the previous list are re-scattered.
+  bool vegMask(Json& world, const Json& stamps);
+  // Rail head height (scene m) at the nearest track point within 250 m, else the carved ground (eng_project mode 1).
+  float railHeadNear(double wx, double wy) const;
 
   // Overlays (drawn after the world, depth-test-off like the compass): selection box, gizmo, ghost, ukur.
   enum class HighlightMode { Off, Selected, Locked };
-  void setHighlight(const std::string& kind, int index, HighlightMode mode);   // kind "hiasan" | "garis" | ""
+  // kind "hiasan" | "garis" (index) | "node" | "segment" (id, index ignored) | "": node = green sphere on the
+  // handle (editorRel3d.ts sorotNode), segment = amber ribbon along the centreline (gambarSorotSeg).
+  void setHighlight(const std::string& kind, int index, HighlightMode mode, const std::string& id = "");
+  // Node handles (editorRel3d.ts segarkanTitikRel): screen-sized dots at rail head + 0.6 over every node with a
+  // segment; colour = points orange, hand-written height magenta, chain end white, plain blue. tier 1 = only the
+  // "important" ones (points / hand-written / ends). on = false hides them.
+  void setNodeHandles(bool on, int tier);
+  bool nodeHandlesOn() const { return ov_.handles; }
+  // Editor ghost polylines (drag preview / chain draw, editorRel3d.ts gambarBayang / gambarGhost): world
+  // point lists drawn as thin blue ribbons 0.9 m over the rail head near each point; empty clears.
+  void setGhostLines(const std::vector<std::vector<std::pair<double, double>>>& lines);
   // Gizmo at a scene point: `kind` "rotate" (ring + needle + knob), "move" (ring + 4 arrows), "" hides;
   // axisHover 1 = ring, 2 = knob highlighted. `scale` = ring radius in metres.
   void setGizmo(const std::string& kind, vec3 pos, float yaw, float scale, int axisHover);
@@ -185,6 +200,9 @@ public:
   void setUkur(const std::vector<std::pair<double, double>>& pts);
   void drawOverlays(vec3 eye, float fovY);
   void destroyOverlays();
+  // Scene position of a node handle (rail head at the node + 0.6, editorRel3d.ts posNode3D); false = no such node
+  // (orphan nodes sit on the carved ground).
+  bool nodeHandlePos(int nodeIndex, vec3& out) const;
   int hiasanCount() const { return (int)scenery_.size(); }
 
 private:
@@ -202,14 +220,18 @@ private:
   void scanMeja(const Json& world);
   // overlays
   struct Overlay {
-    std::string hlKind; int hlIndex = -1; HighlightMode hlMode = HighlightMode::Off;
+    std::string hlKind; int hlIndex = -1; HighlightMode hlMode = HighlightMode::Off; std::string hlId;
+    bool handles = false; int handleTier = 0;
+    rhi::Mesh ghostLines; unsigned ghostLineCount = 0;
+    rhi::Mesh segMesh; std::string segMeshId;   // segment highlight ribbon, rebuilt when the id / rails change
     std::string gizmoKind; vec3 gizmoPos; float gizmoYaw = 0, gizmoScale = 1; int gizmoHover = 0;
     std::string ghostId; vec3 ghostPos; float ghostYaw = 0, ghostScale = 1;
     std::vector<vec3> ukur;
-    rhi::Mesh ring, thickRing, needle, knob, arrow, bar, unitBox; bool built = false;
-    rhi::Mesh ukurMesh; Material hlMat, gizmoMat, gizmoHotMat, needleMat, ghostMat, ukurMat;
+    rhi::Mesh ring, thickRing, needle, knob, arrow, bar, unitBox, sphere; bool built = false;
+    rhi::Mesh ukurMesh; Material hlMat, gizmoMat, gizmoHotMat, needleMat, ghostMat, ukurMat, handleMat, ghostLineMat;
   } ov_;
   void buildOverlayMeshes();
+  int viewportH_ = 1;   // framebuffer height of the last draw() (screen-sized handles)
   const Json* worldForEdit_ = nullptr;   // the save object given to the last buildDecor / edit (garis / ukur lookups)
   Vegetation trees_;
   MejaBoard meja_; SimState state_;

@@ -6,6 +6,7 @@
 // the cells around the eye, thins them with distance and uploads one instance buffer per tree model.
 #pragma once
 #include "engine/math/geometry.h"
+#include "engine/world/coords.h"
 #include "engine/render/model_renderer.h"
 #include "engine/rhi/rhi.h"
 #include <span>
@@ -48,6 +49,14 @@ public:
   float viewRadius = vegetation::VIEW_RADIUS;
   float density = vegetation::DENSITY;
   void setDensity(float k);
+  // Player brush mask (world.vegMask, vegetasi3d.ts nilaiVegMask): circular stamps in WORLD metres, the
+  // LAST stamp covering a point wins; a = -1 forces no tree, +1 forces growth (still subject to the rail
+  // clearance and footprints). setMask() replaces the list; only the cells under stamps that differ from
+  // the previous list (added / removed / changed) are re-scattered on the next update() calls, so the
+  // brush stroke that appends one stamp costs one or two cells.
+  struct Stamp { double x, y, r; int a; };
+  void setMask(std::vector<Stamp> stamps);
+  const std::vector<Stamp>& mask() const { return mask_; }
 
 private:
   struct Tree { float x, y, z, scale, rot, rank; uint8_t model; };
@@ -57,6 +66,10 @@ private:
   std::vector<Cell> cells_;
   std::vector<ModelSlot> models_;
   std::vector<AABB> exclude_;
+  std::vector<Stamp> mask_;
+  std::vector<Stamp> pendingDirty_;   // stamps whose cells are re-scattered on the next update()
+  int maskAt(double wx, double wy) const;
+  void dirtyCellsUnder(const Stamp& st, const WorldOrigin& org);
   unsigned version_ = 0; size_t scan_ = 0; bool scanning_ = false;
 };
 
