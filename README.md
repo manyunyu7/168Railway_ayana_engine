@@ -112,9 +112,28 @@ In ppka-wannabe-2 the adapter `src/tiga-ayana/duniaAyana.ts` implements the `Dun
 (`bridge/sim-state.ts`, shared by the Node bridge and the browser), and answers the engine's asset requests
 (`Module.onAssetRequest(kind, path)`): terrain tiles, the baked city, `.emod` geometry and KTX2 textures through
 `eng_texture_*`. Clicks come back as `signal:<id>` / `point:<id>` and go through the client's own `klikSinyal` /
-`klikWesel`. Everything the native app draws (`engine/app/world_scene.*`) is shared. Models and terrain tiles
-are served from `public/ayana/` in dev (gitignored there) and belong on R2 in production. Mojokerto in headless
+`klikWesel`. Everything the native app draws (`engine/app/world_scene.*`) is shared. Mojokerto in headless
 Chromium: 63 MB download (48 MB terrain, 8 MB geometry, 5 MB KTX2), world built ~1 s after the data arrived, 60 fps.
+
+**Production (pk.168railway.com).** `public/ayana/` splits in two. The runtime (`ayana.js/.wasm/.data`,
+`ktx2.js` + worker, `vendor/`) is small and must stay same-origin, so it ships inside `dist/ayana/` with every
+deploy. The `.emod` models (~90 MB, gitignored) go to Cloudflare R2 like `model3d/`: `duniaAyana.ts` resolves them
+with `asetUrl('ayana/models/<slot>.emod')`, which is `/ayana/models/` in dev/`vite preview` and
+`$VITE_ASET_BASE/ayana/models/` (`https://168railway.space/pk/ayana/models/`) in production. The terrain
+`index.json` is optional (synthesised in the client from the save) and is not deployed. In `ppka-wannabe-2`:
+
+```bash
+node tools/unggah-r2.mjs ayana --kering   # dry run: 84 .emod, ~90 MB -> s3://168railways/pk/ayana/models/
+node tools/unggah-r2.mjs ayana            # upload (assets FIRST — a 404 gets cached by Cloudflare)
+./deploy-pk.sh                            # build with VITE_ASET_BASE, strips ayana/models + ayana/terrain from dist/, rsync, tag
+```
+`deploy-pk.sh` runs the uploader for all groups (`ayana` included) unless `--no-aset`; `vite.config.ts`
+(`buangAsetAyanaDist`) removes the models from `dist/` when `VITE_ASET_BASE` is set, and the rsync exclude list is
+the second fence. The default renderer is still three.js: the switch is the `return 'three'` at the end of
+`pilihRenderer3D()` in `src/tiga-ayana/duniaAyana.ts` (change it to `'ayana'` to flip; `?renderer=` and the
+`pk-3d-renderer` localStorage key keep overriding it). Inside the 168Railway Flutter WebView the app appends
+`wadah=webview` to the boot fragment (`src/bootParam.ts`), and the adapter then starts at — and caps the adaptive
+ladder at — the `hemat` quality tier.
 
 ### Web textures: KTX2 transcoded in the browser
 
