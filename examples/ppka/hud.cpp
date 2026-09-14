@@ -171,6 +171,13 @@ void Game::drawUi(int w, int h) {
   }
 }
 
+// The HUD font has no arrows/dashes: map the web wording's U+2192 / U+2014 to ASCII.
+static std::string ascii(std::string t) {
+  for (const auto& [from, to] : {std::pair<const char*, const char*>{"\xe2\x86\x92", "->"}, {"\xe2\x80\x94", "-"}})
+    for (size_t p; (p = t.find(from)) != std::string::npos;) t.replace(p, 3, to);
+  return t;
+}
+
 // Permission card (ui/blokBar.ts tawarkanIzin): title, route, consequence, limits, [tombol] [Batal], countdown bar.
 void Game::drawIzinCard(int w, int h) {
   if (!izin_.open) return;
@@ -189,15 +196,15 @@ void Game::drawIzinCard(int w, int h) {
     }
     flush(); return lines;
   };
-  std::vector<std::string> akibat = wrap(izin_.akibat), batas = wrap(izin_.batas);
+  std::vector<std::string> akibat = wrap(ascii(izin_.akibat)), batas = wrap(ascii(izin_.batas));
   float ch = lh * (2.6f + (float)akibat.size() + (float)batas.size()) + bh + pad * 3;
   float bottom = panel_.visible ? (float)h - panel_.height : (float)h;
-  UiRect r{(float)w / 2 - cw / 2, bottom - ch - 40, cw, ch};
+  UiRect r{(float)w / 2 - cw / 2, bottom - ch - pad - text_.lineHeight(0.8f) * 9, cw, ch};   // above the message log
   ui_.panel(r, {0.16f, 0.09f, 0.04f, 0.96f});
   text_.rect(r.x, r.y, r.w, 3, {1, 0.7f, 0.2f, 1});
   float cy = r.y + pad * 0.8f;
   text_.draw("! " + izin_.judul, r.x + pad, cy, {1, 0.85f, 0.4f, 1}, 0.85f); cy += lh * 1.3f;
-  text_.draw(izin_.rute, r.x + pad, cy, {1, 1, 1, 1}, 0.75f); cy += lh * 1.2f;
+  text_.draw(ascii(izin_.rute), r.x + pad, cy, {1, 1, 1, 1}, 0.75f); cy += lh * 1.2f;
   for (const std::string& l : akibat) { text_.draw(l, r.x + pad, cy, {0.92f, 0.92f, 0.9f, 1}, sc); cy += lh; }
   cy += lh * 0.1f;
   for (const std::string& l : batas) { text_.draw(l, r.x + pad, cy, {0.8f, 0.75f, 0.65f, 1}, sc); cy += lh; }

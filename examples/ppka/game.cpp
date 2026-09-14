@@ -564,6 +564,8 @@ void Game::frame(Window& win, double realDt) {
     if (selectedTrain_.empty()) pushMessage(std::string("autoselect: train ") + as + " not on the line");
   }
   if (const char* am = std::getenv("ENG_AUTOMENU"); am && frame_ == 40) { pemula_ = true; openRouteMenu(am, screenW_ * 0.5f, screenH_ * 0.4f); }   // debug: beginner menu for a signal
+  if (const char* ac = std::getenv("ENG_AUTOCHOOSE"); ac && frame_ == 45) chooseRoute(std::atoi(ac));
+  if (std::getenv("ENG_AUTOCONFIRM") && frame_ == 50) confirmIzin();   // debug: press the card's button   // debug: pick a menu entry (with ENG_AUTOMENU); a wrong-line entry shows the permission card
   if (const char* ah = std::getenv("ENG_AUTOHOVER"); ah && frame_ == 40) {
     int ww, wh; ScreenPoint hit = nearestToCentre(ah, ww, wh);
     if (!hit.id.empty()) { forceHoverX_ = hit.x; forceHoverY_ = hit.y; }

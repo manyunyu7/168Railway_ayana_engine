@@ -19,7 +19,8 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
   reads only our own formats (`.emod`, `.dem/.sat`, `.efnt`). Third-party decoders live in `tools/` only.
 * **Verify with screenshots.** Every example supports `ENG_CAPTURE=/tmp/x.ppm` (+ `ENG_CAPTURE_FRAME`,
   `ENG_VIEW=dist,yaw,pitch`, `ENG_AUTOCLICK`, `ENG_AUTOROUTE`, `ENG_AUTOHOVER`, `ENG_AUTOPANEL`,
-  `ENG_AUTOSELECT`, `ENG_AUTOJUMP`); convert with `sips -s format png` and look at it.
+  `ENG_AUTOSELECT`, `ENG_AUTOJUMP`, `ENG_AUTOMENU`/`ENG_AUTOCHOOSE`/`ENG_AUTOCONFIRM`, `ENG_CAMERA=kabin|samping|ekor|atas|jalan`,
+  `ENG_FOLLOW=<no>`, `ENG_TEST_GARIS=1`); convert with `sips -s format png` and look at it.
 * Build with `mac-debug` (ASan/UBSan, `-Werror`) before pushing; play with `mac-release`.
 * Push to `github.com/manyunyu7/168Railway_ayana_engine` after every fix.
 
@@ -66,7 +67,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
 | Brush deltas `world.tanah.delta`, bridge trough carving | ✅ | `terrain.cpp`: `setBrushDeltas(world["tanah"])` (8 m grid, bilinear) added before carving; `RailSample::bridgeBlend` registers deck chords, ground lowered to deck bottom − 1.5 m within 7 m, blending to 26 m, never raised (`tests/test_terrain`) |
 | Trees from green mask (instanced) | ✅ | `vegetation.cpp`; `vegMask` not applied |
 | Station buildings from `hiasan.objek` | ✅ | `game.cpp buildWorld()` |
-| `hiasan.garis` spline objects (fences, LAA poles, platforms) | ❌ | `uji3dSpline.ts` |
+| `hiasan.garis` spline objects (fences, LAA poles, platforms) | ✅ | `engine/world/spline.h` (centripetal Catmull-Rom + `bingkaiGaris` tiling), `garis_visual.cpp`: GLB classes from `model.json.garis[]` instanced (`AssetCatalog::findGaris`, ids `garis:<id>[:tiang|:slotN]`), procedural `peron`/`peron-kanopi`/`peron-tiang`/`tembok-beton` baked per colour; `datar` = straight grade; `peron-krl*` prototypes not ported (see KRL station row). No save has `garis` yet — `ENG_TEST_GARIS=1` injects a platform + fence + wall along the station track |
 | Baked OSM city `public/kota/<slug>.json` (buildings) | ✅ | `city_visual.cpp`; per 640 m chunk × palette meshes (no vertex colours), frustum-culled; bks uses the `bekasi` bake (alias in `game.cpp`). Roads not drawn (as in TS); `hijau`/`pohon` data unused |
 | Procedural KRL station | 🟡 | `krl_station.cpp` (`KrlStation`, `krlLayout`): hall + sweeping roof, bowstring stair arch, concourse with a stair per island platform, platforms/canopies/portals/furniture, LAA wires + gantries; flat colours instead of the canvas textures (ACP joints, letters, boards). No save references `stasiun-krl-*` yet, so it is not wired into `game.cpp`; `railtest ENG_TEST_KRL=<tracks> ENG_TARGET=krl` |
 | Clouds | ✅ | `cloud_visual.cpp`: world-pinned billboard sprites over the corridor bbox + 6 km, 0.35/km² (40..220), layers 760–1100 m (¾, 420–1250 m wide) and 1250–1750 m, 8 procedural blob textures × 3 opacities, tinted by the ladder's `awan` column (`Sky::cloudTint`), fogged, slow wind drift (the reference sprites are static). `terraintest` draws them (`ENG_CLOCK`, `ENG_NO_CLOUDS`) |
@@ -76,14 +77,14 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
 | Feature | Status | Notes |
 |---|---|---|
 | Orbit, free-fly, Trainz compass | ✅ | `compass.cpp` |
-| Cab / side / tail / top camera modes, telescope | ❌ | `dunia3d.ts:1546-1591` |
+| Cab / side / tail / top / walk camera modes, telescope | ✅ | `examples/ppka/camera_rig.*`: profiles (near/far/fov/fog/redam), `MATA_KABIN` per loco, rigs (kabin look 100 m ahead, samping 28/7 m, atas 120 m heading-up, ekor 34 m), damping `k = 1−exp(−redam·dt)` with the 0.4 s blend-in, kabin drag = neck (decays after 1.2 s), others orbit the subject (`orbitSubjek`), scroll = the mode's parameter, `Z` telescope fov/4 ≥ 8° (τ 0.09 s, drag scaled by tan ratio), jalan 1.62 m eye / 4.5 / 12 m/s with step bob. Keys 1–6, top-bar buttons, `,`/`.` cycle the subject (selected train, else nearest). Fog: linear ranges mapped to the exp² density that gives 50 % at the midpoint (corridor formula for bebas/atas). Not ported: cab sway (`goyangKabin`), jalan collision/jump, touch joystick |
 | Sun + light ladder from clock, gradient sky | ✅ | `sun.h`; fog is exponential, reference is linear corridor fog |
 | Atmosphere sky mode | ➖ | |
 | Meja layan (schematic panel) | ✅ | `panel_view.cpp`; layout from `panel.ts` via bridge |
 | Time scale, set clock, pause | ✅ | bridge authoritative |
 | Mode pemula (destination menu) / ahli | ✅ | |
 | Train card, Semboyan 40, Hapus KA | ✅ | S40 audio ritual not mirrored |
-| Permission cards (sepur salah / izin terisi / mengikuti) | ❌ | flags come back from `set_route`; no confirm UI |
+| Permission cards (sepur salah / izin terisi / mengikuti / batalkan rute lawan) | ✅ | bridge `setCandidate` returns `needsConfirm{kind, judul, rute, akibat, batas, tombol, confirm}` with the `ui/rute.ts` wording (incl. `jarakPenghuni`, `sisaHalangan`); `confirm` command re-issues with `izin`/`sepurSalah`/`izinTerisi`/`batalLawan`; `set_route {index}` now counts the `route_menu` list. App: `Game::handleRouteResponse` → card (`drawIzinCard`, 12 s countdown, Enter/Esc), chained cards (wrong line, then occupied). No countdown audio |
 | Warta, genta, block-bar tasks, BLB penalty, auto-warp | ❌ | |
 | Audio (platform PA, genta, train sounds) | ❌ | no audio system yet |
 | Editor drawers (REL, surveyor, ukur, tata hiasan, tanah) | ➖ | stay in the web client; the engine reads the same save |
