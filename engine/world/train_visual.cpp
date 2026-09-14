@@ -1,7 +1,9 @@
 #include "engine/world/train_visual.h"
+#include "engine/world/asset_catalog.h"
 #include "engine/world/sway.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <utility>
 
 namespace eng {
@@ -147,8 +149,10 @@ void TrainVisuals::update(const SimState& st, const WorldOrigin& origin, const R
       float cx = (ax + bx) / 2, cz = (az + bz) / 2;
       float kurva = sway::kurvaRel(sway::yawTiga(std::cos(v.t1), std::sin(v.t1)), sway::yawTiga(std::cos(v.t2), std::sin(v.t2)), L);
       float roll = sway::hitungGoyang({cx, cz, t.speed, kurva, 0, skalaKA}).roll;
-      // §7.4: the trailing KRL cab car faces backwards (cab at the rear of the consist)
-      const bool balik = v.model == "nryJr205KuhaBadan" && vi + 1 == nCars;
+      // §7.4: the trailing KRL cab car faces backwards (cab at the rear of the consist). The bridge sends the
+      // sarana id (`krl-kuha`) when no fleet model applies, the catalog slot otherwise: compare both.
+      const char* slot = AssetCatalog::saranaSlot(v.model);
+      const bool balik = (v.model == "nryJr205KuhaBadan" || (slot && !std::strcmp(slot, "nryJr205KuhaBadan"))) && vi + 1 == nCars;
       float yawM = yaw + (balik ? PI : 0), pitchM = balik ? -pitch : pitch, rollM = balik ? -roll : roll;
       VehicleInstance inst;
       inst.len = v.length; inst.loco = v.kind == "loco";

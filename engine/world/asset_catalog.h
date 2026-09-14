@@ -61,6 +61,12 @@ public:
   const Options& options() const { return opt_; }
 
   const CatalogEntry* find(const std::string& id) const;
+  // §7.2 MODEL_SARANA: catalog slot a bridge sarana id (`krl-kuha`, `cc206`, `k1`, ...) falls back to; nullptr when
+  // the id is not a sarana alias. The bridge sends the sarana id when no fleet model applies (KRL, lokos).
+  static const char* saranaSlot(const std::string& id);
+  // Web build: a plain GLB (own parser) instead of an .emod — images stay encoded and are dropped: the textures
+  // are streamed later through imageHints/streamedModel (KTX2 twin), or stay the 1x1 white placeholder.
+  bool provideGlb(const std::string& id, std::span<const uint8_t> glbBytes, std::string& error);
   const GarisEntry* findGaris(const std::string& id) const;
   const std::vector<GarisEntry>& garis() const { return garis_; }
   std::vector<std::string> idsByCategory(const std::string& kategori) const;   // sorted by id
