@@ -7,6 +7,8 @@
 
 namespace eng {
 
+static vec3 horizontalXZ(vec3 v) { v.y = 0; return v; }
+
 bool Game::init(Window& win, const GameOptions& opt) {
   win_ = &win; opt_ = opt;
   rhi::init();
@@ -25,6 +27,7 @@ bool Game::init(Window& win, const GameOptions& opt) {
   double x0 = 1e30, y0 = 1e30, x1 = -1e30, y1 = -1e30;
   for (const Json& n : nodes.arr) { double x = n["x"].num, y = n["y"].num; x0 = std::fmin(x0, x); x1 = std::fmax(x1, x); y0 = std::fmin(y0, y); y1 = std::fmax(y1, y); }
   origin_ = {(x0 + x1) / 2, (y0 + y1) / 2};
+  worldW_ = (float)std::fmax(std::fmax(x1 - x0, y1 - y0), 800.0);   // lebarDunia (corridor fog)
 
   // first station scenery object → camera target
   stationScene_ = {};
@@ -45,6 +48,8 @@ bool Game::init(Window& win, const GameOptions& opt) {
   panel_.init(&sim_.panel());
   if (std::getenv("ENG_AUTOPANEL")) panel_.visible = true;
   if (const char* m = std::getenv("ENG_MODE")) pemula_ = std::string(m) == "pemula";
+  if (const char* f = std::getenv("ENG_FOLLOW")) for (const SimTrain& t : sim_.state().trains) if (t.no == f || t.id == f) subjectId_ = t.id;   // camera subject
+  if (const char* c = std::getenv("ENG_CAMERA")) { CamMode cm; if (parseCamMode(c, cm)) setCamMode(cm); else pushMessage(std::string("ENG_CAMERA: unknown mode ") + c); }   // debug: start in a camera mode
   char m[160]; std::snprintf(m, sizeof m, "map %s loaded: %zu nodes, %d trains on line, bridge %.0f ms",
                              opt.map.c_str(), nodes.size(), (int)sim_.state().trains.size(), sim_.startupMs());
   pushMessage(m);
@@ -207,10 +212,16 @@ void Game::handleInput(Window& win, double dt) {
     if (pressed(GLFW_KEY_M)) { panel_.visible = !panel_.visible; if (panel_.visible) panel_.fitStation("", fw, fh); }
     if (pressed(GLFW_KEY_P)) { pemula_ = !pemula_; menu_.open = false; pushMessage(pemula_ ? "mode pemula: click a signal to pick a destination" : "mode ahli: click a signal = route along the points"); }
     if (pressed(GLFW_KEY_J)) { clockPrompt_ = true; clockText_.clear(); }
-    if (menu_.open) for (int k = GLFW_KEY_1; k <= GLFW_KEY_9; ++k) if (pressed(k)) chooseRoute(k - GLFW_KEY_1);
+    if (izin_.open) { if (pressed(GLFW_KEY_ENTER) || pressed(GLFW_KEY_KP_ENTER)) confirmIzin(); }
+    if (menu_.open) { for (int k = GLFW_KEY_1; k <= GLFW_KEY_9; ++k) if (pressed(k)) chooseRoute(k - GLFW_KEY_1); }
+    else { for (int k = GLFW_KEY_1; k <= GLFW_KEY_6; ++k) if (pressed(k)) setCamMode((CamMode)(k - GLFW_KEY_1)); }   // 1 bebas 2 jalan 3 kabin 4 samping 5 atas 6 ekor
+    if (pressed(GLFW_KEY_COMMA)) cycleSubject(-1);
+    if (pressed(GLFW_KEY_PERIOD)) cycleSubject(1);
+    rig_.teropongTahan = win.key(GLFW_KEY_Z);
     if (pressed(GLFW_KEY_F)) { useFly_ = !useFly_; if (useFly_) { fly_.position = orbit_.position(); vec3 d = normalize(orbit_.target - fly_.position); fly_.yaw = std::atan2(-d.x, -d.z); fly_.pitch = std::asin(d.y); } }
     if (pressed(GLFW_KEY_ESCAPE)) {
-      if (menu_.open || confirmHapus_) closeMenus();
+      if (menu_.open || confirmHapus_ || izin_.open) closeMenus();
+      else if (rig_.mode != CamMode::Bebas) setCamMode(CamMode::Bebas);
       else if (!selectedTrain_.empty()) selectedTrain_.clear();
       else glfwSetWindowShouldClose((GLFWwindow*)win.handle, 1);
     }
@@ -230,14 +241,15 @@ void Game::handleInput(Window& win, double dt) {
     } else if (panelResize_) panel_.resizeTo((float)fh - fmy_, fh);
     else if (panelDrag_) { if (!clickArmed_) panel_.pan(dx * (float)fw / (float)ww, dy * (float)fh / (float)wh); }
     else if (uiPress_) {}
-    else if (useFly_) fly_.look(dx, dy); else orbit_.rotate(dx, dy);
+    else if (rig_.mode != CamMode::Bebas) { if (!clickArmed_) rig_.drag(dx, dy); } else if (useFly_) fly_.look(dx, dy); else orbit_.rotate(dx, dy);
     if (std::fabs(mx - clickX_) + std::fabs(my - clickY_) > 4) clickArmed_ = false;
     dragging_ = true;
   } else {
     if (dragging_ && clickArmed_ && !panelResize_) { pendingClick_ = true; pcx_ = (float)(clickX_ * fw / ww); pcy_ = (float)(clickY_ * fh / wh); }
     dragging_ = false; clickArmed_ = false; panelDrag_ = panelResize_ = uiPress_ = false;
   }
-  if (useFly_) { if (rmb) fly_.look(dx, dy); }
+  if (rig_.mode != CamMode::Bebas) {}
+  else if (useFly_) { if (rmb) fly_.look(dx, dy); }
   else {
     bool ctrl = win.key(GLFW_KEY_LEFT_CONTROL) || win.key(GLFW_KEY_RIGHT_CONTROL) || win.key(GLFW_KEY_LEFT_SUPER);
     bool overUi = panel_.contains(fmx_, fmy_, fw, fh) || ui_.blocked(fmx_, fmy_);
@@ -248,10 +260,10 @@ void Game::handleInput(Window& win, double dt) {
   if (win.scroll != 0) {
     if (panel_.contains(fmx_, fmy_, fw, fh)) panel_.zoomAt((float)win.scroll, fmx_, fmy_, fw, fh);
     else if (ui_.blocked(fmx_, fmy_)) {}
-    else if (useFly_) fly_.speed *= std::pow(1.2f, (float)win.scroll); else orbit_.zoom((float)win.scroll);
+    else if (rig_.mode != CamMode::Bebas) rig_.scroll((float)win.scroll); else if (useFly_) fly_.speed *= std::pow(1.2f, (float)win.scroll); else orbit_.zoom((float)win.scroll);
     win.scroll = 0;
   }
-  if (useFly_) {
+  if (useFly_ && rig_.mode == CamMode::Bebas) {
     float f = (win.key(GLFW_KEY_W) ? 1.f : 0.f) - (win.key(GLFW_KEY_S) ? 1.f : 0.f);
     float sd = (win.key(GLFW_KEY_D) ? 1.f : 0.f) - (win.key(GLFW_KEY_A) ? 1.f : 0.f);
     float u = (win.key(GLFW_KEY_E) ? 1.f : 0.f) - (win.key(GLFW_KEY_Q) ? 1.f : 0.f);
@@ -263,13 +275,35 @@ void Game::handleInput(Window& win, double dt) {
 // ---- player actions (one path for 3D, panel and menus) ----
 
 void Game::clickSignal(const std::string& id) {
-  const Json& r = sim_.clickSignal(id);
-  std::string msg = "signal " + id + ": " + (r["ok"].boolOr(false) ? "ok" : "rejected");
-  if (r.has("reason")) msg += " (" + r["reason"].stringOr("") + ")";
-  if (r.has("action")) msg += " " + r["action"].stringOr("");
-  if (r.has("exitLabel")) msg += " -> " + r["exitLabel"].stringOr("");
-  pushMessage(msg);
+  handleRouteResponse(sim_.clickSignal(id), "signal " + id);
+}
+
+// Route command outcome: a `needsConfirm` card (ui/rute.ts tawarkanIzin) or a message; then the state refresh.
+void Game::handleRouteResponse(const Json& r0, const std::string& what) {
+  Json r = r0;   // copy: the next command overwrites the bridge's last response
+  if (r["needsConfirm"].isObject()) {
+    const Json& c = r["needsConfirm"];
+    izin_ = Izin{}; izin_.open = true;
+    izin_.kind = c["kind"].stringOr(""); izin_.judul = c["judul"].stringOr("Izin"); izin_.rute = c["rute"].stringOr("");
+    izin_.akibat = c["akibat"].stringOr(""); izin_.batas = c["batas"].stringOr(""); izin_.tombol = c["tombol"].stringOr("Beri izin");
+    izin_.confirm = c["confirm"]; izin_.until = win_->time() + 12;   // IZIN_DETIK
+    pushMessage(what + ": " + izin_.judul + " - lihat kartu keputusan (Enter = " + izin_.tombol + ", Esc = batal)");
+  } else {
+    std::string msg = what + ": " + (r["ok"].boolOr(false) ? r["status"].stringOr("ok") : "rejected");
+    if (r.has("reason")) msg += " (" + r["reason"].stringOr("") + ")";
+    if (r.has("action")) msg += " " + r["action"].stringOr("");
+    if (r.has("exitLabel")) msg += " -> " + r["exitLabel"].stringOr("");
+    if (r["sepurSalah"].boolOr(false)) msg += " SEPUR SALAH"; else if (r["izinTerisi"].boolOr(false)) msg += " SEPUR TERISI";
+    pushMessage(msg);
+  }
   afterCommand();
+}
+
+void Game::confirmIzin() {
+  if (!izin_.open) return;
+  Json of = izin_.confirm; std::string what = izin_.judul + " (" + izin_.rute + ")";
+  izin_.open = false;
+  handleRouteResponse(sim_.confirm(of), what);   // may hand back the next card (wrong line, then occupied)
 }
 
 void Game::flipPoint(const std::string& id) {
@@ -302,12 +336,8 @@ void Game::chooseRoute(int index) {
   std::string to = c["exitLabel"].stringOr("");
   std::string cmd = "{\"cmd\":\"set_route\",\"from\":\"" + SimProcess::escape(menu_.signal) + "\",\"index\":" + std::to_string(index)
                   + (c["sepurSalah"].boolOr(false) ? ",\"sepurSalah\":true" : "") + "}";
-  const Json& r = sim_.command(cmd);
-  std::string msg = "route " + menu_.name + " -> " + to + ": " + (r["ok"].boolOr(false) ? r["status"].stringOr("ok") : "rejected");
-  if (r.has("reason")) msg += " (" + r["reason"].stringOr("") + ")";
-  pushMessage(msg);
   menu_.open = false;
-  afterCommand();
+  handleRouteResponse(sim_.command(cmd), "route " + menu_.name + " -> " + to);
 }
 
 void Game::selectTrain(const std::string& id, bool jump) {
@@ -361,7 +391,7 @@ void Game::removeTrain(const std::string& id) {
 void Game::pickAt(double mx, double my, int w, int h, std::string& sigId, std::string& ptId) const {
   int ww, wh; glfwGetWindowSize((GLFWwindow*)win_->handle, &ww, &wh);
   float px = (float)(mx * w / ww), py = (float)(my * h / wh);
-  vec3 eye = useFly_ ? fly_.position : orbit_.position();
+  vec3 eye = camEye();
   std::string bs, bp; float ds = 1e9f, dw = 1e9f;
   for (const ScreenPoint& sp : signals_.screenPositions(viewProj_, w, h, eye)) {
     if (!sp.visible) continue; float d = std::hypot(sp.x - px, sp.y - py); if (d < ds) { ds = d; bs = sp.id; }
@@ -449,11 +479,12 @@ void Game::render(Window& win) {
   rhi::setViewport(w, h);
   rhi::clear(0, 0, 0, 1);
   float aspect = (float)w / (float)h;
-  mat4 view = useFly_ ? fly_.view() : orbit_.view();
-  mat4 proj = useFly_ ? fly_.projection(aspect) : orbit_.projection(aspect);
-  vec3 eye = useFly_ ? fly_.position : orbit_.position();
+  mat4 view = camView();
+  mat4 proj = camProj(aspect);
+  vec3 eye = camEye();
   viewProj_ = proj * view;
   { double lon, lat; worldToLonLat(origin_.ox, origin_.oz, lon, lat); applySun(sim_.state().clock, lon, lat, light_, sky_); }
+  light_.fogDensity = rig_.fogDensity(worldW_);   // per-mode fog (§9.1), exponential-squared matched at the linear midpoint
   sky_.draw(viewProj_.inverse(), eye);
   renderer_.beginFrame(viewProj_, eye, light_);
   Frustum frustum(viewProj_);
@@ -462,7 +493,7 @@ void Game::render(Window& win) {
   rails_.draw(renderer_, &frustum);
   for (const Placed& p : scenery_) if (frustum.contains(p.bounds)) renderer_.draw(*p.model, p.xf, &frustum);
   { double hh = std::fmod(sim_.state().clock / 3600.0, 24.0); bool night = hh < 6 || hh >= 18;
-    signals_.setView(useFly_ ? fly_.fovY : orbit_.fovY, h, night); trains_.setView(useFly_ ? fly_.fovY : orbit_.fovY, h, night); }
+    signals_.setView(camFovY(), h, night); trains_.setView(camFovY(), h, night); }
   signals_.draw(renderer_, eye, &frustum);
   points_.draw(renderer_, &frustum);
   boards_.draw(renderer_, &frustum);
@@ -478,7 +509,7 @@ void Game::render(Window& win) {
     hoverX_ = c.w > 0 ? (c.x / c.w * 0.5f + 0.5f) * (float)w : -1; hoverY_ = c.w > 0 ? (1 - (c.y / c.w * 0.5f + 0.5f)) * (float)h : -1;
   }
   trains_.draw(renderer_, &frustum);
-  if (!useFly_) compass_.draw(renderer_, orbit_);
+  if (!useFly_ && rig_.mode == CamMode::Bebas) compass_.draw(renderer_, orbit_);
   renderer_.flushTransparent();
   drawHud(w, h);
   // the click that no widget took goes to the meja layan or the 3D scene
@@ -503,7 +534,7 @@ void Game::frame(Window& win, double realDt) {
   // ENG_AUTOHOVER=signal|point pins the hover cursor on it from frame 40 on.
   auto nearestToCentre = [&](const char* kind, int& ww, int& wh) {
     int w = screenW_, h = screenH_; glfwGetWindowSize((GLFWwindow*)win.handle, &ww, &wh);
-    vec3 eye = useFly_ ? fly_.position : orbit_.position();
+    vec3 eye = camEye();
     std::string k = kind, want;   // "signal" | "point" | "signal:<name>" | "point:<nodeId>"
     if (size_t c = k.find(':'); c != std::string::npos) { want = k.substr(c + 1); k = k.substr(0, c); }
     auto pts = k == "point" ? points_.screenPositions(viewProj_, w, h) : signals_.screenPositions(viewProj_, w, h, eye);
@@ -535,8 +566,86 @@ void Game::frame(Window& win, double realDt) {
     if (!hit.id.empty()) { forceHoverX_ = hit.x; forceHoverY_ = hit.y; }
   }
   stepSim(realDt);
+  updateCamera((float)std::fmin(realDt, 0.1));
   render(win);
   ++frame_;
+}
+
+// ---- camera modes (§9.1) ----
+
+vec3 Game::camEye() const { return rig_.mode != CamMode::Bebas ? rig_.eye() : useFly_ ? fly_.position : orbit_.position(); }
+mat4 Game::camView() const { return rig_.mode != CamMode::Bebas ? rig_.view() : useFly_ ? fly_.view() : orbit_.view(); }
+mat4 Game::camProj(float aspect) const { return rig_.mode != CamMode::Bebas ? rig_.projection(aspect) : useFly_ ? fly_.projection(aspect) : orbit_.projection(aspect); }
+float Game::camFovY() const { return rig_.mode != CamMode::Bebas ? radians(rig_.fovDeg()) : useFly_ ? fly_.fovY : orbit_.fovY; }
+
+// Subject train polyline: selected train, else the debug/cycled subject, else the nearest to the camera
+// (dunia3d.ts subjek). Points = the vehicles' coupler positions on the rail head, nose first.
+bool Game::subjectPath(TrainPath& out, std::string* idOut) const {
+  const SimState& st = sim_.state();
+  if (st.trains.empty()) return false;
+  const SimTrain* t = nullptr;
+  for (const SimTrain& x : st.trains) if (!selectedTrain_.empty() && x.id == selectedTrain_) t = &x;
+  if (!t) for (const SimTrain& x : st.trains) if (!subjectId_.empty() && x.id == subjectId_) t = &x;
+  if (!t) {
+    vec3 eye = camEye(); float bd = 1e30f;
+    for (const SimTrain& x : st.trains) { vec3 p = origin_.toScene(x.x, x.y, 0); float d = (p.x - eye.x) * (p.x - eye.x) + (p.z - eye.z) * (p.z - eye.z); if (d < bd) { bd = d; t = &x; } }
+  }
+  if (!t || t->vehicles.empty()) return false;
+  out = TrainPath{};
+  out.sarana = t->vehicles[0].sarana;
+  float acc = 0;
+  auto push = [&](double wx, double wy, const std::string& seg, float s) {
+    vec3 p = origin_.toScene(wx, wy, profile_.railHeight(seg.c_str(), s));
+    if (!out.pts.empty()) acc += length(horizontalXZ(p - out.pts.back()));
+    out.pts.push_back(p); out.cum.push_back(acc);
+  };
+  for (const SimVehicle& v : t->vehicles) { push(v.x1, v.y1, v.seg, v.s); push(v.x2, v.y2, v.seg2, v.s2); }
+  out.length = t->length > 0 ? t->length : acc;
+  if (idOut) *idOut = t->id;
+  return out.valid();
+}
+
+void Game::setCamMode(CamMode m) {
+  if (m == rig_.mode) return;
+  TrainPath tp;
+  if (m != CamMode::Bebas && m != CamMode::Jalan && !subjectPath(tp)) { pushMessage("Belum ada KA di lintas"); return; }
+  vec3 eye = camEye(), look = rig_.mode != CamMode::Bebas ? rig_.look() : useFly_ ? fly_.position + fly_.forward() * 60 : orbit_.target;
+  CamMode old = rig_.mode;
+  if (m == CamMode::Bebas) {   // hand back to the orbit FROM the current view; out of jalan push the target 60 m ahead
+    if (old == CamMode::Jalan) look = eye + normalize(look - eye) * 60;
+    vec3 o = eye - look; float d = std::fmax(length(o), 2.f);
+    orbit_.target = look; orbit_.distance = d; orbit_.pitch = std::asin(std::clamp(o.y / d, -0.999f, 0.999f)); orbit_.yaw = std::atan2(o.x, o.z);
+    useFly_ = false;
+  }
+  rig_.setMode(m, eye, look);
+  auto ground = [this](float x, float z) { return terrain_.groundHeight(x + origin_.ox, z + origin_.oz); };
+  if (m == CamMode::Jalan) rig_.enterWalk(eye, look, ground);
+  const CamProfile p = camProfile(m);
+  pushMessage(m == CamMode::Bebas ? "Kamera bebas (orbit)" : m == CamMode::Jalan ? "Jalan-jalan - WASD = jalan, Shift = lari, seret = menoleh, Esc kembali"
+              : std::string("Kamera ") + p.nama + " - seret = " + (m == CamMode::Kabin ? "menoleh" : "mengelilingi KA") + ", scroll = atur, , . = ganti KA, Z = teropong");
+}
+
+void Game::cycleSubject(int dir) {
+  const SimState& st = sim_.state();
+  if (st.trains.empty()) return;
+  std::string cur; TrainPath tp; subjectPath(tp, &cur);
+  int i = -1; for (size_t k = 0; k < st.trains.size(); ++k) if (st.trains[k].id == cur) i = (int)k;
+  const SimTrain& t = st.trains[(size_t)((i + dir + (int)st.trains.size()) % (int)st.trains.size())];
+  subjectId_ = t.id; selectedTrain_.clear();
+  pushMessage("Subjek kamera: KA " + t.no);
+}
+
+void Game::updateCamera(float dt) {
+  if (rig_.mode == CamMode::Bebas) { rig_.step(dt, nullptr, {}, {}); return; }
+  auto ground = [this](float x, float z) { return terrain_.groundHeight(x + origin_.ox, z + origin_.oz); };
+  WalkInput in;
+  if (rig_.mode == CamMode::Jalan && !clockPrompt_) {
+    in.forward = (win_->key(GLFW_KEY_W) || win_->key(GLFW_KEY_UP) ? 1.f : 0.f) - (win_->key(GLFW_KEY_S) || win_->key(GLFW_KEY_DOWN) ? 1.f : 0.f);
+    in.side = (win_->key(GLFW_KEY_D) || win_->key(GLFW_KEY_RIGHT) ? 1.f : 0.f) - (win_->key(GLFW_KEY_A) || win_->key(GLFW_KEY_LEFT) ? 1.f : 0.f);
+    in.run = win_->key(GLFW_KEY_LEFT_SHIFT) || win_->key(GLFW_KEY_RIGHT_SHIFT);
+  }
+  TrainPath tp; bool has = subjectPath(tp);
+  if (!rig_.step(dt, has ? &tp : nullptr, ground, in)) { pushMessage("KA subjek hilang dari lintas - kembali ke kamera bebas"); setCamMode(CamMode::Bebas); }
 }
 
 bool Game::wantsCapture(int& frameNo) const { frameNo = frame_; return std::getenv("ENG_CAPTURE") != nullptr; }

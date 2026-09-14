@@ -164,6 +164,7 @@ const Json& SimProcess::beriS40(const std::string& t) { return command("{\"cmd\"
 const Json& SimProcess::hapusKA(const std::string& t) { return command("{\"cmd\":\"hapus_ka\",\"train\":\"" + escape(t) + "\"}"); }
 const Json& SimProcess::trainDetail(const std::string& t) { return command("{\"cmd\":\"train_detail\",\"train\":\"" + escape(t) + "\"}"); }
 const Json& SimProcess::routeMenu(const std::string& s) { return command("{\"cmd\":\"route_menu\",\"signal\":\"" + escape(s) + "\"}"); }
+const Json& SimProcess::confirm(const Json& of) { return command("{\"cmd\":\"confirm\",\"of\":" + of.dump() + "}"); }
 
 static PanelObj parsePanelObj(const Json& o) {
   PanelObj p;

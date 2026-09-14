@@ -1,4 +1,5 @@
 #include "examples/ppka/game.h"
+#include <cmath>
 #include <cstdio>
 
 namespace eng {
@@ -43,6 +44,7 @@ void Game::drawHud(int w, int h) {
   panel_.draw(ui_, st, w, h, hoverOnPanel_ ? hoverId_ : "", menu_.open ? menu_.lit : std::vector<std::string>{}, selectedTrain_);
 
   drawUi(w, h);
+  drawIzinCard(w, h);
 
   // hover tooltip above the picked signal/point (3D or panel)
   if (!hoverId_.empty() && !hoverTip_.empty() && !menu_.open) {
@@ -62,8 +64,8 @@ void Game::drawHud(int w, int h) {
   for (const std::string& m : messages_) { text_.draw(m, pad, my, white, 0.8f); my += lh; }
 
   // help (bottom-right)
-  text_.draw("LMB orbit | RMB tap = fly focus, hold = glide | F fly cam | click signal/point | space pause | +/- speed | M meja layan | P mode | J jam",
-             (float)w - 800, bottom - lh - pad * 0.5f, dim, 0.65f);
+  text_.draw("LMB orbit | RMB tap = fly focus, hold = glide | F fly | 1-6 kamera | , . KA | Z teropong | click signal/point | space pause | +/- speed | M meja | P mode | J jam",
+             (float)w - 900, bottom - lh - pad * 0.5f, dim, 0.65f);
   text_.flush(w, h);
 }
 
@@ -83,7 +85,10 @@ void Game::drawUi(int w, int h) {
   if (ui_.button({x, y, 76, bh}, "pemula", pemula_)) { pemula_ = true; menu_.open = false; } x += 80;
   if (ui_.button({x, y, 60, bh}, "ahli", !pemula_)) { pemula_ = false; menu_.open = false; } x += 72;
   if (ui_.button({x, y, 90, bh}, "meja layan", panel_.visible)) { panel_.visible = !panel_.visible; if (panel_.visible) panel_.fitStation("", w, h); } x += 96;
-  if (ui_.button({x, y, 60, bh}, "fly", useFly_)) { useFly_ = !useFly_; if (useFly_) { fly_.position = orbit_.position(); vec3 d = normalize(orbit_.target - fly_.position); fly_.yaw = std::atan2(-d.x, -d.z); fly_.pitch = std::asin(d.y); } }
+  if (ui_.button({x, y, 60, bh}, "fly", useFly_ && rig_.mode == CamMode::Bebas, rig_.mode == CamMode::Bebas)) { useFly_ = !useFly_; if (useFly_) { fly_.position = orbit_.position(); vec3 d = normalize(orbit_.target - fly_.position); fly_.yaw = std::atan2(-d.x, -d.z); fly_.pitch = std::asin(d.y); } } x += 72;
+  // camera modes (§9.1): 1 bebas .. 6 ekor; Z = telescope (hold) / click = lock
+  for (int i = 0; i < 6; ++i) { CamMode m = (CamMode)i; float bw = 64; if (ui_.button({x, y, bw, bh}, camModeName(m), rig_.mode == m)) setCamMode(m); x += bw + 4; }
+  if (ui_.button({x, y, 30, bh}, "Z", rig_.teropongKunci || rig_.teropongTahan, rig_.bolehTeropong())) rig_.teropongKunci = !rig_.teropongKunci;
 
   // --- clock prompt (modal-ish box under the top bar) ---
   if (clockPrompt_) {
@@ -164,6 +169,46 @@ void Game::drawUi(int w, int h) {
       cy += rowH; ++i;
     }
   }
+}
+
+// Permission card (ui/blokBar.ts tawarkanIzin): title, route, consequence, limits, [tombol] [Batal], countdown bar.
+void Game::drawIzinCard(int w, int h) {
+  if (!izin_.open) return;
+  double now = win_->time();
+  if (now >= izin_.until) { izin_.open = false; return; }
+  const float pad = 10, lh = text_.lineHeight(0.7f), bh = text_.lineHeight(0.8f) * 0.95f, cw = 560, sc = 0.68f;
+  auto wrap = [&](const std::string& t) {   // greedy word wrap to the card width
+    std::vector<std::string> lines; std::string line, word;
+    auto flush = [&]() { if (!line.empty()) lines.push_back(line); line.clear(); };
+    for (size_t i = 0; i <= t.size(); ++i) {
+      if (i == t.size() || t[i] == ' ') {
+        std::string cand = line.empty() ? word : line + " " + word;
+        if (text_.measure(cand, sc) > cw - pad * 2 && !line.empty()) { flush(); line = word; } else line = cand;
+        word.clear();
+      } else word += t[i];
+    }
+    flush(); return lines;
+  };
+  std::vector<std::string> akibat = wrap(izin_.akibat), batas = wrap(izin_.batas);
+  float ch = lh * (2.6f + (float)akibat.size() + (float)batas.size()) + bh + pad * 3;
+  float bottom = panel_.visible ? (float)h - panel_.height : (float)h;
+  UiRect r{(float)w / 2 - cw / 2, bottom - ch - 40, cw, ch};
+  ui_.panel(r, {0.16f, 0.09f, 0.04f, 0.96f});
+  text_.rect(r.x, r.y, r.w, 3, {1, 0.7f, 0.2f, 1});
+  float cy = r.y + pad * 0.8f;
+  text_.draw("! " + izin_.judul, r.x + pad, cy, {1, 0.85f, 0.4f, 1}, 0.85f); cy += lh * 1.3f;
+  text_.draw(izin_.rute, r.x + pad, cy, {1, 1, 1, 1}, 0.75f); cy += lh * 1.2f;
+  for (const std::string& l : akibat) { text_.draw(l, r.x + pad, cy, {0.92f, 0.92f, 0.9f, 1}, sc); cy += lh; }
+  cy += lh * 0.1f;
+  for (const std::string& l : batas) { text_.draw(l, r.x + pad, cy, {0.8f, 0.75f, 0.65f, 1}, sc); cy += lh; }
+  cy += pad * 0.6f;
+  float bw = std::fmax(120.f, text_.measure(izin_.tombol, 0.7f) + 24);
+  if (ui_.button({r.x + pad, cy, bw, bh}, izin_.tombol)) confirmIzin();
+  if (ui_.button({r.x + pad + bw + 8, cy, 70, bh}, "Batal")) izin_.open = false;
+  char sisa[16]; std::snprintf(sisa, sizeof sisa, "%d s", (int)std::ceil(izin_.until - now));
+  text_.draw(std::string("Enter / Esc   ") + sisa, r.x + r.w - pad - text_.measure(std::string("Enter / Esc   ") + sisa, 0.62f), cy + 4, {0.7f, 0.7f, 0.7f, 1}, 0.62f);
+  float frac = (float)((izin_.until - now) / 12.0);
+  text_.rect(r.x, r.y + r.h - 4, r.w * frac, 4, {1, 0.7f, 0.2f, 0.9f});
 }
 
 void Game::pushMessage(const std::string& s) {

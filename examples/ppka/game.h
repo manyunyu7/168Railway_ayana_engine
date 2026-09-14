@@ -22,6 +22,7 @@
 #include "engine/world/terrain.h"
 #include "engine/world/track_graph.h"
 #include "engine/world/train_visual.h"
+#include "examples/ppka/camera_rig.h"
 #include "examples/ppka/compass.h"
 #include "examples/ppka/panel_view.h"
 #include "examples/ppka/ui.h"
@@ -53,7 +54,7 @@ private:
   void flipPoint(const std::string& id);
   void openRouteMenu(const std::string& sigId, float sx, float sy);   // beginner mode: destinations
   void chooseRoute(int index);
-  void closeMenus() { menu_.open = false; clockPrompt_ = false; confirmHapus_ = false; }
+  void closeMenus() { menu_.open = false; clockPrompt_ = false; confirmHapus_ = false; izin_.open = false; }
   void selectTrain(const std::string& id, bool jump);
   void refreshDetail(bool force = false);
   void setTimeScale(double k);
@@ -73,6 +74,16 @@ private:
   vec3 stationScene_;               // scene position of the (first) station
   ModelRenderer renderer_; Sky sky_; TextRenderer text_; Lighting light_;
   OrbitCamera orbit_; FlyCamera fly_; bool useFly_ = false;
+  // camera modes (§9.1): bebas = orbit_/fly_, others = rig_. Subject = selected train, else subjectId_, else nearest.
+  CameraRig rig_; std::string subjectId_; float worldW_ = 8000;
+  void setCamMode(CamMode m);
+  void cycleSubject(int dir);
+  bool subjectPath(TrainPath& out, std::string* idOut = nullptr) const;
+  void updateCamera(float dt);
+  vec3 camEye() const;
+  mat4 camView() const;
+  mat4 camProj(float aspect) const;
+  float camFovY() const;
   double timeScale_ = 1; bool paused_ = false; double simAccum_ = 0;
   double mxPrev_ = 0, myPrev_ = 0; bool dragging_ = false, clickArmed_ = false; double clickX_ = 0, clickY_ = 0;
   bool keyPrev_[512] = {};
@@ -108,6 +119,11 @@ private:
   std::string selectedTrain_; Json detail_; double detailAt_ = -1; bool confirmHapus_ = false;
   struct RouteMenu { bool open = false; std::string signal, name; Json data; std::vector<std::string> lit; float x = 0, y = 0; } menu_;
   bool clockPrompt_ = false; std::string clockText_;
+  // permission card (ui/rute.ts tawarkanIzin): shown when a route command returns needsConfirm
+  struct Izin { bool open = false; std::string kind, judul, rute, akibat, batas, tombol; Json confirm; double until = 0; } izin_;
+  void handleRouteResponse(const Json& r, const std::string& what);
+  void confirmIzin();
+  void drawIzinCard(int w, int h);
 };
 
 } // namespace eng

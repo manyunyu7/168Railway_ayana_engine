@@ -1,4 +1,5 @@
 #include "engine/core/json.h"
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -105,5 +106,27 @@ Json Json::parse(std::string_view text, std::string* error) {
   if (!ps.parseValue(v)) { if (error) *error = ps.err; return Json{}; }
   return v;
 }
+
+static void dumpTo(const Json& v, std::string& o) {
+  switch (v.type) {
+    case Json::Type::Null: o += "null"; break;
+    case Json::Type::Bool: o += v.b ? "true" : "false"; break;
+    case Json::Type::Number: { char b[32]; std::snprintf(b, sizeof b, v.num == (double)(long long)v.num ? "%.0f" : "%.10g", v.num); o += b; break; }
+    case Json::Type::String: {
+      o += '"';
+      for (unsigned char c : v.str) {
+        if (c == '"' || c == '\\') { o += '\\'; o += (char)c; }
+        else if (c == '\n') o += "\\n"; else if (c == '\r') o += "\\r"; else if (c == '\t') o += "\\t";
+        else if (c < 0x20) { char b[8]; std::snprintf(b, sizeof b, "\\u%04x", c); o += b; }
+        else o += (char)c;
+      }
+      o += '"'; break;
+    }
+    case Json::Type::Array: { o += '['; bool first = true; for (const Json& e : v.arr) { if (!first) o += ','; first = false; dumpTo(e, o); } o += ']'; break; }
+    case Json::Type::Object: { o += '{'; bool first = true; for (const auto& [k, e] : v.obj) { if (!first) o += ','; first = false; Json ks; ks.type = Json::Type::String; ks.str = k; dumpTo(ks, o); o += ':'; dumpTo(e, o); } o += '}'; break; }
+  }
+}
+
+std::string Json::dump() const { std::string o; dumpTo(*this, o); return o; }
 
 } // namespace eng

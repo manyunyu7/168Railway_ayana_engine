@@ -35,6 +35,7 @@ struct Json {
   std::string stringOr(std::string d) const { return type == Type::String ? str : d; }
 
   static Json parse(std::string_view text, std::string* error = nullptr);
+  std::string dump() const;   // compact serialisation (round-trips what parse accepts)
 };
 
 } // namespace eng

@@ -100,13 +100,31 @@ along the current point settings.
   `{ok:false, reason:<TolakRute.alasan>, tolak:{alasan,segs,wesel,sinyal,ruteLawan,ka}, semua:[...]}`
   (`semua` = every obstruction at once), or `{ok:true, status:"set", route}` /
   `{ok:true, status:"minta"}` (single-track block: request sent, route forms when the neighbour
-  answers "aman"). Optional `sepurSalah:true` = force the wrong-line path the player can confirm.
+  answers "aman"). Optional `sepurSalah:true` = force the wrong-line path (only after the card below).
+- **Permission cards** (`ui/rute.ts tawarSepurSalah / tawarIzinTerisi / tawarIzinIkut / tawarBatalLawan`):
+  the cases the web offers as a card instead of setting or refusing outright come back as
+  `{ok:false, reason:"perlu izin", needsConfirm:{kind, judul, rute, akibat, batas, tombol, confirm}}`
+  (rejection fields `tolak`/`semua` included where they exist). `kind` = `sepurSalah` (trace/candidate
+  against a direction marker), `izinTerisi` (occupied block, calling-on), `mengikuti` (block still held
+  by a same-direction route, `Interlocking.bolehMengikuti`), `batalLawan` (conflicting route that can be
+  cancelled). `judul/rute/akibat/batas/tombol` is the card text in the web's wording. `confirm` is the
+  command to send when the player agrees — the original command plus the permission flags
+  (`izin:true` = card answered, `sepurSalah:true`, `izinTerisi:true`, `batalLawan:<routeId>` = cancel
+  that route first) — either verbatim or wrapped: `{"cmd":"confirm","of":<confirm>}`. Confirming one
+  card may return the next one (wrong line, then occupied). Success responses carry `sepurSalah` /
+  `izinTerisi` telling which permission the route was set with.
 
 ### `{"cmd":"set_route","from":"SKP MT","to":"SKP K2B"}`
 Beginner mode: choose among `findRoutes` candidates. `to` matches `exitLabel`, exit signal id or name;
 or pass `index`. Unknown target → `{ok:false, reason:"tak ada kandidat", candidates:[...]}`.
-Optional `izinTerisi:true` (calling-on: ignore occupancy only), `sepurSalah:true`.
-Success/rejection shapes are the same as `click_signal`.
+Optional `izinTerisi:true` (calling-on: ignore occupancy only), `sepurSalah:true`, `izin:true` (cards answered).
+With `index` (and no `to`) the candidate list is the **`route_menu` list** (dedup + sorted), so a menu pick
+round-trips; with `to` it is the raw `findRoutes`. Success/rejection/`needsConfirm` shapes are the same
+as `click_signal`; a wrong-line candidate without `izin` returns the `sepurSalah` card first.
+
+### `{"cmd":"confirm","of":{...}}`
+Answers a permission card: dispatches `of` (a `click_signal` / `set_route` command, normally
+`needsConfirm.confirm` verbatim) with `izin:true`. Response = that command's response.
 
 ### `{"cmd":"routes","id":"SKP MT"}`
 Lists candidates with `blocked` = `whyBlocked` result or null.
@@ -192,6 +210,6 @@ state is needed. Segment sepur/jalur come from the renderer's lane classificatio
 (`SimTrain{... vehicles[{model,sarana,kind,length,x,y,heading,seg,s,x1,y1,x2,y2,seg2,s2}]}`, `SimPoint{id,setting,lockedBy}`, `SimSignal{id,aspect}`, `SimRoute{id,entry,exit,exitLabel,segs,released}`,
 `SimOccupancy{seg, intervals[{train,a,b}]}`, `SimJpl{id,closed}`, `SimTrain.tungguS40/s40Siap`, new log lines); `preview(signal)` wraps the `preview` command.
 Player commands: `setTimeScale(k)`, `setClock("HH:MM")`, `beriS40(train)`, `hapusKA(train)`, `trainDetail(train)`,
-`routeMenu(signal)` (raw `Json`), and `panel()` → typed `PanelLayout` (segments/points/signals/berths/portals/
+`routeMenu(signal)` (raw `Json`), `confirm(of)` (answers a permission card; `Json::dump` re-serialises `needsConfirm.confirm`), and `panel()` → typed `PanelLayout` (segments/points/signals/berths/portals/
 stations/jalur, `posOnSeg(seg, s, x, y, tx, ty)` interpolating the schematic polyline; cached after the first call). Raw responses stay available in `lastResponse()`; `world()`/`summary()` keep the load
 result. `examples/simtest` exercises everything and prints latency/size statistics.

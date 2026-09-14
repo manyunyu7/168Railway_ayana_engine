@@ -354,16 +354,23 @@ function cmdTrainDetail(c: any) {
 /** Beginner-mode menu (ui/rute.ts `kandidatMenu`): findRoutes deduplicated per destination
  *  (straightest wins), entry signals sorted by track number, wrong-line entries last; each
  *  with `blocked` = whyBlocked or null. */
+/** ui/rute.ts kandidatMenu: dedup per destination (straightest), entry signals by track number,
+ *  wrong-line entries last. Shared by route_menu and set_route {index} so the indices agree. */
+function menuCandidates(sig: any, diag?: any): any[] {
+  const cands: any[] = dedupPerTujuan(world, ixl.findRoutes(sig, diag, true));
+  if (isSinyalMasuk(sig.name))
+    cands.sort((a, b) => (nomorJalurSinyal(a.exitLabel) ?? 99) - (nomorJalurSinyal(b.exitLabel) ?? 99));
+  cands.sort((a, b) => Number(!!a.sepurSalah) - Number(!!b.sepurSalah));
+  return cands;
+}
+
 function cmdRouteMenu(c: any) {
   requireSession();
   const sig = resolveSignal(String(c.signal ?? c.id));
   const active = ixl.routeFromSignal(sig.id);
   const manual = sig.signalType === 'interlocking' || sig.signalType === 'bersama';
   const diag = { explored: new Set<string>(), prunes: [] as any[] };
-  let cands: any[] = manual ? dedupPerTujuan(world, ixl.findRoutes(sig, diag, true)) : [];
-  if (isSinyalMasuk(sig.name))
-    cands.sort((a, b) => (nomorJalurSinyal(a.exitLabel) ?? 99) - (nomorJalurSinyal(b.exitLabel) ?? 99));
-  cands.sort((a, b) => Number(!!a.sepurSalah) - Number(!!b.sepurSalah));
+  const cands: any[] = manual ? menuCandidates(sig, diag) : [];
   const byReason = new Map<string, number>();
   for (const p of diag.prunes) byReason.set(p.reason, (byReason.get(p.reason) ?? 0) + 1);
   return {
@@ -478,9 +485,50 @@ function tolakToJson(tolak: any) {
     ruteLawan: tolak.ruteLawan ?? null, ka: tolak.ka ?? null };
 }
 
-/** Same gate the UI uses (ui/rute.ts trySetRoute), minus the confirmation cards. */
-function setCandidate(cand: any) {
+/** Permission cards (ui/rute.ts tawarSepurSalah / tawarIzinTerisi / tawarIzinIkut / tawarBatalLawan,
+ *  text from there). `confirm` is the command the client re-sends through `confirm` once the
+ *  player pressed the button: the same command plus the permission flag (`izin:true` = card
+ *  answered, `izinTerisi:true` = calling-on, `sepurSalah:true` = forced wrong-line trace,
+ *  `batalLawan:<routeId>` = cancel the opposing route first). */
+function needsConfirm(kind: string, judul: string, rute: string, akibat: string, batas: string, tombol: string, confirm: any) {
+  return { ok: false, reason: 'perlu izin', needsConfirm: { kind, judul, rute, akibat, batas, tombol, confirm } };
+}
+
+/** ui/rute.ts jarakPenghuni: how far the occupant stands ahead of the signal. */
+function jarakPenghuni(cand: any): string {
+  const sig = world.trackside.get(cand.entrySignal);
+  if (!sig) return '';
+  const d = world.distToTrainAhead({ segId: sig.segId, s: sig.s, dir: sig.dir }, 4000, '');
+  if (d === null) return '';
+  return d < 60 ? `, berdiri hanya ${Math.round(d)} m di muka sinyal — KA-mu praktis tak akan bergerak`
+    : `, berdiri ${Math.round(d)} m di muka sinyal`;
+}
+
+/** ui/rute.ts sisaHalangan: obstructions other than occupancy that will still refuse. */
+function sisaHalangan(cand: any): string {
+  const lain = ixl.semuaHalangan(cand).filter((t: any) => t.alasan !== 'blok terisi');
+  if (!lain.length) return '';
+  return ` Izin ini TIDAK cukup: masih terhalang ${lain.map((t: any) => (t.ruteLawan ? `rute ${t.ruteLawan.entry} → ${t.ruteLawan.exit}` : t.alasan)).join(', ')}.`;
+}
+
+function kartuSepurSalah(sigId: string, dm: string, confirm: any) {
+  const sig = world.trackside.get(sigId);
+  return needsConfirm('sepurSalah', 'Sepur salah', `${sig?.name ?? sigId} → sepur arus lawan`,
+    `Jalur melawan Penanda Arah ${dm}. Rute dibentuk dengan aspek KUNING dan WAJIB warta izin dari stasiun depan — di petak itu tak ada sinyal blok yang menghadapmu.`,
+    'Penanda arah adalah satu-satunya proteksi adu muka di petak ini. Sesudah ini, kamu yang menjaganya.',
+    'Paksa sepur salah', confirm);
+}
+
+/** Same gate the UI uses (ui/rute.ts trySetRoute). `c` = the originating command (re-sent as
+ *  `confirm` with the flags); without `c.izin` the player-permission cases return `needsConfirm`. */
+function setCandidate(cand: any, c: any) {
   const entry = world.trackside.get(cand.entrySignal);
+  const rute = `${entry?.name ?? cand.entrySignal} → ${cand.exitLabel}`;
+  if (cand.sepurSalah && !c.izin) return kartuSepurSalah(cand.entrySignal, cand.dm ?? 'petak', { ...c, sepurSalah: true, izin: true });
+  if (c.batalLawan) {
+    if (!ixl.routes.has(c.batalLawan)) return { ok: false, reason: 'rute tak ada', route: c.batalLawan };
+    if (!ixl.cancelRoute(c.batalLawan)) return { ok: false, reason: 'sedang dilalui', route: c.batalLawan, ka: ixl.dapatDibatalkan(c.batalLawan).ka ?? null };
+  }
   const holding = ixl.ruteMenahanSinyal(cand.entrySignal);
   if (holding) {
     const p = ixl.dapatDibatalkan(holding.id);
@@ -490,11 +538,32 @@ function setCandidate(cand: any) {
   const tolak = ixl.whyBlocked(cand);
   if (tolak) {
     const all = ixl.semuaHalangan(cand).map(tolakToJson);
-    return { ok: false, reason: tolak.alasan, tolak: tolakToJson(tolak), semua: all };
+    const rejected = { ok: false, reason: tolak.alasan, tolak: tolakToJson(tolak), semua: all, izinTerisi: !!cand.izinTerisi };
+    if (tolak.alasan === 'blok terisi' && !cand.izinTerisi) {
+      const ka = trainLabel(tolak.ka);
+      return { ...rejected, ...needsConfirm('izinTerisi', 'Izin masuk sepur terisi', rute,
+        `Jalur ditempati ${ka}${jarakPenghuni(cand)}. Sinyal diberi aspek KUNING; KA merayap masuk dan berhenti di belakang rangkaian yang berdiri.`,
+        `Izin ini HANYA melewati okupansi; bentrok rute aktif & wesel terkunci tetap menolak.${sisaHalangan(cand)}`,
+        'Beri izin', { ...c, izinTerisi: true, izin: true }) };
+    }
+    const lawan = tolak.ruteLawan;
+    if (lawan?.id && ixl.routes.has(lawan.id) && !cand.izinTerisi && ixl.bolehMengikuti(cand, ixl.routes.get(lawan.id))) {
+      return { ...rejected, ...needsConfirm('mengikuti', 'Izin masuk petak belum bebas', rute,
+        `Petak masih dikuasai rute ${lawan.entry} → ${lawan.exit} yang SEARAH dan setujuan${jarakPenghuni(cand)}. Sinyal diberi aspek KUNING; KA berjalan hati-hati di belakangnya.`,
+        'Hanya sah karena tujuan bloknya sama (searah) dan tak ada wesel yang diminta berbeda. Jarak ke KA di depan tetap dijaga batas keras masinis.',
+        'Izinkan mengikuti', { ...c, izinTerisi: true, izin: true }) };
+    }
+    if (lawan?.id && ixl.dapatDibatalkan(lawan.id).bisa) {
+      return { ...rejected, ...needsConfirm('batalLawan', 'Bentrok rute aktif', rute,
+        `Segmennya sudah dikunci rute ${lawan.entry} → ${lawan.exit}. Batalkan rute itu (sinyalnya kembali merah), lalu rutemu dibentuk.`,
+        'Pembatalan ditolak bila sudah ada KA di dalam rute tersebut — tunggu sampai lewat.',
+        'Batalkan rute lawan', { ...c, batalLawan: lawan.id, izin: true }) };
+    }
+    return rejected;
   }
   const hasil = ixl.ajukan(cand, session.clock, true);
   if (hasil === 'minta') return { ok: true, status: 'minta', detail: 'block requested, waiting for "aman" from the next station' };
-  if (hasil) return { ok: true, status: 'set', route: hasil.id, exitLabel: cand.exitLabel };
+  if (hasil) return { ok: true, status: 'set', route: hasil.id, exitLabel: cand.exitLabel, sepurSalah: !!cand.sepurSalah, izinTerisi: !!cand.izinTerisi };
   return { ok: false, reason: 'ditolak', detail: 'block request refused (cooldown) or route not settable' };
 }
 
@@ -524,17 +593,21 @@ function cmdClickSignal(c: any) {
   }
   const tr = ixl.traceByPoints(sig, !!c.sepurSalah);
   if (!tr.cand) {
+    if (tr.dm && !c.sepurSalah)
+      return { action: 'set', signal: sig.id, path: tr.path, dm: tr.dm, ...kartuSepurSalah(sig.id, tr.dm, { cmd: 'click_signal', id: sig.id, sepurSalah: true, izin: true }) };
     return { ok: false, action: 'set', signal: sig.id, reason: tr.dm ? 'melawan penanda arah' : (tr.alasan ?? 'jalur belum menerus'),
       path: tr.path, wesel: tr.wesel ?? null, dm: tr.dm ?? null };
   }
-  return { action: 'set', signal: sig.id, path: tr.path, ...setCandidate(tr.cand) };
+  const cand = c.izinTerisi ? { ...tr.cand, izinTerisi: true } : tr.cand;
+  return { action: 'set', signal: sig.id, path: tr.path, ...setCandidate(cand, { cmd: 'click_signal', id: sig.id, sepurSalah: !!c.sepurSalah, izin: !!c.izin, izinTerisi: !!c.izinTerisi, batalLawan: c.batalLawan ?? undefined }) };
 }
 
 /** Beginner mode: route from a signal to a named exit (exitLabel / exit signal id or name). */
 function cmdSetRoute(c: any) {
   requireSession();
   const sig = resolveSignal(String(c.from));
-  const cands = ixl.findRoutes(sig, undefined, !!c.sepurSalah);
+  // `index` counts the route_menu list (dedup + sorted, wrong-line included) so a menu pick round-trips
+  const cands = typeof c.index === 'number' && c.to === undefined ? menuCandidates(sig) : ixl.findRoutes(sig, undefined, !!c.sepurSalah);
   const to = c.to === undefined ? null : String(c.to);
   let cand = null;
   if (to !== null) {
@@ -546,7 +619,8 @@ function cmdSetRoute(c: any) {
       candidates: cands.map((x: any) => ({ exitLabel: x.exitLabel, exitSignal: x.exitSignal, dist: r2(x.dist), segs: x.segs.length })) };
   }
   if (c.izinTerisi) cand = { ...cand, izinTerisi: true };
-  return { signal: sig.id, ...setCandidate(cand) };
+  const orig = { cmd: 'set_route', from: sig.id, to: c.to, index: c.index, sepurSalah: !!c.sepurSalah, izinTerisi: !!c.izinTerisi, izin: !!c.izin, batalLawan: c.batalLawan ?? undefined };
+  return { signal: sig.id, ...setCandidate(cand, orig) };
 }
 
 function cmdRoutes(c: any) {
@@ -608,6 +682,11 @@ function handle(c: any) {
     case 'state': return cmdState();
     case 'click_signal': return cmdClickSignal(c);
     case 'set_route': return cmdSetRoute(c);
+    case 'confirm': {   // the card's button: re-issue the stored command (needsConfirm.confirm) with its flags
+      const of = c.of;
+      if (!of || (of.cmd !== 'click_signal' && of.cmd !== 'set_route')) throw new Error('confirm: `of` must be a click_signal/set_route command');
+      return handle({ ...of, izin: true });
+    }
     case 'routes': return cmdRoutes(c);
     case 'preview': return cmdPreview(c);
     case 'cancel_route': return cmdCancelRoute(c);

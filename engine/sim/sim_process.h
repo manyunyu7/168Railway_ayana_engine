@@ -102,6 +102,7 @@ public:
   const Json& hapusKA(const std::string& train);                     // force-remove a train (-2000)
   const Json& trainDetail(const std::string& train);                 // train sheet payload
   const Json& routeMenu(const std::string& signal);                  // beginner-mode destinations
+  const Json& confirm(const Json& of);                               // answer a permission card: re-issues needsConfirm.confirm
   const PanelLayout& panel();                                        // schematic layout (cached after first call)
 
   const Json& lastResponse() const { return last_; }
