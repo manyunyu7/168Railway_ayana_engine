@@ -6,7 +6,13 @@ do yet. Editor/surveyor tools are listed but deliberately not ported.
 
 **Status 2026-09-14:** recommended-order items 1–5 are implemented (`src/tiga-ayana/labelAyana.ts`, `pengaturanAyana.ts`,
 `duniaAyana.ts`; ABI `eng_set_paused`, `eng_set_layer`, `eng_train_screen` for every train, `eng_camera_json.subject`).
-Rows below are updated to **present** where that landed; the rest is still the list.
+Items 9–12 landed later the same day: quality tiers / dpr cap / tree density (`eng_set_quality`, `eng_set_tree_radius`,
+`eng_set_tree_density`), touch input (`sentuhAyana.ts`: MOVE/ROTATE, pinch, walk joystick), compass settings + per-mode
+slider + `Pindah sisi` (`eng_compass_settings`, `eng_set_rig_param`/`eng_get_rig_param`, `eng_side_flip`), imagery source /
+sky time / theme (`eng_reset_imagery`, `eng_set_sky_time`, `eng_set_theme`), the GLB fallback (`eng_model_begin_glb`: a map
+without prebuilt `.emod` loads the plain GLBs from `asetUrl()`), the in-world meja panel (`eng_set_panel`), the rail atlas
+(`eng_rail_atlas_rgba`), walk boxes + Space, `refDistance`/`cabView`/`benang`. Rows below are updated to **present** where
+that landed; the rest is still the list.
 
 Sources read: `duniaAyana.ts` (592 lines), `src/main.ts` (`// AYANA:` dispatch, `KonteksDunia3D` wiring at 289-398),
 `src/tiga/dunia3d.ts`, `dunia3dKonst.ts`, `hud3d.ts`, `uji3dLabel.ts` (the train cards — `keretaVisual3d.ts` only calls it
@@ -50,7 +56,7 @@ Two facts shape most rows:
 | Route/occupancy ribbons | green locked route, red occupied section; layer `pita` (default **off**), hidden in kabin | present (toggle `eng_set_layer("pita")`, default off) | eng `route_visual.cpp`; three default off | S | add the toggle (see §2) |
 | Langsir plan ribbons | yellow dashed ribbons per leg of `session.putarLok.overlay()`, active leg bright | missing | ref `hud3d.ts:615-633` | M | needs a new state field + ribbon style in `route_visual` |
 | Floating meja layan (`MejaApung3D`) | `🗺 Meja M` button / pil (code + aspect lamps + `N tugas`) / window (station select, S/M/L, dock, opacity, zoom; **click signal/wesel = route/toggle**); `M` key; persisted `ppka-meja-apung`; hidden ≤ 560 px short side | missing (stub; `laciBody` filled with a different body) | ref `mejaApung3d.ts`, `dunia3d.ts:1269-1273,1452-1462` | M | pure DOM/2D canvas; needs `ctx3.stasiunPemain/tugasJml/klikSinyal/klikWesel` (all in the context) and the camera focus for "nearest station" (`eng_camera_json` has it) |
-| In-world meja layan board (`mejaLayan3d.ts`) + `⤴ Angkat meja` | schematic drawn on the station GLB desk, clickable within 8 m | missing | ref `mejaLayan3d.ts`, `dunia3d.ts:885-894,1822-1836,2060-2064` | L | needs a dynamic texture upload ABI; low player impact |
+| In-world meja layan board (`mejaLayan3d.ts`) + `⤴ Angkat meja` | schematic drawn on the station GLB desk, clickable within 8 m | present (board; `⤴ Angkat meja` / click-on-board not ported) | eng `meja_board`, `eng_set_panel` | — | |
 | Status toasts | `3D siap — klik label KA…`, `Belum ada KA di lintas`, mode hints on `setModeKam`, `Subjek kamera: KA n`, wheel readout in locked modes | present (except the wheel readout) | ref `dunia3d.ts:1229,1620,1848,1881-1886,2260`; adapter :196,:493 | S | |
 | Loading progress + per-file drawer | stage texts + `Mengunduh model sarana n/N — X MB` | present | adapter `muat()` uses `progres`/`berkas` | — | texts differ; fine |
 | Compass readout `#kompas-koord` | `fokus X Z · arah NNN°` bottom-left in bebas | missing | ref `kompas3d.ts:239-243,528-529` | S | `eng_camera_json.azimuth` + `look` already give the data |
@@ -70,21 +76,21 @@ else in the drawer is gone.
 | Layer `pita` Pita rute (default off) | route/occupancy ribbons | present (`eng_set_layer`) | eng `route_visual` has no visibility flag | S | add `eng_set_layer("pita", on)` |
 | Layer `wesel` Panah wesel (default off; hidden arrows are also not clickable) | switch arrows + padlock | present (`eng_set_layer`, pick skips hidden arrows) | eng `point_visual` always drawn | S | same `eng_set_layer` |
 | Layer `tepi` Penanda tepi (default off) | edge markers | present | ref `uji3dLabel.ts:558` | S | |
-| Layer `benang` Benang selalu | iconic yellow rail line always vs only when far (700/500 m hysteresis) | missing | ref `dunia3d.ts:4057-4063`; PARITY: line itself ❌ | M | line first, toggle after |
-| Quality tier `#d3-mutu` auto/Penuh/Tinggi/Sedang/Hemat/Minimum | dpr cap 3/1.6/1.35/1.1/1, tree radius 3200…900 m, clouds on/off, detail imagery rings z16+z17/z16/z14, touch fog/tile radii; auto ladder (24 ms down / 13 ms up); touch starts and caps at Sedang; key `pk-3d-mutu` | missing | ref `dunia3dKonst.ts:716-793`, `dunia3d.ts:4285-4309,4406-4447` | M | engine has no quality knob; `eng_resize(w,h,dpr)` can already cap dpr from JS (S); tree radius/cloud/detail rings need `eng_set_quality(tier)` |
-| Kerapatan pohon `#d3-pohon` 0…16× (default 2, key `pk-3d-pohon`) | tree density | missing | ref `dunia3d.ts:3355-3366,3537-3542`; eng `vegetation.h` `SPACING_BASE` | S | `eng_set_tree_density(k)` + rebuild |
-| Citra tanah `#d3-tanah` satelit/peta/petaPolos(default)/voyager/osm/topo/polos (key `pk-3d-tanah`) | ground imagery source; default in three is the plain CARTO map, not satellite | missing (satellite only) | ref `dunia3dKonst.ts:873-965`, `dunia3d.ts:2998-3008`; adapter `gantiSumberTanah` stub :591 | M | the browser already decodes tiles (`ubinAyana.ts`); the engine only needs a different URL family → adapter-side, plus a "polos" no-imagery colour; the theme-aware CARTO variants re-fetch on theme change |
-| Waktu langit `#d3-waktu` auto/jam/siang (key `pk-3d-waktu-langit`) | sun/sky follow the duty clock or fixed noon | missing | ref `dunia3d.ts:3340-3347,2410-2420` | S | adapter can substitute `clock` in the state it sends (`eng_set_state`) |
+| Layer `benang` Benang selalu | iconic yellow rail line always vs only when far (700/500 m hysteresis) | present (`eng_set_layer("benang")` → `WorldScene::benangAlways`; drawer row) | eng `rail_builder`; adapter `hudAyana.ts` LAPIS_MESIN | — | |
+| Quality tier `#d3-mutu` auto/Penuh/Tinggi/Sedang/Hemat/Minimum | dpr cap 3/1.6/1.35/1.1/1, tree radius 3200…900 m, clouds on/off, detail imagery rings z16+z17/z16/z14, touch fog/tile radii; auto ladder (24 ms down / 13 ms up); touch starts and caps at Sedang; key `pk-3d-mutu` | present (dpr cap via `eng_resize`, tree radius + clouds via `eng_set_quality`/`eng_set_tree_radius` incl. the touch `JARAK_SENTUH` radii, auto ladder 45/240 frames, `mutuAwal`/`plafonMutu`) | adapter `duniaAyana.ts` `timbangMutu`/`setMutu`; the detail imagery rings and touch fog/tile radii stay the engine's own (`terrain.h` radii) | — | |
+| Kerapatan pohon `#d3-pohon` 0…16× (default 2, key `pk-3d-pohon`) | tree density | present | `eng_set_tree_density(k)` → `Vegetation::setDensity` (every cell re-scattered) | — | |
+| Citra tanah `#d3-tanah` satelit/peta/petaPolos(default)/voyager/osm/topo/polos (key `pk-3d-tanah`) | ground imagery source; default in three is the plain CARTO map, not satellite | present (`ubinAyana.ts` picks the `SUMBER_TANAH` URL family + theme; `eng_reset_imagery(flat)` drops the resident tiles so they are re-fetched; `polos` = every tile request answered by `eng_terrain_tile_fail`, tiles painted in `TEMA.hampar`) | adapter `gantiSumberTanah`; eng `Terrain::dropImagery/setGroundColors` | — | the vegetation mask follows whatever imagery is resident (as three: trees only from satellite-like pixels; CARTO tiles rarely pass the ExG test) |
+| Waktu langit `#d3-waktu` auto/jam/siang (key `pk-3d-waktu-langit`) | sun/sky follow the duty clock or fixed noon | present (`eng_set_sky_time(sec)`; `siang` = 09:48 solar ≈ SIANG_KERJA elevation 58°, auto = jam unless `modeSurveyor`) | adapter `terapkanWaktu` (also on `setAlatGame`) | — | |
 | Sky mode Gradien/Atmosfer `#d3-langit` | button is **hidden** in three; forced to gradien | ➖ | ref `dunia3d.ts:3333-3339,1044-1047`; PARITY ➖ | — | not a player-visible gap |
-| Theme dark/light (`#btn-theme`, `body.light`, `TEMA`) | dome colours (overridden by the clock), hemisphere/sun intensity, backdrop plane, fog colour fallback, iconic line colour, CARTO tiles swap; label CSS via `body.light` | partial | ref `dunia3d.ts:1525-1547`, `dunia3dKonst.ts:829-832`; adapter `setTema` no-op :580 | S | sky is clock-driven in both; remaining visible delta = fog/backdrop tint + label CSS (adapter chips use inline dark styles) |
-| Compass: Rotation/Panning `#d3-kompas-rotasi`, speed ½–2× `#d3-kompas-laju`, show reticle `#d3-kompas-tampil` (key `pk-3d-kompas`, `KUNCI_KOMPAS`) | compass behaviour in bebas | wired but off | ref `kompas3d.ts:102-122,258-260`; eng `compass.h` `CompassSettings{rotation, speed, show}` exists but no ABI | S | add `eng_compass_settings(rotation, speed, show)`; drawer UI in the adapter |
-| Per-mode slider `.d3-atur` (jalan Sudut 45–95°, kabin 40–95°, samping Jarak 8–160, atas Tinggi 40–2000, ekor Jarak 10–200) + wheel toast | | partial (wheel only) | ref `dunia3d.ts:3314,3558-3567,1218-1230`; eng `rig.scroll` via `eng_zoom` | S | slider needs `eng_set_rig_param(value)` or reuse `eng_zoom` steps |
-| `↔ Pindah sisi` (samping) | mirror the side camera | wired but off | ref `dunia3d.ts:3311,3484-3488`; eng `camera_rig.h:43` `sisiSamping` (no ABI) | S | |
+| Theme dark/light (`#btn-theme`, `body.light`, `TEMA`) | dome colours (overridden by the clock), hemisphere/sun intensity, backdrop plane, fog colour fallback, iconic line colour, CARTO tiles swap; label CSS via `body.light` | present (`eng_set_theme(dark)`: fog / dome ground blended 20 % towards `TEMA.kabut`, backdrop plane = `TEMA.hampar`; theme-aware CARTO tiles re-fetched) | adapter `setTema`; eng `sun.h` (`Sky::darkTheme`), `Terrain::setGroundColors` | — | iconic line colour stays the engine's |
+| Compass: Rotation/Panning `#d3-kompas-rotasi`, speed ½–2× `#d3-kompas-laju`, show reticle `#d3-kompas-tampil` (key `pk-3d-kompas`, `KUNCI_KOMPAS`) | compass behaviour in bebas | present | `eng_compass_settings(rotation, speed, show)`; drawer rows in `pengaturanAyana.ts` (same markup), persisted via `kompas3d.ts` `bacaSetelan`/`KUNCI_KOMPAS` | — | |
+| Per-mode slider `.d3-atur` (jalan Sudut 45–95°, kabin 40–95°, samping Jarak 8–160, atas Tinggi 40–2000, ekor Jarak 10–200) + wheel toast | | present (`eng_set_rig_param`/`eng_get_rig_param`; wheel/pinch → toast `Jarak: 31 m` + slider refresh; kabin wheel stays eye forward/back as before, no toast) | adapter `aturMode`/`bacaanParam` | — | |
+| `↔ Pindah sisi` (samping) | mirror the side camera | present (`eng_side_flip`) | three also mirrors the orbit azimuth (`orbitAz`), private in `CameraRig` — the side flips, the orbit angle is kept | — | |
 | `🔭 Teropong 4×` lock chip | toggle telescope (vs hold Z) | present | ref `dunia3d.ts:3312,3489-3491,1812` | S | `eng_telescope(1)` held = lock |
 | Load meter `#d3-fps` + `Rincian beban` | fps / draw calls / tiles in the drawer | present (drawer + on-canvas HUD) | adapter :356-361 | S | |
 | Keyboard shortcut list `<details>` | | present | ref `dunia3d.ts:3395-3406` | S | |
-| Mobile MOVE / ROTATE buttons (`#kompas-move/-rotate`, touch only, bebas) | tap = sticky, hold ≥ 260 ms = temporary; MOVE: tap = fly, drag = glide, pinch = zoom; ROTATE: one finger orbit, two fingers dolly/pan | missing | ref `kompas3d.ts:201-236,275-283,302-404` | M | adapter only maps pointer events to left-drag orbit + right button compass; no pinch, no multi-touch |
-| Walk-mode touch joystick (left half thumbstick, `JARI_TUAS` 58 px; right half look) | | missing | ref `dunia3d.ts:1953-2006` | S | `eng_key` synthetic WASD from the stick + `eng_orbit` for look |
+| Mobile MOVE / ROTATE buttons (`#kompas-move/-rotate`, touch only, bebas) | tap = sticky, hold ≥ 260 ms = temporary; MOVE: tap = fly, drag = glide, pinch = zoom; ROTATE: one finger orbit, two fingers dolly/pan | present (`sentuhAyana.ts`: same DOM/CSS; MOVE tap → `eng_compass_click`, drag → `eng_compass_glide`; pinch → `eng_zoom` in every mode; ROTATE one finger = the adapter's orbit drag; two-finger pan not ported) | | — | |
+| Walk-mode touch joystick (left half thumbstick, `JARI_TUAS` 58 px; right half look) | | present (`sentuhAyana.ts`: stick → synthetic `eng_key` W/A/S/D + Shift beyond the ring, right half → `eng_orbit`) | | — | |
 | Sound mixer (`#btn-sound`, `ppka-mix-*`) | global, not 3D | present | `src/ui/hud.ts:215-317` | — | untouched by the renderer |
 | Spatial audio (`penempat`) | engine/horn PannerNode from the camera | present | adapter `penempat()` :531-551 | — | `sumber()` uses y = 0 instead of rail height; negligible |
 | Fullscreen auto (touch) | | present | `src/ui/layarPenuh.ts` — renderer-agnostic | — | |
@@ -125,15 +131,16 @@ web-specific:
 | Far LOD signal dot `v.titik` | | present | PARITY "LOD sphere" | — | |
 | Wesel `skalaWesel = max(1, d/240)` distance scaling, `tirai` curtain within `KABUT_JARAK` | | engine done, adapter not wired | eng `point_visual`; the adapter must set `WorldScene::refDistance` (= `CameraRig::acuan(orbit distance)`) and `cabView` every frame — one small ABI call (`engine_api_polish.cpp` candidate) | S | |
 | Semaphore arm `clunk` sound | | missing | ref `dunia3d.ts:3982-3990` | S | adapter can play `suara.clunk()` on aspect change from the state it already builds |
-| Rail iconic yellow line when far | | engine done, adapter not wired | eng `rail_builder` (needs `refDistance` as above; `benangAlways` = the "Benang selalu" toggle) | S | |
-| Reference corridor atlas `tekstur.rel1067` | three swaps the picture into the rail materials | engine done, adapter not wired | eng `RailBuilder::setAtlas(rhi::Texture)`: the adapter decodes `pilot-rel-1067.jpg` in the browser (flipY, clamp S / repeat T) and hands the RGBA over | S | |
+| Rail iconic yellow line when far | | present (`refDistance` from `CameraRig::acuan` per frame in `eng_frame`; `benangAlways` = the "Benang selalu" toggle) | | — | |
+| Reference corridor atlas `tekstur.rel1067` | three swaps the picture into the rail materials | present (`eng_rail_atlas_rgba`; adapter `muatAtlasRel` decodes `pilot-rel-1067.jpg` with `createImageBitmap({imageOrientation:'flipY'})`) | | — | |
 | Shunting-plan ribbons (`perbaruiPitaLangsir`) | | present | state `langsir[]` (`bridge/sim-state.ts`, copy to `tiga-ayana/simState.ts`) | — | |
-| In-world meja board (`mejaLayan3d.ts`) | station GLB `mejalayan` quad shows the live panel | engine done, adapter not wired | eng `MejaBoard`; needs the `PanelLayout` (`engine/panel.ts`) handed to `WorldScene::setPanelLayout` — an `eng_set_panel(json)` reusing `sim_process.cpp`'s parser | S–M | |
+| In-world meja board (`mejaLayan3d.ts`) | station GLB `mejalayan` quad shows the live panel | present (`eng_set_panel(json)`: the adapter serialises `PanelLayout.build(world)` with `sim-state.ts panelLayoutJson` — the same JSON as the bridge `panel` command, parsed by `sim_state.cpp parsePanelLayout`) | eng `MejaBoard` | — | |
 | Cab interior meshes only in kabin, single-sided skin + translucent glass | | unverified | ref `keretaVisual3d.ts:380-395` | S | check `train_visual` when in kabin (near plane 0.15 m) |
 | Train cull tiers by distance/fog (`cullKA.ts`) | | partial | frustum cull only | S | |
 | Lights dimmer by day, tunnel switch | | partial | PARITY | S | |
 | Shadows, post-processing, weather, stars, night building lights, people, road vehicles, water | none in three either | — | | — | not gaps |
 | Profile step 3 (parallel roadbed pairing), `vegMask` brush | | missing | PARITY | M | engine-wide |
+| Models without a prebuilt `.emod` (`web/build-models.sh` not run for the map's fleet) | three loads the GLB from `asetUrl()` | present (`eng_model_begin_glb`: the plain GLB from `asetUrl('model3d/<berkas>')` parsed by the engine's `loadGlb`; textures still from the KTX2 twin, white placeholder without one; Draco GLBs in `ktx2/` are not parsable) | adapter `layaniModel` | — | `gombong-wns` opens without `public/ayana/models` (smoke `playtest/_cek-ayana-setelan.mjs`) |
 | Paused sim | JPL arms/cloud drift keep animating in the engine while the game is paused | present (`eng_set_paused`) | adapter always passes real `dt`; `session.paused` not forwarded | S | pass `dt = 0` when paused |
 
 ## 5. Editor / surveyor tools — ➖ deliberately not ported
@@ -196,9 +203,12 @@ props panel while 3D is open is not redrawn until the view is reopened (S: call 
 6. **Station bubbles + fly-to** (M): needs one projection ABI (`eng_project` or `eng_scenery_screen`); fly-to is `eng_look_at`.
 7. **Floating meja layan** (M): port `MejaApung3D` as-is (DOM), `M` key, pil badge — the core dispatcher tool in 3D.
 8. **Signal name plates** (M): `eng_signal_screen` + the `hud3d.ts` plate DOM (clustering, click = route).
-9. **Quality tiers + dpr cap + tree density** (M): dpr cap and touch defaults first (S, adapter-side via `eng_resize`), then `eng_set_quality`/`eng_set_tree_density`.
-10. **Mobile touch**: MOVE/ROTATE buttons, pinch zoom, walk joystick (M).
-11. **Compass settings ABI + drawer, Pindah sisi, per-mode slider** (S each, engine fields exist).
-12. **Ground imagery source select + sky time select + theme tint** (S–M, mostly adapter-side).
-13. **Langsir ribbons, signal plate textures/angka, iconic far line, wesel distance scale** — engine side done (see §4; the adapter still has to feed `refDistance`/`cabView`, the `langsir`/`junctions` state fields and the rail atlas); semaphore clunk still missing (adapter-side audio).
-14. In-world meja board and walk collision — engine side done (§3/§4; adapter wiring: panel layout, walk boxes + Space); cab shake done earlier.
+9. ✅ **Quality tiers + dpr cap + tree density** (M): dpr cap and touch defaults first (S, adapter-side via `eng_resize`), then `eng_set_quality`/`eng_set_tree_density`.
+10. ✅ **Mobile touch**: MOVE/ROTATE buttons, pinch zoom, walk joystick (M).
+11. ✅ **Compass settings ABI + drawer, Pindah sisi, per-mode slider** (S each, engine fields exist).
+12. ✅ **Ground imagery source select + sky time select + theme tint** (S–M, mostly adapter-side).
+13. ✅ **Langsir ribbons, signal plate textures/angka, iconic far line, wesel distance scale** — engine + adapter (`refDistance`/`cabView` per frame, `langsir`/`junctions` from the `sim-state.ts` copy, rail atlas); semaphore clunk still missing (adapter-side audio).
+14. ✅ In-world meja board (`eng_set_panel` with `panelLayoutJson` from `sim-state.ts`) and walk collision (walk boxes + Space in `eng_frame`/`eng_key`); cab shake done earlier.
+
+Items 9–12 ✅ (see §2). Still open from the tables: langsir/two-finger pan on ROTATE, semaphore clunk, `#kompas-koord` readout,
+cab arrow/Home/H extras, train cull tiers.
