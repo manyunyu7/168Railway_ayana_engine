@@ -33,6 +33,14 @@ struct GpuModel {
   std::vector<Animation> animations;   // clips kept for node-pose players (see scrubAnimation)
   std::vector<mat4> world;          // per node, computed at upload (static models)
   AABB bounds;
+  // Streamed textures (v6 placeholders, web): per image 1 while the host still owes the texture; the model is
+  // "textured-complete" once every placeholder answered (eng_texture_end) or the host declared that no KTX2 twin
+  // exists (eng_model_textures_unavailable: placeholders become neutral grey). Consumers draw a fallback / skip
+  // the model until textured() — a half-white vehicle or station is never shown.
+  std::vector<uint8_t> texturePending;
+  int texturesPending = 0;
+  bool texturesUnavailable = false;
+  bool textured() const { return texturesPending == 0; }
 
   void upload(const Model& m);      // CPU model may be discarded afterwards
   void destroy();

@@ -669,7 +669,22 @@ KEEP int eng_texture_end(void) {
   g->incoming = {}; g->incomingVar = {};
   if (!t.id) return 0;
   rhi::destroyTexture(m->textures[(size_t)i]); m->textures[(size_t)i] = t;
+  if (i < (int)m->texturePending.size() && m->texturePending[(size_t)i]) { m->texturePending[(size_t)i] = 0; --m->texturesPending; }
   return (int)t.id;
+}
+KEEP void eng_model_textures_unavailable(const char* slot) {
+  GpuModel* m = g && slot ? g->scene.catalog().streamedModel(slot) : nullptr;
+  if (!m) return;
+  m->texturesUnavailable = true;
+  for (size_t i = 0; i < m->texturePending.size() && i < m->textures.size(); ++i) {
+    if (!m->texturePending[i]) continue;
+    // neutral grey (§7.1 loco fallback 0x9aa3ac) instead of the white placeholder; the wrap mode does not matter for 1x1
+    const uint8_t px[4] = {0x9a, 0xa3, 0xac, 255};
+    rhi::Texture t = rhi::createTexture(1, 1, rhi::Format::RGBA8, std::as_bytes(std::span(px)), false, true);
+    if (!t.id) continue;
+    rhi::destroyTexture(m->textures[i]); m->textures[i] = t;
+    m->texturePending[i] = 0; --m->texturesPending;
+  }
 }
 
 } // extern "C"

@@ -33,7 +33,11 @@ rhi::Texture uploadImage(const Image& im) {
 }
 
 void GpuModel::upload(const Model& m) {
-  for (const Image& im : m.images) textures.push_back(uploadImage(im));
+  for (const Image& im : m.images) {
+    textures.push_back(uploadImage(im));
+    texturePending.push_back(im.placeholder() ? 1 : 0);
+    if (im.placeholder()) ++texturesPending;
+  }
   const rhi::Attribute layout[] = {{0, 3, sizeof(Vertex), 0}, {1, 3, sizeof(Vertex), 12}, {2, 2, sizeof(Vertex), 24}};
   for (const Mesh& me : m.meshes) {
     GpuMesh gm;

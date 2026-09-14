@@ -9,7 +9,7 @@ set(AYANA_EXPORTS
   _eng_compass_click _eng_compass_glide _eng_follow_train _eng_cycle_subject _eng_telescope _eng_key _eng_pointer
   _eng_camera_json _eng_pick _eng_hover _eng_object_screen _eng_set_preview _eng_train_screen _eng_alloc _eng_free
   _eng_model_begin _eng_model_fail _eng_supports _eng_image_count _eng_image_source _eng_image_flags
-  _eng_texture_begin _eng_texture_mip _eng_texture_end
+  _eng_texture_begin _eng_texture_mip _eng_texture_end _eng_model_textures_unavailable
   _eng_project _eng_signal_screen _eng_station_screen
   _eng_set_quality _eng_set_tree_radius _eng_set_tree_density _eng_set_sky_time _eng_set_theme _eng_reset_imagery
   _eng_compass_settings _eng_side_flip _eng_set_rig_param _eng_get_rig_param _eng_model_begin_glb

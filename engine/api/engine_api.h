@@ -10,7 +10,8 @@
 //        tiles <map>/sat/<layer>/<z>_<x>_<y>.bin as the camera moves (the host fetches from wherever it likes:
 //        fetch_tiles output, or the tile servers decoded by the browser -> eng_terrain_tile_rgba);
 //        "city" <slug>.json (baked OSM city, optional); "model" <catalog id> (geometry-only .emod, convert
-//        --target web --textures external), then the KTX2 textures through eng_texture_* per image.
+//        --target web --textures external), then the KTX2 textures through eng_texture_* per image (request them
+//        together with the geometry; a model draws as a box / is skipped until every texture landed).
 //   eng_terrain_index(bytes) / eng_terrain_tile(dir, z, x, y, bytes) / eng_terrain_tile_rgba(dir, z, x, y, w, h, px) /
 //        eng_terrain_tile_fail(dir, z, x, y)   the static world is built when the last DEM tile answered (a failed
 //        tile stays flat); every other answer streams in (2 GPU uploads per frame)
@@ -119,6 +120,10 @@ int eng_image_flags(const char* slot, int i);   // wrapS | wrapT << 8 | linear <
 int eng_texture_begin(const char* slot, int image, int width, int height, int format, int mipCount, int srgb, int wrapS, int wrapT);
 int eng_texture_mip(int level, const uint8_t* data, int bytes);
 int eng_texture_end(void);
+// The host has no KTX2 twin for the slot: every placeholder still waiting becomes neutral grey (0x9aa3ac) and the
+// model counts as textured-complete. Until a streamed model IS textured-complete (every placeholder answered by
+// eng_texture_end, or this call) trains draw the sarana-coloured box and hiasan / garis / tree models are skipped.
+void eng_model_textures_unavailable(const char* slot);
 
 // ---- HUD projection (engine_api_hud.cpp) — screen anchors for the host's DOM overlays -------------------
 // Signal name plates, station bubbles and their tethers are DOM; these answer "where on the canvas" for the

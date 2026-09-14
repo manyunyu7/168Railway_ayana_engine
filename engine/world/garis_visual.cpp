@@ -123,6 +123,7 @@ void GarisVisuals::build(const Json& hiasan, AssetCatalog& catalog, const WorldO
 void GarisVisuals::draw(ModelRenderer& r, const Frustum* frustum) {
   for (auto& [id, slot] : slots_) {
     if (slot.mats.empty() || (frustum && !frustum->contains(slot.bounds))) continue;
+    if (!slot.model->textured()) continue;   // textures still streaming
     r.drawInstanced(*slot.model, mat4::identity(), (uint32_t)slot.mats.size());
   }
   for (const ProcMesh& pm : proc_) {

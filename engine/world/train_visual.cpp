@@ -158,6 +158,7 @@ void TrainVisuals::update(const SimState& st, const WorldOrigin& origin, const R
       inst.len = v.length; inst.loco = v.kind == "loco";
       inst.centre = {cx, hy, cz};
       inst.proto = stock_ ? stock_->proto(v.model) : nullptr;
+      if (inst.proto && !inst.proto->textured()) inst.proto = nullptr;   // textures still streaming: sarana-coloured box, never white
       inst.color = boxColor(v.sarana, inst.loco);
       mat4 rot = mat4::rotationY(yawM) * rotationZ(pitchM) * mat4::rotationX(rollM);   // Euler 'YZX'
       const bool kepala = vi == 0 && !rehat, ekor = vi + 1 == nCars && !rehat;

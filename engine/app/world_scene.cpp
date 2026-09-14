@@ -185,7 +185,7 @@ void WorldScene::draw(const mat4& viewProj, const mat4& view, vec3 eye, float fo
   if (layers.pohon) trees_.draw(renderer_, eye, &frustum);
   double hh = std::fmod(clock / 3600.0, 24.0); bool night = hh < 6 || hh >= 18;
   rails_.draw(renderer_, &frustum, refDistance, night, benangAlways);
-  for (const Placed& p : scenery_) if (frustum.contains(p.bounds)) renderer_.draw(*p.model, p.xf, &frustum);
+  for (const Placed& p : scenery_) if (p.model->textured() && frustum.contains(p.bounds)) renderer_.draw(*p.model, p.xf, &frustum);   // skipped while textures stream
   if (meja_.count()) { meja_.update(state_, eye, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count()); meja_.draw(renderer_, eye); }
   signals_.setView(fovY, viewportH, night); trains_.setView(fovY, viewportH, night);
   signals_.draw(renderer_, eye, &frustum);

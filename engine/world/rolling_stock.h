@@ -32,6 +32,12 @@ struct VehicleProto {
   std::vector<mat4> restLocal, restWorld;
   std::vector<LightPoint> lights;   // from the model's light nodes, else the synthetic fallback points
   bool lightsFromModel = false;
+  // Every streamed texture of the body and the attachments arrived (GpuModel::textured); box fallback until then.
+  bool textured() const {
+    if (body && !body->textured()) return false;
+    for (const Attachment& a : parts) if (a.model && !a.model->textured()) return false;
+    return true;
+  }
 };
 
 class RollingStock {

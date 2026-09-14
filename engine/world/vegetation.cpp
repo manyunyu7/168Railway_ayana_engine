@@ -151,6 +151,7 @@ void Vegetation::draw(ModelRenderer& r, vec3 eye, const Frustum* frustum) {
   for (ModelSlot& m : models_) {
     if (m.mats.empty()) continue;
     rhi::updateBuffer(m.instances, std::as_bytes(std::span(m.mats)));
+    if (!m.model->textured()) continue;   // textures still streaming
     r.drawInstanced(*m.model, mat4::identity(), (uint32_t)m.mats.size());
   }
   stats.drawn = total;
