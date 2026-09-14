@@ -1,6 +1,12 @@
 # Ayana Engine — a from-scratch 3D engine for the 168Railway PPKA Simulator
 
-![Mojokerto station in the engine](docs/screenshot-mojokerto.jpg)
+<p align="center">
+  <img src="docs/screenshot-mojokerto.jpg" width="49%" alt="Mojokerto station in the engine">
+  <img src="docs/screenshot-bekasi.jpg" width="49%" alt="Bekasi with the AI dispatcher">
+</p>
+<p align="center">
+  <em>Mojokerto station</em> &nbsp;&nbsp;&nbsp;&nbsp; <em>Bekasi with the AI dispatcher</em>
+</p>
 
 Ayana is a small C++20 game engine written from zero for the **PPKA Simulator** (a train-dispatcher
 game): no Unity, no Godot, no three.js. It renders the simulator's real maps, rolling stock and
@@ -27,7 +33,6 @@ swapped for a native library later without touching the renderer.
 | Camera | orbit, free-fly, Trainz-style compass (right-click focus, glide, Ctrl+arrows) |
 | HUD | clock, score, time scale, train list, projected train labels, message log |
 
-![Bekasi with the AI dispatcher](docs/screenshot-bekasi.jpg)
 
 ## Build (macOS)
 
