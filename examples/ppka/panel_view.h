@@ -2,18 +2,18 @@
 // (port of the web panel view: src/render/renderer.ts panelMode + src/tiga/mejaKanvas.ts).
 // Layout comes from the bridge `panel` command (engine/panel.ts PanelLayout); dynamic state
 // (aspects, point settings, locked routes, occupancy, trains) from the per-step SimState.
-// Pure drawing + hit-testing: clicks only NAME a signal/point id, Game acts on them.
+// Pure drawing + hit-testing: clicks only NAME a signal/point id, Game acts on them. The schematic itself is
+// engine/world/meja_board.h panelDraw (shared with the in-world board); this class keeps the screen rectangle,
+// the camera and the input.
 #pragma once
 #include "engine/render/text.h"
 #include "engine/sim/sim_process.h"
+#include "engine/world/meja_board.h"
 #include "examples/ppka/ui.h"
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace eng {
-
-struct PanelHit { std::string signalId, pointId; float sx = 0, sy = 0; };
 
 class PanelView {
 public:
@@ -41,10 +41,10 @@ public:
   bool screenPos(const std::string& id, bool isSignal, int w, int h, float& sx, float& sy) const;
 
 private:
-  void toScreen(float px, float py, int w, int h, float& sx, float& sy) const;
+  PanelFrame frame(int w, int h) const { UiRect r = rect(w, h); return {r.x, r.y, r.w, r.h}; }
+  void toScreen(float px, float py, int w, int h, float& sx, float& sy) const { if (lay_) panelToScreen(*lay_, cam_, frame(w, h), px, py, sx, sy); }
   const PanelLayout* lay_ = nullptr;
-  float camX_ = 0, camY_ = 0, zoom_ = 1;   // panel units at the panel centre; px per unit (x)
-  bool fitted_ = false;
+  PanelCamera cam_;
 };
 
 } // namespace eng

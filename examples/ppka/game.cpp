@@ -38,6 +38,7 @@ bool Game::init(Window& win, const GameOptions& opt) {
   if (!started["ok"].boolOr(false)) { std::fprintf(stderr, "start failed\n"); return false; }
   sim_.step(0); applySimState();
   panel_.init(&sim_.panel());
+  scene_.setPanelLayout(&sim_.panel());   // in-world meja boards (station GLB `mejalayan` quads)
   if (std::getenv("ENG_AUTOPANEL")) panel_.visible = true;
   if (const char* m = std::getenv("ENG_MODE")) pemula_ = std::string(m) == "pemula";
   if (const char* f = std::getenv("ENG_FOLLOW")) for (const SimTrain& t : sim_.state().trains) if (t.no == f || t.id == f) subjectId_ = t.id;   // camera subject

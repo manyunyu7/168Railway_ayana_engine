@@ -67,6 +67,9 @@ struct MipData { int width, height; std::span<const std::byte> data; };
 bool    supports(Format f);          // valid after init(); uncompressed formats are always true
 Texture createTextureCompressed(Format f, std::span<const MipData> mips, bool srgb = false,
                                 Wrap wrapS = Wrap::Repeat, Wrap wrapT = Wrap::Repeat);
+// Rewrites the whole level 0 of an RGBA8 texture created with createTexture (same size); regenerates the mip
+// chain when the texture has one (dynamic canvases: the in-world meja board).
+void    updateTextureRGBA(Texture t, int w, int h, std::span<const std::byte> pixels, bool mipmap = true);
 void    destroyTexture(Texture t);
 void    bindTexture(int slot, Texture t);
 

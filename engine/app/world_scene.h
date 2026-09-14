@@ -16,6 +16,7 @@
 #include "engine/world/coords.h"
 #include "engine/world/garis_visual.h"
 #include "engine/world/jpl_visual.h"
+#include "engine/world/meja_board.h"
 #include "engine/world/point_visual.h"
 #include "engine/world/rail_builder.h"
 #include "engine/world/rail_profile.h"
@@ -63,6 +64,11 @@ public:
   // (the web build calls it again once streamed models arrived).
   void buildDecor(const Json& world, bool testGaris, const Json* summary);
   void applyState(const SimState& st, double timeScale);
+  // In-world meja board (station GLB `mejalayan` quads): the schematic layout from the bridge `panel` command.
+  // The board redraws from the state given to applyState (nearest board within 45 m, <= every 120 ms).
+  void setPanelLayout(const PanelLayout* layout) { meja_.setLayout(layout); }
+  MejaBoard& meja() { return meja_; }
+  const SimState& lastState() const { return state_; }
   // Draws the world for one frame. `dt` = real seconds (JPL arm animation, cloud drift), paused = 0.
   void draw(const mat4& viewProj, const mat4& view, vec3 eye, float fovY, int viewportH, double clock, float dt, double timeScale,
             float fogDensity, bool drawTrains = true);
@@ -125,6 +131,7 @@ private:
   struct Placed { GpuModel* model; mat4 xf; AABB bounds; };
   std::vector<Placed> scenery_;
   Vegetation trees_;
+  MejaBoard meja_; SimState state_;
   std::string tileDir_;   // per-tile terrain source ("" = monolithic / streamed by the host)
   WorldSceneStats stats_;
   bool built_ = false, decor_ = false;

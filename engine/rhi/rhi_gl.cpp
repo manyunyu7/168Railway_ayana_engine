@@ -212,6 +212,13 @@ Texture createTexture(int w, int h, Format f, std::span<const std::byte> pixels,
   if (mipmap && g_aniso > 1) glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, g_aniso);
   return t;
 }
+void updateTextureRGBA(Texture t, int w, int h, std::span<const std::byte> pixels, bool mipmap) {
+  if (!t.id) return;
+  glBindTexture(GL_TEXTURE_2D, t.id);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+  if (mipmap) glGenerateMipmap(GL_TEXTURE_2D);
+}
 Texture createTextureCompressed(Format f, std::span<const MipData> mips, bool srgb, Wrap wrapS, Wrap wrapT) {
   if (!supports(f) || mips.empty()) return {};
   auto wrapMode = [](Wrap w) { return w == Wrap::Clamp ? GL_CLAMP_TO_EDGE : w == Wrap::Mirror ? GL_MIRRORED_REPEAT : GL_REPEAT; };
