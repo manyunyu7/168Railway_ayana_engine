@@ -71,8 +71,10 @@ bool Game::buildWorld() {
   const float demBase = terrain_.dem().demBase;
   profile_.build(graph_, terrain_.dem(), stations, demBase);
   rails_.build(graph_, profile_, &terrain_.dem(), demBase);
+  terrain_.setBrushDeltas(world["tanah"]);
   terrain_.setRails(rails_.samples());
   terrain_.build();
+  { const double* bb = terrain_.dem().bbox; clouds_.build((float)(bb[0] - origin_.ox), (float)(bb[1] - origin_.oz), (float)(bb[2] - origin_.ox), (float)(bb[3] - origin_.oz)); }
   signals_.build(graph_, profile_, world["trackside"]);
   points_.build(graph_, profile_);
   routes_.init(&graph_, &profile_);
@@ -189,7 +191,7 @@ void Game::applySimState() {
 }
 
 void Game::shutdown() {
-  sim_.stop(); compass_.shutdown(); trains_.shutdown(); trees_.destroy(); garis_.destroy(); boards_.destroy(); jpl_.destroy(); city_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy(); routes_.destroy();
+  sim_.stop(); compass_.shutdown(); trains_.shutdown(); trees_.destroy(); garis_.destroy(); clouds_.destroy(); boards_.destroy(); jpl_.destroy(); city_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy(); routes_.destroy();
   renderer_.shutdown(); sky_.shutdown(); text_.shutdown();
 }
 
@@ -500,6 +502,7 @@ void Game::render(Window& win) {
   jpl_.animate(paused_ ? 0.f : (float)std::fmin(realDt_, 0.1) * (float)std::fmax(1.0, timeScale_));
   jpl_.draw(renderer_, &frustum);
   city_.draw(renderer_, &frustum);
+  clouds_.draw(viewProj_, view, eye, sky_, light_, (float)realDt_);
   garis_.draw(renderer_, &frustum);
   updateHover();
   routes_.draw(renderer_);   // blended ribbons before the trains' own transparent parts

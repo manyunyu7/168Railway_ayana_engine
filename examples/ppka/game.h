@@ -10,6 +10,7 @@
 #include "engine/world/asset_catalog.h"
 #include "engine/world/board_visual.h"
 #include "engine/world/city_visual.h"
+#include "engine/world/cloud_visual.h"
 #include "engine/world/jpl_visual.h"
 #include "engine/world/coords.h"
 #include "engine/world/garis_visual.h"
@@ -98,7 +99,7 @@ private:
   // world
   TrackGraph graph_; Terrain terrain_; VerticalProfile profile_; RailBuilder rails_;
   SignalVisuals signals_; PointVisuals points_; RouteVisuals routes_;
-  TracksideBoards boards_; JplVisuals jpl_; CityVisuals city_; GarisVisuals garis_;
+  TracksideBoards boards_; JplVisuals jpl_; CityVisuals city_; GarisVisuals garis_; CloudVisual clouds_;
   AssetCatalog catalog_; RollingStock stock_; TrainVisuals trains_;
   struct Placed { GpuModel* model; mat4 xf; AABB bounds; };
   std::vector<Placed> scenery_;      // hiasan objects (station building etc.)
