@@ -216,8 +216,18 @@ bool Terrain::load(const std::string& demPath, const std::string& satPath, std::
 std::string Terrain::TileRef::path() const { return dir + "/" + std::to_string(z) + "_" + std::to_string(x) + "_" + std::to_string(y) + ".bin"; }
 
 // index.json (tools/fetch_tiles): { bbox:[x0,y0,x1,y1], dem:[{dir,zoom,tx0,ty0,nx,ny,px,present:"0101.."}], sat:[...], mean }
+// A rejected index leaves the terrain in the "none" state (loadNone with whatever bbox it had) so the caller
+// can carry on without terrain; nothing indexes into a half-built layer list.
 bool Terrain::loadIndex(const Json& index, std::string& error) {
+  if (loadIndexLayers(index, error)) return true;
+  double bb[4]; for (int i = 0; i < 4; ++i) bb[i] = dem_.bbox[i];
+  loadNone(bb);
+  return false;
+}
+
+bool Terrain::loadIndexLayers(const Json& index, std::string& error) {
   resetLayers(); streamed_ = true;
+  if (!index.isObject()) { error = "index.json: not an object"; return false; }
   const Json& bb = index["bbox"];
   if (bb.size() != 4) { error = "index.json: bbox missing"; return false; }
   for (int i = 0; i < 4; ++i) dem_.bbox[i] = bb[(size_t)i].numberOr(0);
@@ -246,6 +256,13 @@ bool Terrain::loadIndex(const Json& index, std::string& error) {
   sat_.finish();
   origin_ = dem_.origin();
   return true;
+}
+
+void Terrain::loadNone(const double* bbox) {
+  resetLayers(); streamed_ = true;
+  for (int i = 0; i < 4; ++i) dem_.bbox[i] = bbox ? bbox[i] : 0;
+  dem_.finish();
+  origin_ = dem_.origin();
 }
 
 std::vector<Terrain::TileRef> Terrain::demTilesWanted() const {
@@ -648,9 +665,8 @@ void Terrain::build() {
   auto t0 = std::chrono::steady_clock::now();
   destroy();
   stats.vertices = stats.triangles = 0; stats.nearTiles = stats.farTiles = stats.patches = stats.detailPatches = 0;
-  if (sat_.layers.empty()) return;
-  // backdrop plane far below everything
-  float y = std::min(-12.f, dem_.rawMin - dem_.demBase - 30);
+  // backdrop plane far below everything; without terrain it IS the ground (flat, just under the rail head)
+  float y = hasTerrain() ? std::min(-12.f, dem_.rawMin - dem_.demBase - 30) : PLATEAU_OFFSET;
   const float s = BACKDROP_SIZE / 2;
   MeshBuilder mb;
   mb.quad({-s, y, s}, {s, y, s}, {s, y, -s}, {-s, y, -s});

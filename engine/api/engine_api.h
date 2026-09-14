@@ -16,7 +16,11 @@
 //        tile stays flat); every other answer streams in (2 GPU uploads per frame)
 //   eng_city_json(bytes), eng_model_begin(slot, bytes) / eng_model_fail(slot)   decor (hiasan, garis, trees) is
 //        built once every decor model answered; train models can arrive any time (box until then)
+//   A missing / invalid index (eng_terrain_index(0, 0) or bad JSON) is not fatal: the world is built on flat ground
+//   at rail height and eng_last_error() carries the reason.
 // Per frame: eng_set_state(stepJson) with the bridge's `step` object, then eng_frame(dt).
+// Large strings (the world save, model.json ~600 KB): copy them into the heap (eng_alloc + stringToUTF8) and pass
+// the pointer - ccall's 'string' arguments live on the Wasm STACK (1 MB), which overflows for big maps.
 // Camera / input / picking: see below. HUD text is not drawn — the host owns the UI.
 #pragma once
 #include <stdint.h>
@@ -29,7 +33,8 @@ int eng_init(int width, int height, float dpr);
 void eng_resize(int width, int height, float dpr);
 void eng_shutdown(void);
 int eng_load_world(const char* worldJson, const char* summaryJson, const char* mapSlug, const char* catalogJson);
-int eng_terrain_index(const uint8_t* bytes, int len);
+int eng_terrain_index(const uint8_t* bytes, int len);   // 0 + eng_last_error() when missing/invalid: the world is built WITHOUT terrain (flat)
+const char* eng_last_error(void);                        // last failure message ("" when none); cleared by eng_load_world
 int eng_terrain_tile(const char* dir, int z, int x, int y, const uint8_t* bytes, int len);   // dem: f32[n*n]; sat/<i>: EIMG record
 int eng_terrain_tile_rgba(const char* dir, int z, int x, int y, int w, int h, const uint8_t* rgba);   // dem: Terrarium PNG pixels; sat/<i>: imagery
 void eng_terrain_tile_fail(const char* dir, int z, int x, int y);

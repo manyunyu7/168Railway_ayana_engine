@@ -139,6 +139,11 @@ public:
   // Streaming source: describe the layers from index.json (tools/fetch_tiles), set the request callback,
   // feed the DEM tiles (demTilesWanted() -> provideDem / failTile), then finishDem() before build().
   bool loadIndex(const Json& index, std::string& error);
+  // No terrain at all (index missing / invalid): no layers, every height 0 -> flat ground at rail height with
+  // the backdrop plane just under the rail head; groundHeight() still carves; streaming is a no-op. `bbox` =
+  // the track-node bbox (world origin), nullptr = origin (0, 0).
+  void loadNone(const double* bbox);
+  bool hasTerrain() const { return !dem_.layers.empty() && !sat_.layers.empty(); }
   void setRequestFn(RequestFn fn) { request_ = std::move(fn); }
   std::vector<TileRef> demTilesWanted() const;                 // indexed DEM tiles not delivered yet
   bool provideDem(int z, int x, int y, std::span<const float> heights);              // n*n Terrarium metres, row-major
@@ -199,6 +204,7 @@ private:
   struct Job { int kind; int layer, tx, ty; double dist; };   // 0 build near, 1 build far, 2 upload texture
 
   void resetLayers();
+  bool loadIndexLayers(const Json& index, std::string& error);
   void addChord(vec3 a, vec3 b, float ba, float bb);
   bool nearestRail(float x, float z, Nearest& out) const;
   bool nearestDeck(float x, float z, float& d, float& y, float& b) const;

@@ -79,4 +79,32 @@ TEST_MAIN({
   float rgb[3];
   CHECK(!s2.satColor(wx, wy, 4, rgb));
   CHECK(s2.imageryVersion() == 0);
+
+  // ---- no terrain: a missing / empty / invalid index degrades to flat ground, nothing indexes into empty layers ----
+  Terrain s3;
+  Json empty = Json::parse("{}", &err);
+  CHECK(!s3.loadIndex(empty, err) && !err.empty());              // bbox missing
+  CHECK(!s3.hasTerrain() && s3.streamed());
+  Json noLayers = Json::parse(R"({"bbox":[0,0,100,100],"dem":[],"sat":[]})", &err);
+  CHECK(!s3.loadIndex(noLayers, err) && err == "index.json: no layers");
+  CHECK(!s3.hasTerrain() && s3.dem().layers.empty() && s3.sat().layers.empty());
+  Json badLayer = Json::parse(R"({"bbox":[0,0,100,100],"dem":[{"zoom":13,"tx0":1,"ty0":1,"nx":0,"ny":0}],"sat":[]})", &err);
+  CHECK(!s3.loadIndex(badLayer, err) && s3.dem().layers.empty());   // the half-built layer list is dropped
+  CHECK(s3.demTilesWanted().empty() && s3.demComplete());
+  s3.finishDem();
+  CHECK_NEAR(s3.origin().ox, 50.0, 1e-9);                          // bbox centre survives as the origin
+  CHECK_NEAR(s3.rawHeight(10, 10), 0.0, 1e-6);
+  CHECK_NEAR(s3.groundHeight(10, 10), 0.0, 1e-6);                  // flat at rail height (DEM 0)
+  CHECK(s3.finestLayerAt(10, 10) == -1 && s3.imageryKeyAt(10, 10) == -1 && !s3.satColor(10, 10, 4, rgb));
+  CHECK(!s3.provideDemRgba(13, 1, 1, 256, 256, px.data()));       // no layer takes tiles
+  CHECK(!s3.provideSatRgba(0, 14, 1, 1, 64, 64, green.data(), err));
+  s3.failTile({"dem", 13, 1, 1}); s3.failTile({"sat/0", 14, 1, 1});   // ignored
+  s3.update({0, 0, 0}, 0.1f); s3.prime({0, 0, 0});                    // streaming without layers / GPU: no-op
+  CHECK(s3.stats.requested == 0 && s3.stats.nearTiles == 0);
+  double bb[4] = {10, 20, 30, 40};
+  s3.loadNone(bb);
+  CHECK(!s3.hasTerrain() && s3.streamed());
+  CHECK_NEAR(s3.origin().ox, 20.0, 1e-9); CHECK_NEAR(s3.origin().oz, 30.0, 1e-9);
+  s3.loadNone(nullptr);
+  CHECK_NEAR(s3.origin().ox, 0.0, 1e-9);
 })

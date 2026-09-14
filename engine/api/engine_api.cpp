@@ -56,9 +56,10 @@ struct Api {
   std::string incomingSlot; Image incoming; ImageVariant incomingVar; int incomingIndex = -1;
   // stats
   double fps = 0, fpsAccum = 0; int fpsFrames = 0; int frame = 0;
-  std::string strBuf;
+  std::string strBuf, lastError;
 };
 Api* g = nullptr;
+void setError(const std::string& e);
 
 void request(const char* kind, const std::string& path) {
 #ifdef __EMSCRIPTEN__
@@ -120,7 +121,7 @@ void buildStaticWorld() {
   FILE* f = std::fopen("/ayana-city.json", "rb");
   if (f) { std::fclose(f); city = "/ayana-city.json"; }
   if (!g->scene.buildStatic(g->world, g->map, "/assets/font.efnt", city, [](const std::string& s) { std::printf("[ayana] %s\n", s.c_str()); })) {
-    std::fprintf(stderr, "[ayana] world build failed\n"); return;
+    setError("world build failed"); return;
   }
   vec3 st = g->scene.stationScene();
   g->orbit.target = st; g->orbit.distance = 160; g->orbit.pitch = radians(18); g->orbit.yaw = radians(35);
@@ -161,6 +162,26 @@ void afterModel(const std::string& slot) {
 }
 
 const char* ret(std::string s) { g->strBuf = std::move(s); return g->strBuf.c_str(); }
+void setError(const std::string& e) { g->lastError = e; std::fprintf(stderr, "[ayana] %s\n", e.c_str()); }
+
+// Track-node bbox of the loaded world (terrain origin when there is no terrain index).
+void worldBbox(double bb[4]) {
+  bb[0] = bb[1] = 1e30; bb[2] = bb[3] = -1e30;
+  for (const Json& n : g->world["graph"]["nodes"].arr) {
+    double x = n["x"].numberOr(0), y = n["y"].numberOr(0);
+    bb[0] = std::fmin(bb[0], x); bb[1] = std::fmin(bb[1], y); bb[2] = std::fmax(bb[2], x); bb[3] = std::fmax(bb[3], y);
+  }
+  if (bb[0] > bb[2]) bb[0] = bb[1] = bb[2] = bb[3] = 0;
+}
+
+// No usable terrain: flat ground, the static world is built right away.
+void terrainNone(const std::string& why) {
+  setError(why + " - continuing without terrain (flat ground)");
+  double bb[4]; worldBbox(bb);
+  g->scene.terrain().loadNone(bb);
+  g->tilesPending = 0;
+  buildStaticWorld();
+}
 
 } // namespace
 
@@ -221,27 +242,35 @@ KEEP void eng_shutdown(void) {
 
 KEEP int eng_load_world(const char* worldJson, const char* summaryJson, const char* mapSlug, const char* catalogJson) {
   if (!g || !g->gl) return 0;
+  g->lastError.clear();
   std::string err;
   g->world = Json::parse(worldJson ? worldJson : "", &err);
-  if (!err.empty()) { std::fprintf(stderr, "[ayana] world: %s\n", err.c_str()); return 0; }
+  if (!err.empty()) { setError("world: " + err); return 0; }
+  if (!g->world["graph"]["nodes"].size()) { setError("world: no graph.nodes"); return 0; }
   g->summary = Json::parse(summaryJson ? summaryJson : "{}", &err);
   if (!err.empty()) { std::fprintf(stderr, "[ayana] summary: %s\n", err.c_str()); g->summary = Json{}; }
   g->map = mapSlug ? mapSlug : "";
   g->ready = g->decorDone = g->terrainDone = false; g->decorPending.clear(); g->tilesPending = 0;
   g->scene.setWorld(g->world);
   if (!g->scene.catalog().loadFromText(catalogJson ? catalogJson : "{}", [](const std::string& id, const std::string&) { ++g->modelsPending; request("model", id); }))
-    std::fprintf(stderr, "[ayana] catalog: %s\n", g->scene.catalog().error().c_str());
+    setError("catalog: " + g->scene.catalog().error());
   std::remove("/ayana-city.json");
   request("city", (g->map == "bks" ? "bekasi" : g->map) + ".json");
   request("terrain", g->map + "/index.json");
   return 1;
 }
 
+// A missing (bytes null / len 0) or invalid index degrades to "no terrain": the world is still built (flat
+// ground at rail height), eng_last_error() says why, and the return is 0. Otherwise the DEM tiles are
+// requested and the count returned (0 = nothing to wait for, the world is built already).
 KEEP int eng_terrain_index(const uint8_t* bytes, int len) {
-  if (!g) return 0;
+  if (!g || !g->world.isObject()) return 0;
+  if (g->ready) { setError("terrain index: world already built"); return 0; }
+  if (!bytes || len <= 0) { terrainNone("terrain index missing"); return 0; }
   std::string err;
-  Json idx = Json::parse(std::string_view((const char*)bytes, (size_t)std::max(0, len)), &err);
-  if (!err.empty() || !g->scene.terrain().loadIndex(idx, err)) { std::fprintf(stderr, "[ayana] terrain index: %s\n", err.c_str()); return 0; }
+  Json idx = Json::parse(std::string_view((const char*)bytes, (size_t)len), &err);
+  if (!err.empty()) { terrainNone("terrain index: " + err); return 0; }
+  if (!g->scene.terrain().loadIndex(idx, err)) { terrainNone("terrain index: " + err); return 0; }
   g->scene.terrain().setRequestFn([](const Terrain::TileRef& t) { request("terrain", g->map + "/" + t.path()); });
   std::vector<Terrain::TileRef> tiles = g->scene.terrain().demTilesWanted();
   g->tilesPending = (int)tiles.size();
@@ -249,6 +278,8 @@ KEEP int eng_terrain_index(const uint8_t* bytes, int len) {
   if (g->tilesPending == 0) buildStaticWorld();
   return g->tilesPending;
 }
+
+KEEP const char* eng_last_error(void) { return g ? g->lastError.c_str() : ""; }
 
 // A DEM answer (delivered or failed) counts down to the static build; satellite answers just stream in.
 static void afterTile(const char* dir, bool ok, int z, int x, int y, const std::string& err) {
