@@ -16,6 +16,7 @@
 #include "engine/world/coords.h"
 #include "engine/world/garis_visual.h"
 #include "engine/world/jpl_visual.h"
+#include "engine/app/camera_rig.h"
 #include "engine/world/meja_board.h"
 #include "engine/world/point_visual.h"
 #include "engine/world/rail_builder.h"
@@ -80,6 +81,10 @@ public:
   void pickAt(float px, float py, int w, int h, const mat4& viewProj, vec3 eye, std::string& sigId, std::string& ptId) const;
   bool objectPos(const std::string& id, bool signal, vec3& out) const;   // hover ring anchor
 
+  // Walk-mode collision boxes (CameraRig WalkBox): every hiasan model primitive (a wall when its footprint is
+  // under 400 m² — a hut, a shelter; the baked station shells and platform slabs are floors only, so the
+  // building can still be entered and a platform is climbed by jumping) + every train vehicle (walls).
+  void collectWalkBoxes(std::vector<WalkBox>& out) const;
   float groundHeight(double wx, double wy) const { return terrain_.groundHeight(wx, wy); }
   float groundScene(float x, float z) const { return terrain_.groundHeight(x + origin_.ox, z + origin_.oz); }
   const WorldOrigin& origin() const { return origin_; }

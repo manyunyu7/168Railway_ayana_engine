@@ -118,7 +118,7 @@ void Game::handleInput(Window& win, double dt) {
     if (pressed(GLFW_KEY_ENTER) || pressed(GLFW_KEY_KP_ENTER)) { if (clockText_.size() == 5) setClock(clockText_); clockPrompt_ = false; }
     if (pressed(GLFW_KEY_ESCAPE)) clockPrompt_ = false;
   } else {
-    if (pressed(GLFW_KEY_SPACE)) setPaused(!paused_);
+    if (pressed(GLFW_KEY_SPACE) && rig_.mode != CamMode::Jalan) setPaused(!paused_);   // in jalan Space = jump (the pause button stays)
     if (pressed(GLFW_KEY_EQUAL) || pressed(GLFW_KEY_KP_ADD)) setTimeScale(std::fmin(timeScale_ * 2, 64));
     if (pressed(GLFW_KEY_MINUS) || pressed(GLFW_KEY_KP_SUBTRACT)) setTimeScale(std::fmax(timeScale_ / 2, 0.5));
     if (pressed(GLFW_KEY_M)) { panel_.visible = !panel_.visible; if (panel_.visible) panel_.fitStation("", fw, fh); }
@@ -539,7 +539,10 @@ void Game::updateCamera(float dt) {
     in.up = (win_->key(GLFW_KEY_E) ? 1.f : 0.f) - (win_->key(GLFW_KEY_Q) ? 1.f : 0.f);
     in.run = win_->key(GLFW_KEY_LEFT_SHIFT) || win_->key(GLFW_KEY_RIGHT_SHIFT);
     in.reset = rig_.mode == CamMode::Kabin && win_->key(GLFW_KEY_R);
+    in.jump = rig_.mode == CamMode::Jalan && win_->key(GLFW_KEY_SPACE);
   }
+  std::vector<WalkBox> boxes;
+  if (rig_.mode == CamMode::Jalan) { scene_.collectWalkBoxes(boxes); in.boxes = &boxes; }
   TrainPath tp; bool has = subjectPath(tp);
   if (has) tp.timeScale = paused_ ? 0 : timeScale_;
   if (!rig_.step(dt, has ? &tp : nullptr, ground, in)) { pushMessage("KA subjek hilang dari lintas - kembali ke kamera bebas"); setCamMode(CamMode::Bebas); }

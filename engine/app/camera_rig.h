@@ -6,6 +6,7 @@
 // over the rail head), scroll = along too, R = back to MATA_KABIN; nothing is persisted. The cab rocks with
 // speed / curvature / braking (uji3dGoyang.ts goyangKabin, engine/world/sway.h), damped while zoomed.
 #pragma once
+#include "engine/math/geometry.h"
 #include "engine/math/math.h"
 #include <functional>
 #include <string>
@@ -39,8 +40,12 @@ struct TrainPath {
   vec3 pointBehind(float d) const;   // clamped to [0, cum.back()], extrapolated past the tail
 };
 
-// Movement keys: jalan = walking; kabin = moving the eye (forward/side/up, run = faster, reset = R).
-struct WalkInput { float forward = 0, side = 0, up = 0; bool run = false, reset = false; };
+// A box the walker collides with (uji3dJalanKaki.ts DuniaJalan, with AABBs instead of mesh raycasts): `wall`
+// boxes stop the body (slid along, RADIUS 0.38 m, tested at knee/chest/head) and every box is a floor when its
+// top is within NAIK_MAKS 0.45 m of the feet (platform slabs are reached by jumping: LAJU_LOMPAT 4.6 m/s, double jump).
+struct WalkBox { AABB box; bool wall = true; };
+// Movement keys: jalan = walking (jump = Space, edge-triggered); kabin = moving the eye (forward/side/up, run = faster, reset = R).
+struct WalkInput { float forward = 0, side = 0, up = 0; bool run = false, reset = false, jump = false; const std::vector<WalkBox>* boxes = nullptr; };
 
 class CameraRig {
 public:
@@ -65,6 +70,7 @@ public:
   void scroll(float steps);          // adjusts the mode's parameter (profile "atur"); kabin = eye forward/back
   void enterWalk(vec3 eye, vec3 look, const GroundFn& ground);   // turunJalan: stand where the orbit target was
 
+  bool walkerOnGround() const { return diTanah_; }
   vec3 eye() const { return camPos_; }
   vec3 look() const { return camLook_; }
   vec3 up() const { return camUp_; }
@@ -97,6 +103,7 @@ private:
   float lihatYaw_ = 0, lihatPitch_ = 0, orbitAz_ = 0, orbitEl_ = 0, toleh_ = 0;
   // walker (uji3dJalanKaki): body position on the ground, heading, look pitch, distance walked (step bob)
   vec3 pejalan_; float jalanYaw_ = 0, jalanPitch_ = 0, tempuh_ = 0;
+  float vyJalan_ = 0; bool diTanah_ = true, lompatSebelum_ = false; int lompatSisa_ = 2;
   // cab sway inputs: filtered longitudinal acceleration of the subject (keretaVisual3d.ts perbaruiAksel, τ 0.35 s)
   std::string subjekId_; float vSebelum_ = 0, aksel_ = 0;
 };

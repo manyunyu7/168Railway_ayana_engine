@@ -208,6 +208,21 @@ void WorldScene::destroy() {
   built_ = decor_ = false;
 }
 
+void WorldScene::collectWalkBoxes(std::vector<WalkBox>& out) const {
+  for (const Placed& p : scenery_)
+    for (size_t ni = 0; ni < p.model->nodes.size(); ++ni) {
+      const Node& n = p.model->nodes[ni];
+      if (n.mesh < 0 || n.mesh >= (int)p.model->meshes.size()) continue;
+      mat4 xf = p.xf * p.model->world[ni];
+      for (const GpuPrimitive& prim : p.model->meshes[(size_t)n.mesh].primitives) {
+        if (!prim.bounds.valid()) continue;
+        AABB b = prim.bounds.transformed(xf);
+        out.push_back({b, (b.max.x - b.min.x) * (b.max.z - b.min.z) <= 400});
+      }
+    }
+  for (const VehicleInstance& v : trains_.vehicles()) if (v.bounds.valid()) out.push_back({v.bounds, true});
+}
+
 void WorldScene::pickAt(float px, float py, int w, int h, const mat4& viewProj, vec3 eye, std::string& sigId, std::string& ptId) const {
   std::string bs, bp; float ds = 1e9f, dw = 1e9f;
   for (const ScreenPoint& sp : signals_.screenPositions(viewProj, w, h, eye)) {

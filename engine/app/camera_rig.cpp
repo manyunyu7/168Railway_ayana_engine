@@ -9,6 +9,8 @@ namespace {
 constexpr float ZOOM_LIPAT = 4, FOV_MIN = 8, ZOOM_TAU = 0.09f;     // uji3dZoom.ts
 constexpr float EL_MIN = -8 * PI / 180, EL_MAKS = PI / 2;            // uji3dOrbit.ts elevation clamp
 constexpr float MATA_JALAN = 1.62f, LAJU_JALAN = 4.5f, LAJU_LARI = 12; // walker eye / speeds
+constexpr float RADIUS_JALAN = 0.38f, NAIK_MAKS = 0.45f, GRAVITASI = 9.81f, LAJU_LOMPAT = 4.6f; constexpr int LOMPAT_MAKS = 2;
+constexpr float TINGGI_SINAR[3] = {0.35f, 1.05f, 1.55f};   // knee, chest, head above the feet
 constexpr float DRAG_KABIN = 0.004f, DRAG_ORBIT = 0.005f, DRAG_JALAN = 0.005f;
 constexpr float KABIN_SISI_MAKS = 1.2f, KABIN_TINGGI_MIN = 0.5f, KABIN_TINGGI_MAKS = 3.5f;   // cab eye limits
 constexpr float LAJU_KABIN = 1.5f, LAJU_KABIN_CEPAT = 4, KABIN_SCROLL = 0.5f;               // m/s, m per scroll step
@@ -71,6 +73,7 @@ void CameraRig::enterWalk(vec3 eye, vec3 look, const GroundFn& ground) {
   jalanYaw_ = dot(arah, arah) > 1e-6f ? std::atan2(-arah.x, -arah.z) : 0;
   jalanPitch_ = 0; tempuh_ = 0;
   pejalan_ = {look.x, ground(look.x, look.z), look.z};
+  vyJalan_ = 0; diTanah_ = true; lompatSisa_ = LOMPAT_MAKS; lompatSebelum_ = false;
 }
 
 // dunia3d.ts rig(): position + look point for the train modes
@@ -161,13 +164,60 @@ void CameraRig::orbitKe(const GroundFn& ground) {
   float minY = ground(posKam_.x, posKam_.z) + 2; if (posKam_.y < minY) posKam_.y = minY;
 }
 
-void CameraRig::langkahJalan(float dt, const GroundFn& ground, const WalkInput& in) {
+// uji3dJalanKaki.ts Pejalan.langkah with AABBs: slide along walls (two passes, the second wall is only seen
+// after the first is obeyed), floor = the ground or the highest box top within NAIK_MAKS of the feet, jump on
+// the key's rising edge (double jump while the quota lasts), gravity otherwise.
+void CameraRig::langkahJalan(float dtRaw, const GroundFn& ground, const WalkInput& in) {
+  const float dt = std::min(0.05f, std::max(0.f, dtRaw));   // a stalled frame must not teleport through a wall
   vec3 fwd{-std::sin(jalanYaw_), 0, -std::cos(jalanYaw_)}, right{std::cos(jalanYaw_), 0, -std::sin(jalanYaw_)};
   float v = in.run ? LAJU_LARI : LAJU_JALAN;
   vec3 move = fwd * in.forward + right * in.side;
-  if (dot(move, move) > 1e-6f) { move = normalize(move) * (v * dt); pejalan_ += move; tempuh_ += length(move); }
-  pejalan_.y = ground(pejalan_.x, pejalan_.z);
-  float ayun = std::sin(tempuh_ * 2.1f) * 0.035f;   // step bob from distance walked, not time
+  if (dot(move, move) > 1e-6f) {
+    move = normalize(move) * (v * dt);
+    vec3 from = pejalan_, p = pejalan_ + move;
+    if (in.boxes) {
+      const float lo = pejalan_.y + TINGGI_SINAR[0], hi = pejalan_.y + TINGGI_SINAR[2];
+      for (int pass = 0; pass < 2; ++pass) {
+        for (const WalkBox& wb : *in.boxes) {
+          const AABB& b = wb.box;
+          if (!wb.wall || b.max.y < lo || b.min.y > hi) continue;   // below the knee / above the head: not a wall
+          if (p.x <= b.min.x - RADIUS_JALAN || p.x >= b.max.x + RADIUS_JALAN || p.z <= b.min.z - RADIUS_JALAN || p.z >= b.max.z + RADIUS_JALAN) continue;
+          // push out along the shallowest penetration axis of the RADIUS-expanded box
+          float px0 = p.x - (b.min.x - RADIUS_JALAN), px1 = (b.max.x + RADIUS_JALAN) - p.x;
+          float pz0 = p.z - (b.min.z - RADIUS_JALAN), pz1 = (b.max.z + RADIUS_JALAN) - p.z;
+          float m = std::min(std::min(px0, px1), std::min(pz0, pz1));
+          if (m == px0) p.x = b.min.x - RADIUS_JALAN; else if (m == px1) p.x = b.max.x + RADIUS_JALAN;
+          else if (m == pz0) p.z = b.min.z - RADIUS_JALAN; else p.z = b.max.z + RADIUS_JALAN;
+        }
+      }
+    }
+    pejalan_.x = p.x; pejalan_.z = p.z;
+    tempuh_ += length(horizontal(pejalan_ - from));
+  }
+  // vertical: floor under the feet (ground, or a box top within NAIK_MAKS above / 6 m below the feet)
+  float lantai = ground(pejalan_.x, pejalan_.z);
+  if (in.boxes) {
+    float atas = pejalan_.y + NAIK_MAKS;
+    for (const WalkBox& wb : *in.boxes) {
+      const AABB& b = wb.box;
+      if (pejalan_.x < b.min.x || pejalan_.x > b.max.x || pejalan_.z < b.min.z || pejalan_.z > b.max.z) continue;
+      if (b.max.y <= atas && b.max.y >= atas - (NAIK_MAKS + 6) && b.max.y > lantai) lantai = b.max.y;
+    }
+  }
+  bool tekanLompat = in.jump && !lompatSebelum_;
+  lompatSebelum_ = in.jump;
+  if (tekanLompat && (diTanah_ || lompatSisa_ > 0)) {
+    if (diTanah_) lompatSisa_ = LOMPAT_MAKS;
+    vyJalan_ = LAJU_LOMPAT; diTanah_ = false; --lompatSisa_;
+  }
+  if (diTanah_ && vyJalan_ <= 0 && std::fabs(lantai - pejalan_.y) <= NAIK_MAKS) { pejalan_.y = lantai; vyJalan_ = 0; }
+  else {
+    vyJalan_ -= GRAVITASI * dt;
+    pejalan_.y += vyJalan_ * dt;
+    if (pejalan_.y <= lantai) { pejalan_.y = lantai; vyJalan_ = 0; diTanah_ = true; lompatSisa_ = LOMPAT_MAKS; }
+    else diTanah_ = false;
+  }
+  float ayun = diTanah_ ? std::sin(tempuh_ * 2.1f) * 0.035f : 0;   // step bob from distance walked, not time; none in the air
   posKam_ = {pejalan_.x, pejalan_.y + MATA_JALAN + ayun, pejalan_.z};
   vec3 arah{-std::sin(jalanYaw_) * std::cos(jalanPitch_), std::sin(jalanPitch_), -std::cos(jalanYaw_) * std::cos(jalanPitch_)};
   lihatKam_ = posKam_ + arah * 60;
