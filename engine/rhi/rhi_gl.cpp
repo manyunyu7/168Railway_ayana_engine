@@ -259,4 +259,36 @@ bool captureFramebuffer(const char* path, int w, int h) {
   std::fclose(f); return true;
 }
 
+RenderTarget createRenderTarget(int w, int h) {
+  RenderTarget rt; rt.w = w; rt.h = h;
+  std::vector<std::byte> blank((size_t)w * h * 4);
+  rt.color = createTexture(w, h, Format::RGBA8, blank, false, false, Wrap::Clamp, Wrap::Clamp);
+  glGenRenderbuffers(1, &rt.depth);
+  glBindRenderbuffer(GL_RENDERBUFFER, rt.depth);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+  glBindRenderbuffer(GL_RENDERBUFFER, 0);
+  glGenFramebuffers(1, &rt.fbo);
+  glBindFramebuffer(GL_FRAMEBUFFER, rt.fbo);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, rt.color.id, 0);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rt.depth);
+  if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+    std::fprintf(stderr, "[rhi] render target %dx%d incomplete\n", w, h);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0); destroyRenderTarget(rt); return {};
+  }
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  return rt;
+}
+void bindRenderTarget(const RenderTarget& rt) { glBindFramebuffer(GL_FRAMEBUFFER, rt.fbo); }
+void destroyRenderTarget(RenderTarget& rt) {
+  if (rt.fbo) glDeleteFramebuffers(1, &rt.fbo);
+  if (rt.depth) glDeleteRenderbuffers(1, &rt.depth);
+  if (rt.color.id) destroyTexture(rt.color);
+  rt = {};
+}
+void readPixels(int x, int y, int w, int h, uint8_t* out) {
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glReadPixels(x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, out);
+}
+void setDepthLessEqual(bool on) { glDepthFunc(on ? GL_LEQUAL : GL_LESS); }
+
 } // namespace eng::rhi

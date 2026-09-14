@@ -18,6 +18,7 @@
 #include "engine/world/jpl_visual.h"
 #include "engine/app/camera_rig.h"
 #include "engine/world/meja_board.h"
+#include "engine/world/name_board.h"
 #include "engine/world/point_visual.h"
 #include "engine/world/rail_builder.h"
 #include "engine/world/rail_profile.h"
@@ -152,6 +153,10 @@ public:
   int hiasanAdd(Json& world, const Json& obj);          // returns the new index
   bool hiasanRemove(Json& world, int objIndex);
   void hiasanRefresh(const Json& world);                  // every entry re-placed (the ground under them changed)
+  // Station name board text of one entry (`teks` / `ketinggian`, uji3dPapanNama.ts): stored in `world` (empty =
+  // field removed) and the `papan-nama` quads repainted (engine/world/name_board.h). False = bad index.
+  bool hiasanText(Json& world, int objIndex, const std::string& teks, const std::string& ketinggian);
+  bool hiasanHasBoard(int objIndex) const;                // the placed model carries a `papan-nama` quad (punyaPapan)
   // One hiasan.garis entry: {"index": i, ...entry} replaces (i = -1 / >= size appends), {"index": i, "remove": true}
   // deletes; the garis visuals are rebuilt (one build of every class - cheap next to the rails).
   bool garisSet(Json& world, const Json& patch);
@@ -204,6 +209,7 @@ public:
   // (orphan nodes sit on the carved ground).
   bool nodeHandlePos(int nodeIndex, vec3& out) const;
   int hiasanCount() const { return (int)scenery_.size(); }
+  size_t nameBoardCount() const { return papan_.count(); }
 
 private:
   WorldOrigin origin_; vec3 stationScene_; float worldW_ = 8000;
@@ -218,6 +224,7 @@ private:
   mutable bool walkDirty_ = false;   // hiasan / garis edited: rebuilt on the next walkCollider()
   void buildWalkCollider() const;
   void scanMeja(const Json& world);
+  void scanPapan(const Json& world);
   // overlays
   struct Overlay {
     std::string hlKind; int hlIndex = -1; HighlightMode hlMode = HighlightMode::Off; std::string hlId;
@@ -234,7 +241,7 @@ private:
   int viewportH_ = 1;   // framebuffer height of the last draw() (screen-sized handles)
   const Json* worldForEdit_ = nullptr;   // the save object given to the last buildDecor / edit (garis / ukur lookups)
   Vegetation trees_;
-  MejaBoard meja_; SimState state_;
+  MejaBoard meja_; NameBoards papan_; SimState state_;
   std::string tileDir_;   // per-tile terrain source ("" = monolithic / streamed by the host)
   WorldSceneStats stats_;
   bool built_ = false, decor_ = false;

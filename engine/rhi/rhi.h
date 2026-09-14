@@ -76,4 +76,15 @@ void    bindTexture(int slot, Texture t);
 void checkErrors(const char* where);
 bool captureFramebuffer(const char* path, int w, int h);  // PPM, for automated screenshots
 
+// Offscreen render target: RGBA8 colour texture + depth renderbuffer (palette thumbnails, eng_thumbnail).
+// bindRenderTarget({}) returns to the default framebuffer; the caller restores the viewport itself.
+struct RenderTarget { uint32_t fbo = 0, depth = 0; Texture color; int w = 0, h = 0; };
+RenderTarget createRenderTarget(int w, int h);
+void         bindRenderTarget(const RenderTarget& rt);   // rt.fbo 0 = the window / canvas framebuffer
+void         destroyRenderTarget(RenderTarget& rt);
+// Reads the bound framebuffer as RGBA8 (row 0 = bottom, GL convention) into `out` (w*h*4 bytes).
+void         readPixels(int x, int y, int w, int h, uint8_t* out);
+// Depth compare: false = GL_LESS (default), true = GL_LEQUAL (a second pass over the same geometry wins).
+void         setDepthLessEqual(bool on);
+
 } // namespace eng::rhi

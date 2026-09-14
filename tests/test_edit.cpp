@@ -6,12 +6,14 @@
 #include "engine/api/engine_api.h"
 #include "engine/api/engine_api_edit.h"
 #include "engine/app/world_scene.h"
+#include "engine/world/name_board.h"
 #include "engine/core/window.h"
 #include "tests/check.h"
 #include <GLFW/glfw3.h>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -115,6 +117,59 @@ int main() {
   CHECK_EQ((int)(*c.world)["hiasan"]["objek"].size(), n0);
   CHECK(!eng_hiasan_remove(idx));
   eng_highlight("", 0); eng_gizmo("", 0, 0, 0, 0, 1, 0); eng_ghost("", 0, 0, 0, 1); eng_ukur_line("[]");
+
+  // ---- palette thumbnail: a resident model rendered offscreen (top-down RGBA rows, transparent background)
+  CHECK(eng_thumbnail("no-such-model", 64) == nullptr);
+  CHECK(eng_thumbnail("pohon-05", 4) == nullptr);
+  if (haveTree) {
+    const uint8_t* px = eng_thumbnail("pohon-05", 64);
+    CHECK_MSG(px != nullptr, "thumbnail of a resident model");
+    if (px) {
+      int opaque = 0, clear = 0;
+      for (int i = 0; i < 64 * 64; ++i) { if (px[i * 4 + 3] > 200) ++opaque; else if (px[i * 4 + 3] == 0) ++clear; }
+      std::printf("thumbnail: %d opaque / %d clear px\n", opaque, clear);
+      CHECK(opaque > 64 && clear > 64);   // the tree covers part of the card, the rest stays see-through
+      // the trunk stands in the lower half, the canopy in the upper: something opaque in both
+      bool upper = false, lower = false;
+      for (int y = 0; y < 64; ++y) for (int x = 0; x < 64; ++x) if (px[(y * 64 + x) * 4 + 3] > 200) { if (y < 32) upper = true; else lower = true; }
+      CHECK(upper && lower);
+      if (const char* dump = std::getenv("ENG_THUMB_DUMP")) {   // debug: the card as a PPM (transparent = black)
+        if (FILE* fp = std::fopen(dump, "wb")) { std::fprintf(fp, "P6\n64 64\n255\n"); for (int i = 0; i < 64 * 64; ++i) { uint8_t p3[3] = {px[i * 4], px[i * 4 + 1], px[i * 4 + 2]}; if (px[i * 4 + 3] == 0) p3[0] = p3[1] = p3[2] = 40; std::fwrite(p3, 1, 3, fp); } std::fclose(fp); }
+      }
+    }
+    eng_frame(0.016f);   // the window framebuffer is drawn again afterwards without GL errors
+  }
+
+  // ---- papan nama: text painted on the `papan-nama` quad of a station canopy (plain GLB, textures dropped)
+  CHECK(NameBoards::normName("kebumen") == "STASIUN KEBUMEN");
+  CHECK(NameBoards::normName(" Stasiun  Kebumen ") == "STASIUN KEBUMEN");
+  CHECK(NameBoards::normName("") == "");
+  CHECK(NameBoards::normHeight("21") == "+ 21 M"); CHECK(NameBoards::normHeight("+ 21 m") == "+ 21 M");
+  CHECK(NameBoards::normHeight("-3.5") == "- 3.5 M"); CHECK(NameBoards::normHeight("+ 21 M dpl") == "+ 21 M DPL");
+  {
+    std::vector<uint8_t> glb = readBytes(ppka + "/public/model3d/cc0-kanopi-pwk-papan.glb");
+    bool haveKanopi = !glb.empty() && eng_model_begin_glb("kanopi-pwk-papan", glb.data(), (int)glb.size());
+    if (haveKanopi) eng_model_textures_unavailable("kanopi-pwk-papan");
+    std::printf("models: kanopi-papan %d\n", haveKanopi);
+    if (haveKanopi) {
+      char addK[300]; std::snprintf(addK, sizeof addK, "{\"model\":\"kanopi-pwk-papan\",\"x\":%.2f,\"y\":%.2f,\"naik\":0,\"rot\":0,\"skala\":1,\"teks\":\"mojokerto\"}", tx, ty + 80);
+      int k = eng_hiasan_add(addK);
+      CHECK(k >= 0);
+      Json ki = Json::parse(eng_hiasan_info(k), &err); CHECK_MSG(err.empty(), err);
+      CHECK(ki["resident"].boolOr(false)); CHECK(ki["papan"].boolOr(false)); CHECK(ki["teks"].stringOr("") == "mojokerto");
+      CHECK(!info["papan"].boolOr(true));   // the tree earlier: no board
+      CHECK_EQ((int)scene.nameBoardCount(), 1);
+      CHECK(eng_hiasan_text(k, "Mojokerto", "21"));
+      ki = Json::parse(eng_hiasan_info(k), &err);
+      CHECK(ki["teks"].stringOr("") == "Mojokerto"); CHECK(ki["ketinggian"].stringOr("") == "21");
+      CHECK(!eng_hiasan_text(999, "x", ""));
+      eng_frame(0.016f);   // board drawn without GL errors
+      CHECK(eng_hiasan_text(k, "", ""));   // text removed: plain board again, fields gone from the save
+      CHECK(!(*c.world)["hiasan"]["objek"][(size_t)k].has("teks"));
+      CHECK_EQ((int)scene.nameBoardCount(), 0);
+      CHECK(eng_hiasan_remove(k));
+    }
+  }
 
   // ---- markers: a batch at the view centre, picked back by pixel, labels projected, cleared
   {

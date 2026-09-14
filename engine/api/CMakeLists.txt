@@ -17,7 +17,8 @@ set(AYANA_EXPORTS
   _eng_pick_ground _eng_ground _eng_pick_object _eng_pick_track _eng_hiasan_set _eng_hiasan_add _eng_hiasan_remove _eng_hiasan_info _eng_model_size
   _eng_garis_set _eng_node_height _eng_rails_rebuild _eng_terrain_delta _eng_track_edit
   _eng_highlight _eng_gizmo _eng_gizmo_hit _eng_gizmo_angle _eng_ghost _eng_ukur_line
-  _eng_node_info _eng_veg_mask _eng_node_handles _eng_ghost_lines _eng_pick_node)
+  _eng_node_info _eng_veg_mask _eng_node_handles _eng_ghost_lines _eng_pick_node
+  _eng_hiasan_text _eng_thumbnail)
 string(REPLACE ";" "," AYANA_EXPORTS_CSV "${AYANA_EXPORTS}")
 target_link_options(ayana PRIVATE
   "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/font.efnt@/assets/font.efnt"

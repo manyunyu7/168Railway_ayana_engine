@@ -50,6 +50,17 @@
 using namespace eng;
 namespace fs = std::filesystem;
 
+// Dimensions of a WebP picture (EXT_texture_webp GLBs: stb_image has no WebP): VP8 key frame, VP8L or the VP8X
+// extended header. Only needed for the external-texture placeholders (the pixels come from the KTX2 twin).
+static bool webpInfo(const std::vector<uint8_t>& b, int& w, int& h) {
+  if (b.size() < 30 || std::memcmp(b.data(), "RIFF", 4) != 0 || std::memcmp(b.data() + 8, "WEBP", 4) != 0) return false;
+  const uint8_t* c = b.data() + 12;
+  if (std::memcmp(c, "VP8X", 4) == 0) { w = 1 + (c[12] | c[13] << 8 | c[14] << 16); h = 1 + (c[15] | c[16] << 8 | c[17] << 16); return true; }
+  if (std::memcmp(c, "VP8L", 4) == 0) { uint32_t v = (uint32_t)c[9] | (uint32_t)c[10] << 8 | (uint32_t)c[11] << 16 | (uint32_t)c[12] << 24; w = (int)(v & 0x3fff) + 1; h = (int)((v >> 14) & 0x3fff) + 1; return true; }
+  if (std::memcmp(c, "VP8 ", 4) == 0) { w = (c[14] | c[15] << 8) & 0x3fff; h = (c[16] | c[17] << 8) & 0x3fff; return w > 0 && h > 0; }
+  return false;
+}
+
 // Images (raw bytes) of a GLB, ignoring everything else — used for the KTX2 twin whose meshes are Draco
 // compressed and whose extensionsRequired the engine parser refuses.
 static bool glbImages(const std::string& path, std::vector<std::vector<uint8_t>>& out, std::string& err) {
@@ -142,7 +153,7 @@ int main(int argc, char** argv) {
     Image& im = model.images[i];
     int w, h, c;
     if (external) {   // placeholder: dimensions of the source picture, no pixels; the host maps `source` to the KTX2 twin's image
-      if (!stbi_info_from_memory(im.encoded.data(), (int)im.encoded.size(), &w, &h, &c)) { std::fprintf(stderr, "image %zu (%s): %s\n", i, im.mime.c_str(), stbi_failure_reason()); return 1; }
+      if (!stbi_info_from_memory(im.encoded.data(), (int)im.encoded.size(), &w, &h, &c) && !webpInfo(im.encoded, w, h)) { std::fprintf(stderr, "image %zu (%s): %s\n", i, im.mime.c_str(), stbi_failure_reason()); return 1; }
       im.width = w; im.height = h; im.channels = 4; im.source = (int)i;
       im.encoded.clear(); im.encoded.shrink_to_fit();
       std::printf("  image %zu: %dx%d%s%s, external (source %d)\n", i, w, h, im.linear ? " linear" : "", im.wrapS == 1 || im.wrapT == 1 ? " clamp" : "", im.source);

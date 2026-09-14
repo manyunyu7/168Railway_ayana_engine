@@ -170,6 +170,7 @@ bool WorldScene::hiasanSet(Json& world, int objIndex, double wx, double wy, floa
   o.obj["x"] = num(wx); o.obj["y"] = num(wy); o.obj["naik"] = num(naik); o.obj["rot"] = num(rotDeg); o.obj["skala"] = num(skala);
   hiasanPlace(objIndex, o);
   walkDirty_ = true;
+  scanPapan(world);
   return true;
 }
 
@@ -180,6 +181,7 @@ int WorldScene::hiasanAdd(Json& world, const Json& obj) {
   int idx = (int)objs.size() - 1;
   hiasanPlace(idx, objs.arr.back());   // false when the model is not resident yet: shown once it lands (buildDecor re-run)
   walkDirty_ = true;
+  scanPapan(world);
   return idx;
 }
 
@@ -191,6 +193,7 @@ bool WorldScene::hiasanRemove(Json& world, int objIndex) {
   for (Placed& p : scenery_) if (p.objIndex > objIndex) --p.objIndex;
   if (ov_.hlKind == "hiasan") { if (ov_.hlIndex == objIndex) ov_.hlMode = HighlightMode::Off; else if (ov_.hlIndex > objIndex) --ov_.hlIndex; }
   walkDirty_ = true;
+  scanPapan(world);
   return true;
 }
 
@@ -198,6 +201,22 @@ void WorldScene::hiasanRefresh(const Json& world) {
   const Json& objs = world["hiasan"]["objek"];
   for (size_t i = 0; i < objs.size(); ++i) hiasanPlace((int)i, objs[i]);
   walkDirty_ = true;
+  scanPapan(world);
+}
+
+bool WorldScene::hiasanText(Json& world, int objIndex, const std::string& teks, const std::string& ketinggian) {
+  Json& objs = ensureArray(world.obj["hiasan"], "objek");
+  if (objIndex < 0 || objIndex >= (int)objs.size()) return false;
+  Json& o = objs.arr[(size_t)objIndex];
+  auto set = [&](const char* key, const std::string& v) { if (v.empty()) o.obj.erase(key); else { Json j; j.type = Json::Type::String; j.str = v; o.obj[key] = j; } };
+  set("teks", teks); set("ketinggian", ketinggian);
+  scanPapan(world);
+  return true;
+}
+
+bool WorldScene::hiasanHasBoard(int objIndex) const {
+  for (const Placed& p : scenery_) if (p.objIndex == objIndex) return NameBoards::hasBoard(*p.model);
+  return false;
 }
 
 // ------------------------------------------------------------------ garis / node height / rails / terrain
@@ -282,6 +301,7 @@ bool WorldScene::trackEdit(const Json& world, const std::string& mapSlug, const 
     auto ground = [this](double wx, double wy) { return terrain_.groundHeight(wx, wy); };
     garis_.destroy(); garis_.build(world["hiasan"], catalog_, origin_, ground);
     scanMeja(world);
+    scanPapan(world);
     walkDirty_ = true;
   }
   return true;

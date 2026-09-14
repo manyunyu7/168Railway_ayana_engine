@@ -7,6 +7,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <vector>
 #include <string>
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -134,10 +136,53 @@ KEEP const char* eng_hiasan_info(int index) {
   GpuModel* m = c.scene->catalog().streamedModel(model);
   vec3 sz{0, 0, 0}; if (m) RollingStock::normalizeTransform(*m, true, &sz);
   char b[400];
-  std::snprintf(b, sizeof b, "{\"model\":\"%s\",\"x\":%.3f,\"y\":%.3f,\"naik\":%.3f,\"rot\":%.2f,\"skala\":%.3f,\"resident\":%s,\"size\":[%.2f,%.2f,%.2f]}",
+  std::snprintf(b, sizeof b, "{\"model\":\"%s\",\"x\":%.3f,\"y\":%.3f,\"naik\":%.3f,\"rot\":%.2f,\"skala\":%.3f,\"resident\":%s,\"size\":[%.2f,%.2f,%.2f],\"papan\":%s",
                 jsonEscape(model).c_str(), o["x"].numberOr(0), o["y"].numberOr(0), o["naik"].numberOr(0), o["rot"].numberOr(0), o["skala"].numberOr(1),
-                m ? "true" : "false", sz.x, sz.y, sz.z);
-  return editRet(b);
+                m ? "true" : "false", sz.x, sz.y, sz.z, c.scene->hiasanHasBoard(index) ? "true" : "false");
+  std::string out = b;
+  out += ",\"teks\":\"" + jsonEscape(o["teks"].stringOr("")) + "\",\"ketinggian\":\"" + jsonEscape(o["ketinggian"].stringOr("")) + "\"}";
+  return editRet(out);
+}
+KEEP int eng_hiasan_text(int index, const char* teks, const char* ketinggian) {
+  EngEditCtx c; if (!live(c)) return 0;
+  return c.scene->hiasanText(*c.world, index, teks ? teks : "", ketinggian ? ketinggian : "");
+}
+// Palette thumbnail: the resident model alone in an offscreen framebuffer, the reference's fixed 3/4 view
+// (uji3dTata.ts MesinThumb: direction (0.78, 0.52, 1), fov 32, distance = r / sin(fov/2) * 1.03), neutral sun
+// from (3, 5, 4), no fog, transparent background. Returns the RGBA8 rows top-down (px*px*4 bytes in a buffer
+// owned by the engine until the next call), nullptr when the model is not resident / px out of range.
+KEEP const uint8_t* eng_thumbnail(const char* id, int px) {
+  static std::vector<uint8_t> out, flip;
+  EngEditCtx c; if (!eng_edit_ctx(c) || !c.scene || !id || px < 8 || px > 1024) return nullptr;
+  GpuModel* m = c.scene->catalog().streamedModel(id);
+  if (!m || !m->textured()) return nullptr;
+  vec3 sz; mat4 norm = RollingStock::normalizeTransform(*m, true, &sz);
+  AABB box = m->bounds.transformed(norm);
+  vec3 centre = (box.min + box.max) * 0.5f; float r = std::fmax(0.05f, length(box.max - box.min) * 0.5f);
+  const float fov = radians(32.f);
+  float dist = r / std::sin(fov / 2) * 1.03f;
+  vec3 dir = normalize(vec3{0.78f, 0.52f, 1});
+  vec3 eye = centre + dir * dist;
+  mat4 view = mat4::lookAt(eye, centre, {0, 1, 0});
+  mat4 proj = mat4::perspective(fov, 1, std::fmax(0.01f, dist - r * 2.2f), dist + r * 4);
+  Lighting light; light.sunDir = normalize(vec3{3, 5, 4}); light.sunColor = {2.6f, 2.5f, 2.3f};
+  light.skyColor = {0.55f, 0.62f, 0.72f}; light.groundColor = {0.22f, 0.21f, 0.2f}; light.fogDensity = 0;
+  rhi::RenderTarget rt = rhi::createRenderTarget(px, px);
+  if (!rt.fbo) return nullptr;
+  rhi::bindRenderTarget(rt);
+  rhi::setViewport(px, px);
+  rhi::clear(0, 0, 0, 0);
+  ModelRenderer& rr = c.scene->renderer();
+  rr.beginFrame(proj * view, eye, light);
+  rr.draw(*m, norm);
+  rr.flushTransparent();
+  flip.resize((size_t)px * px * 4); out.resize(flip.size());
+  rhi::readPixels(0, 0, px, px, flip.data());
+  for (int y = 0; y < px; ++y) std::memcpy(&out[(size_t)y * px * 4], &flip[(size_t)(px - 1 - y) * px * 4], (size_t)px * 4);   // GL rows are bottom-up
+  rhi::bindRenderTarget({});
+  rhi::destroyRenderTarget(rt);
+  rhi::checkErrors("eng_thumbnail");
+  return out.data();
 }
 KEEP const char* eng_model_size(const char* id) {
   EngEditCtx c; if (!eng_edit_ctx(c) || !c.scene || !id) return "";
@@ -159,7 +204,7 @@ KEEP int eng_node_height(const char* nodeId, double h, int hasHeight) {
 }
 KEEP double eng_rails_rebuild(void) {
   EngEditCtx c; if (!live(c)) return 0;
-  double ms = c.scene->railsRebuild(*c.world, "/assets/font.efnt");
+  double ms = c.scene->railsRebuild(*c.world, ENG_API_FONT);
   std::printf("[ayana] rails rebuilt in %.0f ms\n", ms);
   return ms;
 }
@@ -208,7 +253,7 @@ KEEP int eng_track_edit(const char* worldJson) {
   if (!err.empty() || !w["graph"]["nodes"].size()) { std::fprintf(stderr, "[ayana] track_edit: %s\n", err.empty() ? "no graph.nodes" : err.c_str()); return 0; }
   *c.world = std::move(w);
   auto t0 = std::chrono::steady_clock::now();
-  bool ok = c.scene->trackEdit(*c.world, c.map, "/assets/font.efnt", c.summary);
+  bool ok = c.scene->trackEdit(*c.world, c.map, ENG_API_FONT, c.summary);
   std::printf("[ayana] track edit: %s, %.0f ms\n", ok ? "rebuilt" : "FAILED", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
   return ok;
 }

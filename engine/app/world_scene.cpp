@@ -100,7 +100,7 @@ bool WorldScene::buildStatic(const Json& world, const std::string& mapSlug, cons
   jpl_.build(graph_, world, origin_, ground);
   if (!cityPath.empty()) city_.build(cityPath, origin_, graph_, ground);
   stock_.init(catalog_); trains_.init(stock_);
-  if (!fontPath.empty()) meja_.setFont(fontPath);
+  if (!fontPath.empty()) { meja_.setFont(fontPath); papan_.setFont(fontPath); }
   // camera height follows the ground at the station
   stationScene_.y = terrain_.groundHeight(stationScene_.x + origin_.ox, stationScene_.z + origin_.oz);
   built_ = true;
@@ -129,6 +129,7 @@ void WorldScene::buildDecor(const Json& world, bool testGaris, const Json* summa
   }
   buildWalkCollider();
   scanMeja(world);
+  scanPapan(world);
   std::vector<AABB> footprints;
   for (const Placed& p : scenery_) footprints.push_back(p.bounds);
   trees_.build(terrain_, catalog_, footprints);
@@ -178,6 +179,7 @@ void WorldScene::draw(const mat4& viewProj, const mat4& view, vec3 eye, float fo
   rails_.draw(renderer_, &frustum, refDistance, night, benangAlways);
   for (const Placed& p : scenery_) if (p.model->textured() && frustum.contains(p.bounds)) renderer_.draw(*p.model, p.xf, &frustum);   // skipped while textures stream
   if (meja_.count()) { meja_.update(state_, eye, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count()); meja_.draw(renderer_, eye); }
+  if (papan_.count()) papan_.draw(renderer_, eye, &frustum);
   signals_.setView(fovY, viewportH, night); trains_.setView(fovY, viewportH, night);
   signals_.draw(renderer_, eye, &frustum);
   if (layers.wesel) points_.draw(renderer_, &frustum, refDistance);
@@ -193,7 +195,7 @@ void WorldScene::draw(const mat4& viewProj, const mat4& view, vec3 eye, float fo
 
 void WorldScene::destroy() {
   trains_.shutdown(); trees_.destroy(); garis_.destroy(); clouds_.destroy(); boards_.destroy(); jpl_.destroy(); city_.destroy();
-  meja_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy(); routes_.destroy();
+  meja_.destroy(); papan_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy(); routes_.destroy();
   scenery_.clear(); walk_.clear(); walkDirty_ = false;
   destroyOverlays();
   renderer_.shutdown(); sky_.shutdown();
@@ -210,6 +212,19 @@ void WorldScene::scanMeja(const Json& world) {
   for (const Placed& p : scenery_) placed.push_back({p.model, p.xf});
   for (const Json& s : world["scenery"].arr) if (s["kind"].stringOr("") == "station") stations.push_back({s["code"].stringOr(""), s["pos"]["x"].numberOr(0), s["pos"]["y"].numberOr(0)});
   meja_.scan(placed, stations, origin_);
+}
+
+void WorldScene::scanPapan(const Json& world) {
+  const Json& objs = world["hiasan"]["objek"];
+  std::vector<NameBoards::Placed> placed;
+  for (const Placed& p : scenery_) {
+    if (p.objIndex < 0 || p.objIndex >= (int)objs.size()) continue;
+    const Json& o = objs[(size_t)p.objIndex];
+    std::string teks = o["teks"].stringOr(""), ketinggian = o["ketinggian"].stringOr("");
+    if (teks.empty() && ketinggian.empty()) continue;
+    placed.push_back({p.model, p.xf, p.objIndex, teks, ketinggian});
+  }
+  papan_.scan(placed);
 }
 
 void WorldScene::buildWalkCollider() const {

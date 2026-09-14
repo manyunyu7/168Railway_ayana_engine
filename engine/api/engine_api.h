@@ -157,7 +157,14 @@ int eng_hiasan_set(int index, double wx, double wy, float naik, float rotDeg, fl
 int eng_hiasan_add(const char* json);       // {"model","x","y","naik","rot","skala",...} -> new index (-1 = bad json); a model
                                             // not resident yet is requested and shows when it lands
 int eng_hiasan_remove(int index);
-const char* eng_hiasan_info(int index);     // JSON {model,x,y,naik,rot,skala,resident,size:[x,y,z]} (size = normalised model), "" = bad index
+const char* eng_hiasan_info(int index);     // JSON {model,x,y,naik,rot,skala,resident,size:[x,y,z],papan,teks,ketinggian} (size = normalised
+                                            // model; papan = the resident model carries a `papan-nama` quad), "" = bad index
+int eng_hiasan_text(int index, const char* teks, const char* ketinggian);   // station name board text (uji3dPapanNama.ts): stored in the
+                                            // save entry ("" removes the field) and painted on the model's `papan-nama` quad (engine/world/name_board)
+// Palette thumbnail of a RESIDENT catalog model (never requests one): px x px RGBA8 rows top-down, transparent
+// background, the reference's fixed 3/4 view (uji3dTata.ts MesinThumb). The buffer belongs to the engine until the
+// next call (copy it out); nullptr while the model / its textures are not resident, or px outside 8..1024.
+const uint8_t* eng_thumbnail(const char* id, int px);
 const char* eng_model_size(const char* id); // "x,y,z" normalised size of a RESIDENT catalog model (palette cards; never requests one), "" otherwise
 int eng_garis_set(const char* json);        // {"index":i, kelas, naik, titik:[{x,y}], kunci} replaces (i < 0 appends); {"index":i,"remove":true}
 int eng_node_height(const char* nodeId, double h, int hasHeight);   // hand-written `tinggi` (raw DEM m); hasHeight 0 = follow the DEM. Takes effect at eng_rails_rebuild

@@ -25,3 +25,9 @@ struct EngEditCtx {
 
 // Fills `c` from the current Api state; false before eng_init. Strong definition in engine_api.cpp.
 bool eng_edit_ctx(eng::EngEditCtx& c);
+// The bitmap font (boards' text): the Emscripten preload path in the Wasm build, the checkout's copy natively (tests).
+#ifdef __EMSCRIPTEN__
+#define ENG_API_FONT "/assets/font.efnt"
+#else
+#define ENG_API_FONT ENG_SOURCE_DIR "/assets/font.efnt"
+#endif

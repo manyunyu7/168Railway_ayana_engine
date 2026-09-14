@@ -145,7 +145,13 @@ bool loadGlb(std::span<const uint8_t> bytes, Model& out, std::string& err) {
   if (jsonText.empty()) { err = "no JSON chunk"; return false; }
   std::string jerr; Json doc = Json::parse(jsonText, &jerr);
   if (!jerr.empty()) { err = "JSON: " + jerr; return false; }
-  if (doc["extensionsRequired"].size()) { err = "required extension: " + doc["extensionsRequired"][0].stringOr("?"); return false; }
+  // Required extensions the parser understands: KHR_materials_unlit (Material::unlit), KHR_lights_punctual (lights
+  // are not part of the model: ignored), EXT_texture_webp (the image source moves under the extension; the bytes
+  // stay encoded as always, the converter / the KTX2 twin provide the pixels). Anything else (Draco, meshopt) is refused.
+  for (const Json& e : doc["extensionsRequired"].arr) {
+    std::string n = e.stringOr("?");
+    if (n != "KHR_materials_unlit" && n != "KHR_lights_punctual" && n != "EXT_texture_webp") { err = "required extension: " + n; return false; }
+  }
   Ctx ctx{doc, bin, err};
 
   // images (kept encoded; converter decodes)
@@ -162,6 +168,7 @@ bool loadGlb(std::span<const uint8_t> bytes, Model& out, std::string& err) {
   std::vector<int> texToImage;
   for (const Json& t : doc["textures"].arr) {
     int img = t["source"].intOr(-1);
+    if (img < 0) img = t["extensions"]["EXT_texture_webp"]["source"].intOr(-1);
     texToImage.push_back(img);
     if (img < 0 || img >= (int)out.images.size() || !t.has("sampler")) continue;
     const Json& sm = doc["samplers"][(size_t)t["sampler"].intOr(0)];

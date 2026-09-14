@@ -133,7 +133,7 @@ void buildStaticWorld() {
   std::string city;   // the baked city arrives through eng_city_json as a MEMFS file (may come later: built then)
   FILE* f = std::fopen("/ayana-city.json", "rb");
   if (f) { std::fclose(f); city = "/ayana-city.json"; }
-  if (!g->scene.buildStatic(g->world, g->map, "/assets/font.efnt", city, [](const std::string& s) { std::printf("[ayana] %s\n", s.c_str()); })) {
+  if (!g->scene.buildStatic(g->world, g->map, ENG_API_FONT, city, [](const std::string& s) { std::printf("[ayana] %s\n", s.c_str()); })) {
     setError("world build failed"); return;
   }
   vec3 st = g->scene.stationScene();
