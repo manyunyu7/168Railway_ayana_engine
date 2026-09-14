@@ -79,6 +79,7 @@ Response = the **dynamic state**:
   signals: [{id, aspect:"red"|"yellow"|"green"}],
   occupancy: [{seg, iv:[[trainId, a, b], ...]}],          only segments with an interval
   routes:  [{id, entry, exit, exitLabel, segs, released, sepurSalah, izinTerisi}],
+  langsir: [{lok, kendali:"auto"|"manual", legIdx, legs:[[segId,...],...]}],   live shunting plans (putarLok.overlay)
   jpl:     [{id, closed}],                                 every scenery `jpl`; World.jplClosed (train within 350 m on
                                                            any track within 25 m), re-evaluated every 0.25 s of sim time
   log:     [{t, kind:"info"|"good"|"bad", text}]           only lines NEW since the previous step/state

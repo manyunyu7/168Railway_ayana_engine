@@ -49,6 +49,11 @@ SimState parseSimState(const Json& j) {
     for (const Json& iv : o["iv"].arr) oc.intervals.push_back({iv[0].stringOr(""), (float)iv[1].numberOr(0), (float)iv[2].numberOr(0)});
     st.occupancy.push_back(std::move(oc));
   }
+  for (const Json& o : j["langsir"].arr) {
+    SimLangsir lg; lg.lok = o["lok"].stringOr(""); lg.kendali = o["kendali"].stringOr("auto"); lg.legIdx = o["legIdx"].intOr(0);
+    for (const Json& leg : o["legs"].arr) { std::vector<std::string> segs; for (const Json& sg : leg.arr) segs.push_back(sg.stringOr("")); lg.legs.push_back(std::move(segs)); }
+    st.langsir.push_back(std::move(lg));
+  }
   for (const Json& o : j["jpl"].arr) st.jpl.push_back({o["id"].stringOr(""), o["closed"].boolOr(false)});
   for (const Json& l : j["log"].arr)
     st.log.push_back({l["t"].numberOr(0), l["kind"].stringOr(""), l["text"].stringOr("")});

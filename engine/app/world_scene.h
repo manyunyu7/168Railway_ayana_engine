@@ -106,6 +106,11 @@ public:
   const WorldSceneStats& stats() const { return stats_; }
   bool built() const { return built_; }
   SceneLayers layers;
+  // Camera context for the LOD rules (dunia3d.ts profilKam `acuan`): the mode's reference distance (bebas =
+  // orbit distance, jalan 90, kabin 60, samping/ekor = their distance, atas = its height; CameraRig::acuan)
+  // drives the iconic rail line, the points' skalaWesel and the glow "detail" flag; cabView (kabin) hides
+  // the route / occupancy / shunting ribbons; benangAlways forces the iconic line (layer "benang").
+  float refDistance = 0; bool cabView = false, benangAlways = false;
 
   // Debug helper (ENG_TEST_GARIS): a synthetic platform + fence + wall along the station track.
   static void injectTestGaris(Json& hiasan, const Json& summary, vec3& stationScene, const WorldOrigin& origin, Log log);

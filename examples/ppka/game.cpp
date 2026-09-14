@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 
 namespace eng {
 
@@ -60,6 +61,11 @@ bool Game::buildWorld() {
   if (!scene_.catalog().load()) std::fprintf(stderr, "catalog: %s\n", scene_.catalog().error().c_str());
   if (!scene_.buildStatic(sim_.world(), opt_.map, root + "/assets/font.efnt", city, [this](const std::string& s) { pushMessage(s); })) return false;
   scene_.buildDecor(sim_.world(), std::getenv("ENG_TEST_GARIS") != nullptr, &sim_.summary());
+  {   // the reference corridor atlas (catalog `tekstur.rel1067`, pilot picture) over the procedural one when present
+    const AssetCatalog::Options& co = scene_.catalog().options();
+    std::string eimg = RailBuilder::prepareAtlas(co.ppkaRoot, co.cacheDir, std::filesystem::path(co.convertExe).parent_path().string());
+    if (eimg.empty() || !scene_.rails().loadAtlas(eimg)) pushMessage("rail atlas: procedural (pilot-rel-1067.jpg / imgconv not found)");
+  }
   std::printf("%s\n", scene_.stats().summary.c_str());
   for (const Json& o : sim_.world()["hiasan"]["objek"].arr) if (!scene_.catalog().model(o["model"].stringOr(""))) pushMessage("missing model: " + o["model"].stringOr(""));
   // the station target was lifted to the carved ground (and maybe moved by ENG_TEST_GARIS)
@@ -380,6 +386,8 @@ void Game::render(Window& win) {
   vec3 eye = camEye();
   viewProj_ = proj * view;
   float dt = paused_ ? 0.f : (float)std::fmin(realDt_, 0.1);
+  scene_.refDistance = useFly_ && rig_.mode == CamMode::Bebas ? length(fly_.position - orbit_.target) : rig_.acuan(orbit_.distance);
+  scene_.cabView = rig_.mode == CamMode::Kabin;
   // per-mode fog (§9.1), exponential-squared matched at the linear midpoint; trains drawn after the hover ring
   scene_.draw(viewProj_, view, eye, camFovY(), h, sim_.state().clock, dt, timeScale_, rig_.fogDensity(scene_.worldWidth()), false);
   updateHover();

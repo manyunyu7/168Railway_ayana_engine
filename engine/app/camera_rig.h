@@ -70,6 +70,12 @@ public:
   vec3 up() const { return camUp_; }
   float fovDeg() const { return fovKini_; }
   float fovBaku() const;
+  // Reference distance of the mode (profilKam `acuan`, the LOD yardstick): bebas = the orbit distance given,
+  // jalan 90, kabin 60, samping/ekor = their following distance, atas = its height.
+  float acuan(float orbitDistance) const {
+    switch (mode) { case CamMode::Jalan: return 90; case CamMode::Kabin: return 60; case CamMode::Samping: return jarakSamping;
+                    case CamMode::Atas: return tinggiAtas; case CamMode::Ekor: return jarakEkor; default: return orbitDistance; }
+  }
   bool bolehTeropong() const { return mode == CamMode::Kabin || mode == CamMode::Samping || mode == CamMode::Ekor || mode == CamMode::Jalan; }
   mat4 view() const { return mat4::lookAt(camPos_, camLook_, camUp_); }
   mat4 projection(float aspect) const { CamProfile p = camProfile(mode); return mat4::perspective(radians(fovKini_), aspect, p.near, p.far); }

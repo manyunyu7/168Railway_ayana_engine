@@ -162,19 +162,19 @@ void WorldScene::draw(const mat4& viewProj, const mat4& view, vec3 eye, float fo
   Frustum frustum(viewProj);
   terrain_.draw(renderer_, &frustum);
   if (layers.pohon) trees_.draw(renderer_, eye, &frustum);
-  rails_.draw(renderer_, &frustum);
+  double hh = std::fmod(clock / 3600.0, 24.0); bool night = hh < 6 || hh >= 18;
+  rails_.draw(renderer_, &frustum, refDistance, night, benangAlways);
   for (const Placed& p : scenery_) if (frustum.contains(p.bounds)) renderer_.draw(*p.model, p.xf, &frustum);
-  { double hh = std::fmod(clock / 3600.0, 24.0); bool night = hh < 6 || hh >= 18;
-    signals_.setView(fovY, viewportH, night); trains_.setView(fovY, viewportH, night); }
+  signals_.setView(fovY, viewportH, night); trains_.setView(fovY, viewportH, night);
   signals_.draw(renderer_, eye, &frustum);
-  if (layers.wesel) points_.draw(renderer_, &frustum);
+  if (layers.wesel) points_.draw(renderer_, &frustum, refDistance);
   boards_.draw(renderer_, &frustum);
   jpl_.animate(dt * (float)std::fmax(1.0, timeScale));
   jpl_.draw(renderer_, &frustum);
   if (layers.kota) city_.draw(renderer_, &frustum);
   if (layers.awan) clouds_.draw(viewProj, view, eye, sky_, light_, dt);
   garis_.draw(renderer_, &frustum);
-  routes_.draw(renderer_, layers.pita);   // blended ribbons before the trains' own transparent parts
+  routes_.draw(renderer_, layers.pita, cabView);   // blended ribbons before the trains' own transparent parts
   if (drawTrains) trains_.draw(renderer_, &frustum);
 }
 
@@ -191,7 +191,7 @@ void WorldScene::pickAt(float px, float py, int w, int h, const mat4& viewProj, 
   for (const ScreenPoint& sp : signals_.screenPositions(viewProj, w, h, eye)) {
     if (!sp.visible) continue; float d = std::hypot(sp.x - px, sp.y - py); if (d < ds) { ds = d; bs = sp.id; }
   }
-  if (layers.wesel) for (const ScreenPoint& sp : points_.screenPositions(viewProj, w, h)) {
+  if (layers.wesel) for (const ScreenPoint& sp : points_.screenPositions(viewProj, w, h, refDistance)) {
     if (!sp.visible) continue; float d = std::hypot(sp.x - px, sp.y - py); if (d < dw) { dw = d; bp = sp.id; }
   }
   bool hitSig = ds <= 26, hitPt = dw <= 40;

@@ -155,39 +155,44 @@ void PointVisuals::setState(const std::string& nodeId, int setting, bool locked)
   for (PointInstance& p : points_) if (p.nodeId == nodeId) { p.setting = setting == 1 ? 1 : 0; p.locked = locked; return; }
 }
 
-void PointVisuals::draw(ModelRenderer& r, const Frustum* frustum) const {
+void PointVisuals::draw(ModelRenderer& r, const Frustum* frustum, float refDist) const {
   const vec3 eye = r.eye();
   double now = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
   float pulse = 0.92f + 0.08f * (float)std::sin(now / 240.0);   // denyut
+  const float k = scaleFor(refDist);                             // skalaWesel: the whole group about the node
+  const bool detail = refDist < LOD_THRESHOLD;
   for (const PointInstance& p : points_) {
+    const mat4 group = mat4::translation(p.pos) * mat4::scale({k, k, k}) * mat4::translation(-p.pos);
     for (int i = 0; i < 2; ++i) {
       bool set = i == p.setting; int state = (set ? 0 : 2) + (p.locked ? 1 : 0);
-      if (!frustum || frustum->contains(arrowBounds_.transformed(p.arrow[i]))) r.drawMesh(arrow_, mat_[state], {}, p.arrow[i]);
+      mat4 xf = group * p.arrow[i];
+      if (!frustum || frustum->contains(arrowBounds_.transformed(xf))) r.drawMesh(arrow_, mat_[state], {}, xf);
       else ++r.culled;
       // glow: ground ellipse 12 m along the leg + a curtain facing the camera about the leg axis
-      vec3 c = p.pos + p.legDir[i] * 12.f; c.y += CURTAIN_HEIGHT / 2;
-      if (length(c - eye) >= GLOW_RANGE) continue;
+      vec3 c = p.pos + p.legDir[i] * (12.f * k); c.y += CURTAIN_HEIGHT / 2 * k;
+      if (!detail || length(c - eye) >= GLOW_RANGE) continue;
       vec3 axis = p.legDir[i], side = normalize(cross(axis, vec3{0, 1, 0}));
-      r.drawMesh(glow_, glowMat_[state], glowTex_, basis(axis * GLOW_LENGTH, side * GLOW_WIDTH, {0, 1, 0}, {c.x, p.pos.y + 0.45f, c.z}));
+      r.drawMesh(glow_, glowMat_[state], glowTex_, basis(axis * (GLOW_LENGTH * k), side * (GLOW_WIDTH * k), {0, 1, 0}, {c.x, p.pos.y + 0.45f * k, c.z}));
       vec3 face = eye - c; face = face - axis * dot(face, axis);
       if (dot(face, face) < 1e-6f) face = vec3{0, 1, 0} - axis * axis.y;
       face = normalize(face); vec3 up = cross(face, axis);
-      r.drawMesh(glow_, curtainMat_[state], glowTex_, basis(axis * GLOW_LENGTH, up * CURTAIN_HEIGHT, face, c));
+      r.drawMesh(glow_, curtainMat_[state], glowTex_, basis(axis * (GLOW_LENGTH * k), up * (CURTAIN_HEIGHT * k), face, c));
     }
     if (p.locked) {   // padlock over the set leg's arrow side, 3 m sprite, pulsing
       float gs = (ARROW_OFFSET + ARROW_SCALE * 0.25f) * p.legSide[p.setting];
-      vec3 pos = p.pos + p.left * gs; pos.y += PADLOCK_Y;
-      float size = 3 * pulse;
+      vec3 pos = p.pos + p.left * (gs * k); pos.y += PADLOCK_Y * k;
+      float size = 3 * pulse * k;
       for (int k = 0; k < 3; ++k)
         r.drawMesh(k == 0 ? padDark_ : k == 1 ? padOrange_ : padHole_, padMat_[k], {}, billboard(pos, eye, size, 0.02f * (float)k));
     }
   }
 }
 
-std::vector<ScreenPoint> PointVisuals::screenPositions(const mat4& viewProj, int w, int h) const {
+std::vector<ScreenPoint> PointVisuals::screenPositions(const mat4& viewProj, int w, int h, float refDist) const {
   std::vector<ScreenPoint> out; out.reserve(points_.size());
+  const float k = scaleFor(refDist);
   for (const PointInstance& p : points_) {
-    vec4 c = viewProj * vec4(p.pos + vec3{0, ARROW_HEIGHT, 0}, 1);
+    vec4 c = viewProj * vec4(p.pos + vec3{0, ARROW_HEIGHT * k, 0}, 1);
     ScreenPoint sp; sp.id = p.nodeId;
     if (c.w > 0) {
       sp.x = (c.x / c.w * 0.5f + 0.5f) * (float)w; sp.y = (1 - (c.y / c.w * 0.5f + 0.5f)) * (float)h;

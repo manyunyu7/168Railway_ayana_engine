@@ -1,10 +1,16 @@
 #include "engine/world/rail_builder.h"
+#include "engine/asset/emod.h"
+#include "engine/core/json.h"
 #include "engine/render/mesh_builder.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <queue>
+#include <sstream>
 
 namespace eng {
 
@@ -228,7 +234,7 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
   railMat = {}; railMat.name = "rail"; railMat.metallic = 0.3f; railMat.roughness = 0.42f;
   concreteMat = {}; concreteMat.name = "concrete"; concreteMat.baseColor = {0x9a / 255.f, 0xa0 / 255.f, 0xa6 / 255.f, 1}; concreteMat.roughness = 0.92f; concreteMat.metallic = 0.02f;
   steelMat = {}; steelMat.name = "truss"; steelMat.baseColor = {0x5c / 255.f, 0x6b / 255.f, 0x5a / 255.f, 1}; steelMat.roughness = 0.68f; steelMat.metallic = 0.35f;
-  tunnelMat = {}; tunnelMat.name = "tunnel"; tunnelMat.baseColor = {0x4a / 255.f, 0x4d / 255.f, 0x52 / 255.f, 1}; tunnelMat.roughness = 0.98f; tunnelMat.metallic = 0;
+  tunnelMat = {}; tunnelMat.name = "tunnel"; tunnelMat.baseColor = {0x4a / 255.f, 0x4d / 255.f, 0x52 / 255.f, 1}; tunnelMat.roughness = 0.98f; tunnelMat.metallic = 0; tunnelMat.doubleSided = true;
 
   const WorldOrigin& o = g.origin();
   struct Builders { MeshBuilder ballast, rails, bridge, tunnel, truss; };
@@ -292,6 +298,7 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
       vec3 p = o.toScene(sm.wx, sm.wy, y);
       pts.push_back({p.x, p.y, p.z, (float)sm.tx, (float)sm.ty, (float)s});
     }
+    { std::vector<vec3> line; line.reserve(pts.size()); for (const Pt& p : pts) line.push_back({p.x, p.y + 0.5f, p.z}); centre_.push_back(std::move(line)); }
     const bool atGrade = seg.kind == RailKind::Ground;
     if (seg.kind == RailKind::Bridge) ++stats_.bridgeSegs;
     if (seg.kind == RailKind::Tunnel) ++stats_.tunnelSegs;
@@ -440,7 +447,7 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
   stats_.buildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
-void RailBuilder::draw(ModelRenderer& r, const Frustum* frustum) const {
+void RailBuilder::draw(ModelRenderer& r, const Frustum* frustum, float refDist, bool dark, bool always) const {
   const mat4 I = mat4::identity();
   for (const RailChunk& c : chunks_) {
     if (frustum && !frustum->contains(c.bounds)) { ++r.culled; continue; }
@@ -450,11 +457,81 @@ void RailBuilder::draw(ModelRenderer& r, const Frustum* frustum) const {
     if (c.tunnel.indexCount) r.drawMesh(c.tunnel, tunnelMat, {}, I);
     if (c.truss.indexCount) r.drawMesh(c.truss, steelMat, {}, I);
   }
+  // Iconic centreline with the BENANG_MUNCUL / BENANG_HILANG hysteresis (dunia3d.ts:4057-4063).
+  iconicOn_ = always || refDist > (iconicOn_ ? 500.f : 700.f);
+  if (!iconicOn_ || centre_.empty()) return;
+  // width bucket: ~1.6 px at the reference distance (52° fov, 1080 px ≈ 0.0009 m/px per metre), steps of ×1.5
+  float want = std::max(0.6f, refDist * 0.0015f);
+  if (!iconic_.indexCount || want > iconicWidth_ * 1.5f || want < iconicWidth_ / 1.5f) {
+    rhi::destroyMesh(iconic_);
+    iconicWidth_ = want;
+    MeshBuilder b;
+    for (const std::vector<vec3>& line : centre_) {
+      if (line.size() < 2) continue;
+      uint32_t first = (uint32_t)b.vertices.size();
+      for (size_t i = 0; i < line.size(); ++i) {
+        vec3 a = line[i > 0 ? i - 1 : 0], c = line[std::min(i + 1, line.size() - 1)];
+        vec3 t{c.x - a.x, 0, c.z - a.z}; float l = length(t); t = l > 1e-6f ? t / l : vec3{1, 0, 0};
+        vec3 side{-t.z * want / 2, 0, t.x * want / 2};
+        b.vertex(line[i] + side, {0, 1, 0}, {0, 0}); b.vertex(line[i] - side, {0, 1, 0}, {1, 0});
+      }
+      for (size_t i = 0; i + 1 < line.size(); ++i) {
+        uint32_t v = first + (uint32_t)i * 2;
+        b.triangle(v, v + 2, v + 1); b.triangle(v + 1, v + 2, v + 3);
+      }
+    }
+    iconic_ = b.empty() ? rhi::Mesh{} : b.upload();
+  }
+  if (!iconic_.indexCount) return;
+  Material m; m.name = "rel-ikonik"; m.unlit = true; m.doubleSided = true; m.metallic = 0; m.roughness = 1;
+  uint32_t c = dark ? 0xd6a04a : 0xb3702f;   // TEMA.gelap / terang .garis
+  m.baseColor = {std::pow((float)((c >> 16) & 255) / 255.f, 2.2f), std::pow((float)((c >> 8) & 255) / 255.f, 2.2f), std::pow((float)(c & 255) / 255.f, 2.2f), 1};
+  r.drawMesh(iconic_, m, {}, I);
+}
+
+void RailBuilder::setAtlas(rhi::Texture atlas) {
+  if (!atlas.id) return;
+  if (texture.id) rhi::destroyTexture(texture);
+  texture = atlas;
+}
+
+bool RailBuilder::loadAtlas(const std::string& eimgPath) {
+  std::ifstream f(eimgPath, std::ios::binary);
+  if (!f) return false;
+  std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), {});
+  Image im; std::string err;
+  if (!loadImageFile(bytes, im, err)) { std::fprintf(stderr, "rail atlas %s: %s\n", eimgPath.c_str(), err.c_str()); return false; }
+  rhi::Texture t = uploadImage(im);
+  if (!t.id) return false;
+  setAtlas(t);
+  return true;
+}
+
+std::string RailBuilder::prepareAtlas(const std::string& ppkaRoot, const std::string& cacheDir, const std::string& toolDir) {
+  namespace fs = std::filesystem;
+  std::string berkas = "pilot-rel-1067.jpg";
+  {   // catalog entry `tekstur.rel1067.berkas` (model.json) names the picture; the default is the known pilot file
+    std::ifstream f(ppkaRoot + "/public/model3d/model.json");
+    if (f) { std::stringstream ss; ss << f.rdbuf(); std::string err; Json j = Json::parse(ss.str(), &err); if (err.empty()) berkas = j["tekstur"]["rel1067"]["berkas"].stringOr(berkas); }
+  }
+  std::error_code ec;
+  std::string src = ppkaRoot + "/public/model3d/" + berkas;
+  std::string out = cacheDir + "/" + fs::path(berkas).stem().string() + ".eimg";
+  if (fs::exists(out, ec) && (!fs::exists(src, ec) || fs::last_write_time(out, ec) >= fs::last_write_time(src, ec))) return out;
+  std::string tool = toolDir + "/imgconv";
+  if (!fs::exists(src, ec) || !fs::exists(tool, ec)) return "";
+  fs::create_directories(cacheDir, ec);
+  auto q = [](const std::string& s) { std::string o = "'"; for (char c : s) o += c == '\'' ? std::string("'\\''") : std::string(1, c); return o + "'"; };
+  std::string cmd = q(tool) + " " + q(src) + " " + q(out) + " --max 512 --wrap-s clamp --wrap-t repeat --flip";
+  std::fprintf(stderr, "rail atlas: %s\n", cmd.c_str());
+  if (std::system(cmd.c_str()) != 0) return "";
+  return fs::exists(out, ec) ? out : "";
 }
 
 void RailBuilder::destroy() {
   for (RailChunk& c : chunks_) { rhi::destroyMesh(c.ballast); rhi::destroyMesh(c.rails); rhi::destroyMesh(c.bridge); rhi::destroyMesh(c.tunnel); rhi::destroyMesh(c.truss); }
-  chunks_.clear(); samples_.clear();
+  chunks_.clear(); samples_.clear(); centre_.clear();
+  rhi::destroyMesh(iconic_); iconic_ = {}; iconicWidth_ = 0; iconicOn_ = false;
   if (texture.id) { rhi::destroyTexture(texture); texture = {}; }
 }
 

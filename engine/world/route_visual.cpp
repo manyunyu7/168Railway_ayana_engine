@@ -16,7 +16,7 @@ Material ribbonMat(uint32_t c, float alpha) {
 }
 } // namespace
 
-rhi::Mesh RouteVisuals::buildRibbon(const std::vector<Span>& spans, float lift) const {
+rhi::Mesh RouteVisuals::buildRibbon(const std::vector<Span>& spans, float lift, float width, float dash) const {
   MeshBuilder b;
   const WorldOrigin& o = graph_->origin();
   for (const Span& sp : spans) {
@@ -33,12 +33,13 @@ rhi::Mesh RouteVisuals::buildRibbon(const std::vector<Span>& spans, float lift) 
       TrackSample sm = graph_->sampleAt(seg, s);
       float y = profile_->railHeight(sp.seg.c_str(), s) + lift;
       vec3 p = o.toScene(sm.wx, sm.wy, y);
-      vec3 side{(float)-sm.ty * WIDTH / 2, 0, (float)sm.tx * WIDTH / 2};
+      vec3 side{(float)-sm.ty * width / 2, 0, (float)sm.tx * width / 2};
       float v = (float)i / (float)n;
       b.vertex(p + side, {0, 1, 0}, {0, v});
       b.vertex(p - side, {0, 1, 0}, {1, v});
     }
     for (int i = 0; i < n; ++i) {
+      if (dash > 0 && (int)std::floor((s1 - s0) * ((double)i + 0.5) / n / dash) % 2 == 1) continue;   // odd dash = gap
       uint32_t a = first + (uint32_t)i * 2;
       b.triangle(a, a + 2, a + 1); b.triangle(a + 1, a + 2, a + 3);
     }
@@ -59,6 +60,27 @@ void RouteVisuals::update(const SimState& st) {
   std::sort(keys.begin(), keys.end());
   std::string fp;
   for (const std::string& k : keys) { fp += k; fp += ','; }
+  // Shunting plans: one mesh per leg (hud3d.ts perbaruiPitaLangsir); fingerprint lok:kendali:legIdx:segs.
+  std::string lfp;
+  for (const SimLangsir& lg : st.langsir) {
+    lfp += lg.lok + ":" + lg.kendali + ":" + std::to_string(lg.legIdx) + ":";
+    for (const auto& leg : lg.legs) { for (const std::string& sg : leg) { lfp += sg; lfp += '+'; } lfp += '/'; }
+    lfp += '|';
+  }
+  if (lfp != langsirFp_) {
+    langsirFp_ = lfp;
+    for (Langsir& l : langsir_) rhi::destroyMesh(l.mesh);
+    langsir_.clear();
+    for (const SimLangsir& lg : st.langsir)
+      for (size_t li = 0; li < lg.legs.size(); ++li) {
+        bool active = lg.kendali == "auto" && (int)li == lg.legIdx;
+        float op = active ? 0.9f : lg.kendali == "manual" ? 0.35f : 0.5f;
+        std::vector<Span> spans;
+        for (const std::string& sg : lg.legs[li]) spans.push_back({sg, 0, -1});
+        rhi::Mesh m = buildRibbon(spans, 0.8f, active ? 3.4f : 2.4f, 8.f);
+        if (m.indexCount) langsir_.push_back({m, ribbonMat(0xffc800, op)});
+      }
+  }
   if (fp == fingerprint_) return;
   fingerprint_ = fp;
   rhi::destroyMesh(route_); rhi::destroyMesh(occupied_);
@@ -91,12 +113,14 @@ void RouteVisuals::setPreview(const std::vector<std::string>& segs, bool deadEnd
 
 void RouteVisuals::clearPreview() { rhi::destroyMesh(preview_); preview_ = {}; }
 
-void RouteVisuals::draw(ModelRenderer& r, bool ribbons) const {
+void RouteVisuals::draw(ModelRenderer& r, bool ribbons, bool cab) const {
   const mat4 I;
+  if (cab) ribbons = false;
   // Ribbons overlap (a locked section that is also occupied must read red, the preview above
   // both): with depth writes off during blending, the draw order is the stacking order.
   if (ribbons && route_.indexCount) { r.drawMesh(route_, routeMat_, {}, I); r.flushTransparent(); }
   if (ribbons && occupied_.indexCount) { r.drawMesh(occupied_, occupiedMat_, {}, I); r.flushTransparent(); }
+  if (!cab) for (const Langsir& l : langsir_) { r.drawMesh(l.mesh, l.mat, {}, I); r.flushTransparent(); }
   if (preview_.indexCount) { r.drawMesh(preview_, previewDead_ ? deadEndMat_ : previewMat_, {}, I); r.flushTransparent(); }
 }
 
@@ -118,6 +142,8 @@ void RouteVisuals::drawHoverRing(ModelRenderer& r, vec3 base, float scale) {
 
 void RouteVisuals::destroy() {
   rhi::destroyMesh(route_); rhi::destroyMesh(occupied_); rhi::destroyMesh(preview_); rhi::destroyMesh(ring_);
+  for (Langsir& l : langsir_) rhi::destroyMesh(l.mesh);
+  langsir_.clear(); langsirFp_.clear();
   route_ = occupied_ = preview_ = {}; fingerprint_.clear();
 }
 

@@ -30,6 +30,8 @@ struct SimPoint { std::string id, lockedBy; int setting = 0; };
 struct SimSignal { std::string id, aspect; };
 struct SimLogLine { double time = 0; std::string kind, text; };
 struct SimRoute { std::string id, entry, exit, exitLabel; std::vector<std::string> segs, released; };
+// Shunting plan (putarLok overlay): the legs a detached loco will run; `kendali` "auto" (legIdx = the active leg) or "manual".
+struct SimLangsir { std::string lok, kendali; int legIdx = 0; std::vector<std::vector<std::string>> legs; };
 struct SimJpl { std::string id; bool closed = false; };   // level crossing barrier state (World.jplClosed)
 struct SimOccupancy { struct Interval { std::string train; float a = 0, b = 0; }; std::string seg; std::vector<Interval> intervals; };
 
@@ -40,6 +42,7 @@ struct SimState {
   std::vector<SimSignal> signals;
   std::vector<SimRoute> routes;          // active routes (segs minus released = still locked)
   std::vector<SimOccupancy> occupancy;   // only segments with an interval
+  std::vector<SimLangsir> langsir;       // live shunting plans (yellow dashed ribbons)
   std::vector<SimJpl> jpl;               // every scenery `jpl`, re-evaluated by the bridge every 0.25 s of sim time
   std::vector<SimLogLine> log;       // only lines new since the previous step
 };

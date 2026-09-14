@@ -147,6 +147,10 @@ export class SimStateBuilder {
       segs: r.def.segs, released: [...r.released],
       sepurSalah: !!r.def.sepurSalah, izinTerisi: !!r.def.izinTerisi,
     }));
+    // shunting plans (engine/putarLok.ts overlay): the yellow dashed ribbons; `legs` = segment ids per leg
+    const langsir = (session.putarLok?.overlay?.() ?? []).map((o: any) => ({
+      lok: o.lokId ?? null, kendali: o.kendali, legIdx: o.legIdx, legs: o.legs.map((l: any) => l.segs),
+    }));
     let fresh: any[] = [];
     if (withLog) {
       // session.log is newest-first (unshift); emit only entries not seen before, oldest first
@@ -159,7 +163,7 @@ export class SimStateBuilder {
       clock: r2(session.clock), score: session.score, violations: session.violations,
       pending: session.pending.length, timeScale: session.timeScale,
       trains: session.trains.map((t: any) => trainState(this.deps, world, session, t)),
-      points, signals, occupancy, routes, jpl: this.jplState(world, session), log: fresh,
+      points, signals, occupancy, routes, langsir, jpl: this.jplState(world, session), log: fresh,
     };
   }
 }

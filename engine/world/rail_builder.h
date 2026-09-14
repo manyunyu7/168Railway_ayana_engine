@@ -32,7 +32,13 @@ public:
   // >= 25 m above ground, Warren through-truss when the structure chain spans >= 50 m and sits >= 8 m up,
   // plain deck otherwise (uji3dJembatan.ts:265-269).
   void build(const TrackGraph& g, const RailProfile& profile, const HeightSource* ground = nullptr, float demBase = 0);
-  void draw(ModelRenderer& r, const Frustum* frustum = nullptr) const;
+  // refDist = the camera mode's reference distance (dunia3d.ts profilKam acuan): the iconic centreline
+  // ("rel-ikonik", bangun3d.ts:494-505 — a 1 px yellow line 0.5 m over the rail head, TEMA.garis) appears
+  // when it exceeds BENANG_MUNCUL 700 m and hides again below BENANG_HILANG 500 m; `always` forces it
+  // (layer "benang"). The RHI has no lines, so it is a strip of up-facing quads whose width tracks the
+  // reference distance (≈ 1.6 px), rebuilt when the width bucket changes. `dark` = night colour.
+  void draw(ModelRenderer& r, const Frustum* frustum = nullptr, float refDist = 0, bool dark = false, bool always = false) const;
+  bool iconicVisible() const { return iconicOn_; }
   void destroy();
 
   const std::vector<RailSample>& samples() const { return samples_; }   // every 12 m, for terrain carving
@@ -43,12 +49,24 @@ public:
   const Stats& stats() const { return stats_; }
 
   Material ballastMat, railMat, concreteMat, tunnelMat, steelMat;
-  rhi::Texture texture{};                      // procedural ballast/sleeper/rail atlas (sRGB)
+  rhi::Texture texture{};                      // ballast/sleeper/rail atlas (sRGB): the catalog's `tekstur.rel1067`
+                                               // picture when available, else the procedural painter (same layout)
+  // Replaces the atlas (the builder owns and frees it). Same UV layout as the procedural one: 512² atlas,
+  // 1 tile = 7.76 m along v, sleeper band u 0.266..0.463, rail body / head u 0.775 / 0.800..0.822
+  // (keretaVisual3d.ts:251-262 swaps the picture into the same materials). The web adapter supplies it here.
+  void setAtlas(rhi::Texture atlas);
+  bool loadAtlas(const std::string& eimgPath);   // EIMG file (tools/imgconv) -> setAtlas
+  // Native: the `.eimg` for the catalog's `tekstur.rel1067` picture — `<cacheDir>/<stem>.eimg`, converted from
+  // `<ppkaRoot>/public/model3d/<berkas>` with `<toolDir>/imgconv --max 512 --wrap-s clamp --flip` when missing
+  // (the picture is a pilot asset and stays out of the repo). "" when the picture or the tool is unavailable.
+  static std::string prepareAtlas(const std::string& ppkaRoot, const std::string& cacheDir, const std::string& toolDir);
 
 private:
   void paintTexture();
   std::vector<RailChunk> chunks_;
   std::vector<RailSample> samples_;
+  std::vector<std::vector<vec3>> centre_;      // per-segment centreline (scene, rail head + 0.5) for the iconic line
+  mutable rhi::Mesh iconic_; mutable float iconicWidth_ = 0; mutable bool iconicOn_ = false;
   Stats stats_;
 };
 
