@@ -28,6 +28,7 @@
 #include "engine/world/track_graph.h"
 #include "engine/world/train_visual.h"
 #include "engine/world/vegetation.h"
+#include "engine/world/walk_collision.h"
 #include <functional>
 #include <string>
 #include <vector>
@@ -81,9 +82,10 @@ public:
   void pickAt(float px, float py, int w, int h, const mat4& viewProj, vec3 eye, std::string& sigId, std::string& ptId) const;
   bool objectPos(const std::string& id, bool signal, vec3& out) const;   // hover ring anchor
 
-  // Walk-mode collision boxes (CameraRig WalkBox): every hiasan model primitive (a wall when its footprint is
-  // under 400 m² — a hut, a shelter; the baked station shells and platform slabs are floors only, so the
-  // building can still be entered and a platform is climbed by jumping) + every train vehicle (walls).
+  // Walk-mode collision (CameraRig WalkInput): the scenery triangles (hiasan station models: walls, floors,
+  // ceilings, `peron`-named materials flagged as platforms; garis platforms/roads/decks: floors) built with the
+  // decor, and the train vehicles as boxes (walls, collected per step since they move).
+  const WalkCollider& walkCollider() const { return walk_; }
   void collectWalkBoxes(std::vector<WalkBox>& out) const;
   float groundHeight(double wx, double wy) const { return terrain_.groundHeight(wx, wy); }
   float groundScene(float x, float z) const { return terrain_.groundHeight(x + origin_.ox, z + origin_.oz); }
@@ -135,6 +137,8 @@ private:
   AssetCatalog catalog_; RollingStock stock_; TrainVisuals trains_;
   struct Placed { GpuModel* model; mat4 xf; AABB bounds; };
   std::vector<Placed> scenery_;
+  WalkCollider walk_;
+  void buildWalkCollider();
   Vegetation trees_;
   MejaBoard meja_; SimState state_;
   std::string tileDir_;   // per-tile terrain source ("" = monolithic / streamed by the host)

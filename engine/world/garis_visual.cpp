@@ -52,25 +52,52 @@ bool GarisVisuals::procParts(const std::string& name, std::vector<ProcPart>& out
   return false;
 }
 
-void GarisVisuals::placeProc(const std::string& name, const std::vector<mat4>& mats) {
+bool GarisVisuals::walkFloor(const GarisEntry& k) {
+  if (k.datar) return true;
+  for (const char* kat : {"peron", "jalan", "jembatan", "tanggul", "sawah", "rel"}) if (k.kategori == kat) return true;
+  return false;
+}
+
+void GarisVisuals::placeProc(const std::string& name, const std::vector<mat4>& mats, bool walk, bool peron) {
   std::vector<ProcPart> parts;
   if (!procParts(name, parts)) { ++stats.missing; std::printf("[garis] no procedural prototype '%s'\n", name.c_str()); return; }
+  MeshBuilder walkMesh;
   for (const ProcPart& p : parts) {
     MeshBuilder unit; unit.box(p.size * -0.5f, p.size * 0.5f);
     mat4 local = mat4::translation(p.centre) * (p.rotX != 0 ? mat4::rotationX(p.rotX) : mat4::identity());
     unsigned key = (p.color & 0xffffffu) | ((unsigned)(p.rough * 255) << 24);
     MeshBuilder& mb = procBuild_[key];
     for (const mat4& m : mats) mb.append(unit, m * local);
+    if (walk && p.size.y >= 0.05f) for (const mat4& m : mats) walkMesh.append(unit, m * local);   // paint-thin strips (safety line) skipped
+  }
+  if (walk && !walkMesh.empty()) {
+    ProcWalk w; w.peron = peron; w.idx = walkMesh.indices; w.pos.reserve(walkMesh.vertices.size());
+    for (const Vertex& v : walkMesh.vertices) w.pos.push_back(v.pos);
+    procWalk_.push_back(std::move(w));
   }
 }
 
-void GarisVisuals::placeGlb(const std::string& catalogId, AssetCatalog& catalog, const std::vector<mat4>& mats) {
+void GarisVisuals::placeGlb(const std::string& catalogId, AssetCatalog& catalog, const std::vector<mat4>& mats, bool walk, bool peron) {
   GpuModel* m = catalog.model(catalogId);
   if (!m) { ++stats.missing; return; }   // pilot GLB absent: skipped silently (as the web)
   ModelSlot& slot = slots_[catalogId];
-  if (!slot.model) { slot.model = m; slot.norm = RollingStock::normalizeTransform(*m, true); }   // long axis +X, centred, base y = 0
+  if (!slot.model) { slot.model = m; slot.norm = RollingStock::normalizeTransform(*m, true); slot.walk = walk; slot.peron = peron; }   // long axis +X, centred, base y = 0
   AABB local = m->bounds.transformed(slot.norm);
   for (const mat4& mm : mats) { slot.mats.push_back(mm * slot.norm); slot.bounds.expand(local.transformed(mm)); }
+}
+
+void GarisVisuals::collectWalk(WalkCollider& out, const AssetCatalog&) const {
+  for (const ProcWalk& w : procWalk_) out.addMesh(w.pos, w.idx, mat4::identity(), w.peron, true);
+  for (const auto& [id, slot] : slots_) {
+    if (!slot.walk || !slot.model) continue;
+    const GpuModel& m = *slot.model;
+    for (size_t ni = 0; ni < m.nodes.size(); ++ni) {
+      const Node& n = m.nodes[ni];
+      if (n.mesh < 0 || n.mesh >= (int)m.meshes.size()) continue;
+      for (const GpuPrimitive& prim : m.meshes[(size_t)n.mesh].primitives)
+        for (const mat4& mm : slot.mats) out.addMesh(prim.collisionPos, prim.collisionIdx, mm * m.world[ni], slot.peron, true);
+    }
+  }
 }
 
 void GarisVisuals::build(const Json& hiasan, AssetCatalog& catalog, const WorldOrigin& origin, const GroundFn& ground) {
@@ -94,9 +121,10 @@ void GarisVisuals::build(const Json& hiasan, AssetCatalog& catalog, const WorldO
       stats.tiles += mats.size();
       return mats;
     };
+    const bool walk = walkFloor(*k), peron = k->kategori == "peron";
     auto put = [&](const std::string& berkasKey, const std::string& prosedural, const std::vector<mat4>& mats) {
       if (mats.empty()) return;
-      if (!prosedural.empty()) placeProc(prosedural, mats); else placeGlb(berkasKey, catalog, mats);
+      if (!prosedural.empty()) placeProc(prosedural, mats, walk, peron); else placeGlb(berkasKey, catalog, mats, walk, peron);
     };
     if (!k->berkas.empty() || !k->prosedural.empty()) put("garis:" + k->id, k->prosedural, frames(k->langkah, true));
     if ((!k->tiang.empty() || !k->tiangProsedural.empty()) && k->jarakTiang > 0) put("garis:" + k->id + ":tiang", k->tiangProsedural, frames(k->jarakTiang, false));
@@ -136,7 +164,7 @@ void GarisVisuals::destroy() {
   for (auto& [id, slot] : slots_) if (slot.instances.id) rhi::destroyBuffer(slot.instances);
   slots_.clear();
   for (ProcMesh& pm : proc_) rhi::destroyMesh(pm.mesh);
-  proc_.clear(); procBuild_.clear();
+  proc_.clear(); procBuild_.clear(); procWalk_.clear();
 }
 
 } // namespace eng

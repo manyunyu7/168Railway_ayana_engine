@@ -11,6 +11,7 @@ constexpr float EL_MIN = -8 * PI / 180, EL_MAKS = PI / 2;            // uji3dOrb
 constexpr float MATA_JALAN = 1.62f, LAJU_JALAN = 4.5f, LAJU_LARI = 12; // walker eye / speeds
 constexpr float RADIUS_JALAN = 0.38f, NAIK_MAKS = 0.45f, GRAVITASI = 9.81f, LAJU_LOMPAT = 4.6f; constexpr int LOMPAT_MAKS = 2;
 constexpr float TINGGI_SINAR[3] = {0.35f, 1.05f, 1.55f};   // knee, chest, head above the feet
+constexpr float KERB_PERON = 1.1f, RUANG_KEPALA = 0.12f, MIRING_MIN = 0.25f;   // platform kerb stepped onto without a jump; head room under a ceiling
 constexpr float DRAG_KABIN = 0.004f, DRAG_ORBIT = 0.005f, DRAG_JALAN = 0.005f;
 constexpr float KABIN_SISI_MAKS = 1.2f, KABIN_TINGGI_MIN = 0.5f, KABIN_TINGGI_MAKS = 3.5f;   // cab eye limits
 constexpr float LAJU_KABIN = 1.5f, LAJU_KABIN_CEPAT = 4;               // m/s
@@ -164,9 +165,77 @@ void CameraRig::orbitKe(const GroundFn& ground) {
   float minY = ground(posKam_.x, posKam_.z) + 2; if (posKam_.y < minY) posKam_.y = minY;
 }
 
-// uji3dJalanKaki.ts Pejalan.langkah with AABBs: slide along walls (two passes, the second wall is only seen
-// after the first is obeyed), floor = the ground or the highest box top within NAIK_MAKS of the feet, jump on
-// the key's rising edge (double jump while the quota lasts), gravity otherwise.
+// uji3dJalanRaba.ts sinarDatar over both sources: the scenery triangles (rays at the three heights, from the
+// body's centre and both sides of the RADIUS so a corner brushed diagonally also pushes) and the vehicle boxes
+// (2-D slab test at the same heights). Distances are along the step direction from the body's centre line.
+// A wall whose top is a kerb (NAIK_MAKS above the feet; KERB_PERON for platform geometry) is stepped on, not hit.
+CameraRig::KenaDinding CameraRig::sinarDatar(vec3 kaki, float ax, float az, float jauh, const WalkInput& in) const {
+  KenaDinding dekat;
+  auto lebihDekat = [&](float d, float nx, float nz) { if (!dekat.ada || d < dekat.jarak) dekat = {d, nx, nz, true}; };
+  const float px = -az, pz = ax;   // perpendicular in the (x, z) plane
+  for (float h : TINGGI_SINAR) {
+    const float y = kaki.y + h;
+    if (in.mesh) for (float s : {0.f, -RADIUS_JALAN, RADIUS_JALAN}) {
+      WalkCollider::WallHit k;
+      vec3 o{kaki.x + px * s, y, kaki.z + pz * s};
+      // walk the ray past kerbs: a hit whose top the walker steps over is skipped and the ray continues behind it
+      float mulai = 0;
+      for (int n = 0; n < 4 && mulai < jauh; ++n) {
+        if (!in.mesh->wallRay({o.x + ax * mulai, y, o.z + az * mulai}, ax, az, jauh - mulai, k)) break;
+        float d = mulai + k.dist;
+        if (k.top <= kaki.y + (k.peron ? KERB_PERON : NAIK_MAKS)) { mulai = d + 0.01f; continue; }
+        lebihDekat(d, k.nx, k.nz); break;
+      }
+    }
+    if (in.boxes) for (const WalkBox& wb : *in.boxes) {
+      const AABB& b = wb.box;
+      if (!wb.wall || b.min.y > y || b.max.y < y || b.max.y <= kaki.y + NAIK_MAKS) continue;
+      float t0 = 0, t1 = jauh; int sisi = -1;   // 2-D slab; the entry axis gives the face normal
+      const float o[2] = {kaki.x, kaki.z}, d[2] = {ax, az}, mn[2] = {b.min.x, b.min.z}, mx[2] = {b.max.x, b.max.z};
+      bool luar = false;
+      for (int i = 0; i < 2 && !luar; ++i) {
+        if (std::fabs(d[i]) < 1e-9f) { if (o[i] < mn[i] || o[i] > mx[i]) luar = true; continue; }
+        float inv = 1 / d[i], a = (mn[i] - o[i]) * inv, c = (mx[i] - o[i]) * inv; if (a > c) std::swap(a, c);
+        if (a > t0) { t0 = a; sisi = i; } if (c < t1) t1 = c;
+        if (t0 > t1) luar = true;
+      }
+      if (luar) continue;
+      float nx = sisi == 0 ? (ax > 0 ? -1.f : 1.f) : 0, nz = sisi == 1 ? (az > 0 ? -1.f : 1.f) : 0;
+      if (sisi < 0) { nx = -ax; nz = -az; }   // started inside the box: push straight back
+      lebihDekat(t0, nx, nz);
+    }
+  }
+  return dekat;
+}
+
+// uji3dJalanKaki.ts luncur: the component of the step that enters a wall is dropped, the rest slides along it.
+// Two rounds — the second wall of a corner is only seen after the first is obeyed.
+void CameraRig::luncur(float& dx, float& dz, const WalkInput& in) const {
+  for (int iter = 0; iter < 2; ++iter) {
+    float jauh = std::hypot(dx, dz);
+    if (jauh < 1e-6f) { dx = dz = 0; return; }
+    float ax = dx / jauh, az = dz / jauh;
+    // the ray is long enough for an oblique wall (cos >= MIRING_MIN) to be seen before the body reaches it
+    KenaDinding k = sinarDatar(pejalan_, ax, az, jauh + RADIUS_JALAN / MIRING_MIN, in);
+    if (!k.ada) return;
+    float nl = std::hypot(k.nx, k.nz);
+    if (nl < 1e-6f) { dx = dz = 0; return; }
+    float nx = k.nx / nl, nz = k.nz / nl;
+    if (nx * ax + nz * az > 0) { nx = -nx; nz = -nz; }   // back faces of unwound third-party meshes
+    // allowed advance: until the body (a disc of RADIUS) touches the wall plane — the ray distance is along the
+    // step, so an oblique approach stops RADIUS / cos earlier, not RADIUS (else a diagonal walk sinks into the wall)
+    float miring = std::max(MIRING_MIN, -(nx * ax + nz * az));
+    if (k.jarak > jauh + RADIUS_JALAN / miring) return;
+    float boleh = std::max(0.f, k.jarak - RADIUS_JALAN / miring);
+    float bx = ax * boleh, bz = az * boleh, sx = dx - bx, sz = dz - bz, d = sx * nx + sz * nz;
+    dx = bx + (sx - nx * d); dz = bz + (sz - nz * d);
+  }
+}
+
+// uji3dJalanKaki.ts Pejalan.langkah: slide along walls, then the floor under the feet — the ground, a box top or
+// the nearest mesh floor probed from NAIK_MAKS above the feet (KERB_PERON for platform floors, so a 1 m platform is
+// stepped onto at its edge; ramps and stairs are ordinary floors). Jump on the key's rising edge (double jump
+// while the quota lasts), gravity otherwise; a ceiling stops the rise (head room RUANG_KEPALA over the eye).
 void CameraRig::langkahJalan(float dtRaw, const GroundFn& ground, const WalkInput& in) {
   const float dt = std::min(0.05f, std::max(0.f, dtRaw));   // a stalled frame must not teleport through a wall
   vec3 fwd{-std::sin(jalanYaw_), 0, -std::cos(jalanYaw_)}, right{std::cos(jalanYaw_), 0, -std::sin(jalanYaw_)};
@@ -174,28 +243,13 @@ void CameraRig::langkahJalan(float dtRaw, const GroundFn& ground, const WalkInpu
   vec3 move = fwd * in.forward + right * in.side;
   if (dot(move, move) > 1e-6f) {
     move = normalize(move) * (v * dt);
-    vec3 from = pejalan_, p = pejalan_ + move;
-    if (in.boxes) {
-      const float lo = pejalan_.y + TINGGI_SINAR[0], hi = pejalan_.y + TINGGI_SINAR[2];
-      for (int pass = 0; pass < 2; ++pass) {
-        for (const WalkBox& wb : *in.boxes) {
-          const AABB& b = wb.box;
-          if (!wb.wall || b.max.y < lo || b.min.y > hi) continue;   // below the knee / above the head: not a wall
-          if (p.x <= b.min.x - RADIUS_JALAN || p.x >= b.max.x + RADIUS_JALAN || p.z <= b.min.z - RADIUS_JALAN || p.z >= b.max.z + RADIUS_JALAN) continue;
-          // push out along the shallowest penetration axis of the RADIUS-expanded box
-          float px0 = p.x - (b.min.x - RADIUS_JALAN), px1 = (b.max.x + RADIUS_JALAN) - p.x;
-          float pz0 = p.z - (b.min.z - RADIUS_JALAN), pz1 = (b.max.z + RADIUS_JALAN) - p.z;
-          float m = std::min(std::min(px0, px1), std::min(pz0, pz1));
-          if (m == px0) p.x = b.min.x - RADIUS_JALAN; else if (m == px1) p.x = b.max.x + RADIUS_JALAN;
-          else if (m == pz0) p.z = b.min.z - RADIUS_JALAN; else p.z = b.max.z + RADIUS_JALAN;
-        }
-      }
-    }
-    pejalan_.x = p.x; pejalan_.z = p.z;
-    tempuh_ += length(horizontal(pejalan_ - from));
+    float dx = move.x, dz = move.z;
+    luncur(dx, dz, in);
+    pejalan_.x += dx; pejalan_.z += dz;
+    tempuh_ += std::hypot(dx, dz);
   }
-  // vertical: floor under the feet (ground, or a box top within NAIK_MAKS above / 6 m below the feet)
-  float lantai = ground(pejalan_.x, pejalan_.z);
+  // vertical: floor under the feet
+  float lantai = ground(pejalan_.x, pejalan_.z); bool lantaiPeron = false;
   if (in.boxes) {
     float atas = pejalan_.y + NAIK_MAKS;
     for (const WalkBox& wb : *in.boxes) {
@@ -204,16 +258,31 @@ void CameraRig::langkahJalan(float dtRaw, const GroundFn& ground, const WalkInpu
       if (b.max.y <= atas && b.max.y >= atas - (NAIK_MAKS + 6) && b.max.y > lantai) lantai = b.max.y;
     }
   }
+  if (in.mesh) {
+    WalkCollider::FloorHit k;
+    // probed from the kerb height first (a platform floor within KERB_PERON), else from the step height
+    bool ada = in.mesh->floorBelow({pejalan_.x, pejalan_.y + KERB_PERON, pejalan_.z}, KERB_PERON + 6, k);
+    if (ada && !(k.peron || k.y <= pejalan_.y + NAIK_MAKS)) ada = in.mesh->floorBelow({pejalan_.x, pejalan_.y + NAIK_MAKS, pejalan_.z}, NAIK_MAKS + 6, k);
+    if (ada && k.y > lantai) { lantai = k.y; lantaiPeron = k.peron && k.y > pejalan_.y + NAIK_MAKS; }
+  }
   bool tekanLompat = in.jump && !lompatSebelum_;
   lompatSebelum_ = in.jump;
   if (tekanLompat && (diTanah_ || lompatSisa_ > 0)) {
     if (diTanah_) lompatSisa_ = LOMPAT_MAKS;
     vyJalan_ = LAJU_LOMPAT; diTanah_ = false; --lompatSisa_;
   }
-  if (diTanah_ && vyJalan_ <= 0 && std::fabs(lantai - pejalan_.y) <= NAIK_MAKS) { pejalan_.y = lantai; vyJalan_ = 0; }
+  // stick to the floor only when it is near: up/down within NAIK_MAKS (stairs, ramps), or a platform kerb up
+  if (diTanah_ && vyJalan_ <= 0 && (std::fabs(lantai - pejalan_.y) <= NAIK_MAKS || (lantaiPeron && lantai - pejalan_.y <= KERB_PERON))) { pejalan_.y = lantai; vyJalan_ = 0; }
   else {
     vyJalan_ -= GRAVITASI * dt;
-    pejalan_.y += vyJalan_ * dt;
+    float yBaru = pejalan_.y + vyJalan_ * dt;
+    if (vyJalan_ > 0 && in.mesh) {   // ceiling: only while rising (a double jump inside a room must not land on its roof)
+      float jangkau = MATA_JALAN + RUANG_KEPALA + (yBaru - pejalan_.y), atap;
+      if (in.mesh->ceilingAbove({pejalan_.x, pejalan_.y + 0.05f, pejalan_.z}, std::max(0.f, jangkau - 0.05f), atap) && yBaru + MATA_JALAN + RUANG_KEPALA > atap) {
+        yBaru = atap - MATA_JALAN - RUANG_KEPALA; vyJalan_ = 0;
+      }
+    }
+    pejalan_.y = yBaru;
     if (pejalan_.y <= lantai) { pejalan_.y = lantai; vyJalan_ = 0; diTanah_ = true; lompatSisa_ = LOMPAT_MAKS; }
     else diTanah_ = false;
   }

@@ -118,7 +118,7 @@ void updateCamera(float dt) {
     in.jump = g->rig.mode == CamMode::Jalan && g->space;
   }
   std::vector<WalkBox> boxes;
-  if (g->rig.mode == CamMode::Jalan) { g->scene.collectWalkBoxes(boxes); in.boxes = &boxes; }
+  if (g->rig.mode == CamMode::Jalan) { g->scene.collectWalkBoxes(boxes); in.boxes = &boxes; in.mesh = &g->scene.walkCollider(); }
   TrainPath tp; bool has = subjectPath(tp);
   if (has) { tp.timeScale = g->paused ? 0 : g->timeScale; }
   if (!g->rig.step(dt, has ? &tp : nullptr, ground, in)) eng_camera_mode(0);

@@ -68,7 +68,7 @@ bool AssetCatalog::parseCatalog(const std::string& text) {
   std::string jerr; Json doc = Json::parse(text, &jerr);
   if (!jerr.empty()) { err_ = "model.json: " + jerr; return false; }
   entries_.clear();
-  for (const auto& [id, j] : doc["sarana"].obj) if (j.isObject()) entries_[id] = entryFrom(id, j);
+  for (const auto& [id, j] : doc["sarana"].obj) if (j.isObject()) { entries_[id] = entryFrom(id, j); entries_[id].sarana = true; }
   for (const Json& j : doc["objek"].arr) {
     std::string id = j["id"].stringOr("");
     if (!id.empty() && !entries_.count(id)) entries_[id] = entryFrom(id, j);
@@ -179,7 +179,7 @@ GpuModel* AssetCatalog::model(const std::string& id) {
   std::string path = emodPath(id);
   if (!path.empty()) {
     Model m; std::string err;
-    if (loadEmod(path, m, err)) { gpu = std::make_unique<GpuModel>(); gpu->upload(m); }
+    if (loadEmod(path, m, err)) { gpu = std::make_unique<GpuModel>(); gpu->upload(m, keepGeometry(id)); }
     else std::printf("[assets] %s: %s\n", id.c_str(), err.c_str());
   }
   GpuModel* raw = gpu.get();
@@ -190,7 +190,7 @@ GpuModel* AssetCatalog::model(const std::string& id) {
 bool AssetCatalog::provide(const std::string& id, std::span<const uint8_t> emodBytes, std::string& error) {
   Model m;
   if (!loadEmod(emodBytes, m, error)) { models_[id] = nullptr; return false; }
-  auto gpu = std::make_unique<GpuModel>(); gpu->upload(m);
+  auto gpu = std::make_unique<GpuModel>(); gpu->upload(m, keepGeometry(id));
   std::vector<ImageHint> h;
   for (const Image& im : m.images) h.push_back({im.source, im.wrapS, im.wrapT, im.linear, im.placeholder()});
   hints_[id] = std::move(h);
@@ -204,13 +204,20 @@ bool AssetCatalog::provideGlb(const std::string& id, std::span<const uint8_t> gl
   if (!loadGlb(glbBytes, m, error)) { models_[id] = nullptr; return false; }
   // the runtime never decodes PNG/JPEG: image i becomes placeholder i, textured by the host's KTX2 twin (same order)
   for (size_t i = 0; i < m.images.size(); ++i) { Image& im = m.images[i]; im.encoded.clear(); im.mime.clear(); im.pixels.clear(); im.variants.clear(); im.source = (int)i; }
-  auto gpu = std::make_unique<GpuModel>(); gpu->upload(m);
+  auto gpu = std::make_unique<GpuModel>(); gpu->upload(m, keepGeometry(id));
   std::vector<ImageHint> h;
   for (const Image& im : m.images) h.push_back({im.source, im.wrapS, im.wrapT, im.linear, im.placeholder()});
   hints_[id] = std::move(h);
   if (auto it = models_.find(id); it != models_.end() && it->second) it->second->destroy();
   models_[id] = std::move(gpu);
   return true;
+}
+
+// Scenery (hiasan objects, garis tiles) keeps a CPU copy of its geometry for the walk collider; rolling stock
+// (walked around as boxes) does not.
+bool AssetCatalog::keepGeometry(const std::string& id) const {
+  const CatalogEntry* e = find(id);
+  return e && !e->sarana;
 }
 
 const std::vector<AssetCatalog::ImageHint>* AssetCatalog::imageHints(const std::string& id) const {

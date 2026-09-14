@@ -21,7 +21,9 @@ struct Lighting {
 // Returns id 0 when nothing is usable (logged).
 rhi::Texture uploadImage(const Image& im);
 
-struct GpuPrimitive { rhi::Mesh mesh; int material; AABB bounds; };
+// collisionPos/Idx: a CPU copy of the geometry (positions only) kept when uploaded with keepGeometry — the walk
+// collider (engine/world/walk_collision.h) reads scenery models from it; vehicles do not pay for it.
+struct GpuPrimitive { rhi::Mesh mesh; int material; AABB bounds; std::vector<vec3> collisionPos; std::vector<uint32_t> collisionIdx; };
 struct GpuMesh { std::vector<GpuPrimitive> primitives; };
 
 struct GpuModel {
@@ -42,7 +44,7 @@ struct GpuModel {
   bool texturesUnavailable = false;
   bool textured() const { return texturesPending == 0; }
 
-  void upload(const Model& m);      // CPU model may be discarded afterwards
+  void upload(const Model& m, bool keepGeometry = false);   // CPU model may be discarded afterwards
   void destroy();
 };
 

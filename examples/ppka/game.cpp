@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 
 namespace eng {
@@ -542,8 +543,15 @@ void Game::updateCamera(float dt) {
     in.reset = rig_.mode == CamMode::Kabin && win_->key(GLFW_KEY_R);
     in.jump = rig_.mode == CamMode::Jalan && win_->key(GLFW_KEY_SPACE);
   }
+  // debug: ENG_AUTOWALK=<yaw deg>[,run] walks straight in that heading from frame 5 on (with ENG_CAMERA=jalan) and
+  // logs the feet every 60 frames — a headless check that the station walls hold and its platforms are climbed
+  if (const char* aw = std::getenv("ENG_AUTOWALK"); aw && rig_.mode == CamMode::Jalan && frame_ >= 5) {
+    static bool arah = false; if (!arah) { arah = true; rig_.drag((std::atof(aw) * PI / 180) / -0.005f, 0); }   // DRAG_JALAN 0.005 rad per px
+    in.forward = 1; in.run = std::strchr(aw, ',') != nullptr;
+    if (frame_ % 60 == 0) { vec3 e = rig_.eye(); std::printf("autowalk frame %d dt %.3f feet %.2f %.2f %.2f ground %.2f %s\n", frame_, dt, e.x, e.y - 1.62f, e.z, scene_.groundScene(e.x, e.z), rig_.walkerOnGround() ? "on" : "air"); }
+  }
   std::vector<WalkBox> boxes;
-  if (rig_.mode == CamMode::Jalan) { scene_.collectWalkBoxes(boxes); in.boxes = &boxes; }
+  if (rig_.mode == CamMode::Jalan) { scene_.collectWalkBoxes(boxes); in.boxes = &boxes; in.mesh = &scene_.walkCollider(); }
   TrainPath tp; bool has = subjectPath(tp);
   if (has) tp.timeScale = paused_ ? 0 : timeScale_;
   if (!rig_.step(dt, has ? &tp : nullptr, ground, in)) { pushMessage("KA subjek hilang dari lintas - kembali ke kamera bebas"); setCamMode(CamMode::Bebas); }

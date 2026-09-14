@@ -8,6 +8,7 @@
 #pragma once
 #include "engine/math/geometry.h"
 #include "engine/math/math.h"
+#include "engine/world/walk_collision.h"
 #include <functional>
 #include <string>
 #include <vector>
@@ -40,12 +41,18 @@ struct TrainPath {
   vec3 pointBehind(float d) const;   // clamped to [0, cum.back()], extrapolated past the tail
 };
 
-// A box the walker collides with (uji3dJalanKaki.ts DuniaJalan, with AABBs instead of mesh raycasts): `wall`
-// boxes stop the body (slid along, RADIUS 0.38 m, tested at knee/chest/head) and every box is a floor when its
-// top is within NAIK_MAKS 0.45 m of the feet (platform slabs are reached by jumping: LAJU_LOMPAT 4.6 m/s, double jump).
+// What the walker collides with (uji3dJalanKaki.ts DuniaJalan): `mesh` = the scenery triangles (walls slid along,
+// RADIUS 0.38 m, rays at knee/chest/head from the body's centre and both sides; floors = the nearest horizontal
+// triangle under the feet, stairs and ramps included; ceilings stop a jump), `boxes` = AABBs (vehicles): `wall`
+// boxes stop the body, every box is a floor when its top is within NAIK_MAKS 0.45 m of the feet. A wall whose top
+// is within NAIK_MAKS is a kerb (stepped on); a platform (`peron`) edge up to KERB_PERON 1.1 m is climbed too, so
+// the walker gets onto a platform at its edge without hunting for the ramp (jumping still works: 4.6 m/s, double jump).
 struct WalkBox { AABB box; bool wall = true; };
 // Movement keys: jalan = walking (jump = Space, edge-triggered); kabin = moving the eye (forward/side/up, run = faster, reset = R).
-struct WalkInput { float forward = 0, side = 0, up = 0; bool run = false, reset = false, jump = false; const std::vector<WalkBox>* boxes = nullptr; };
+struct WalkInput {
+  float forward = 0, side = 0, up = 0; bool run = false, reset = false, jump = false;
+  const std::vector<WalkBox>* boxes = nullptr; const WalkCollider* mesh = nullptr;
+};
 
 class CameraRig {
 public:
@@ -95,6 +102,9 @@ private:
   void tolehKepala();
   void orbitKe(const GroundFn& ground);
   void langkahJalan(float dt, const GroundFn& ground, const WalkInput& in);
+  struct KenaDinding { float jarak = 0, nx = 0, nz = 0; bool ada = false; };
+  KenaDinding sinarDatar(vec3 kaki, float ax, float az, float jauh, const WalkInput& in) const;
+  void luncur(float& dx, float& dz, const WalkInput& in) const;
   void langkahZoom(float dt);
   vec3 posKam_, lihatKam_, upKam_{0, 1, 0}, upOrbit_{0, 1, 0};   // rig output this frame
   vec3 camPos_, camLook_, camUp_{0, 1, 0};                        // damped camera

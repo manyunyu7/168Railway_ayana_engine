@@ -18,6 +18,7 @@ struct CatalogEntry {
   std::string id, berkas, nama, kategori;
   std::map<std::string, std::string> bogie, kopling;   // attach node name (or "*") -> slot id
   bool pilot = false, prosedural = false;
+  bool sarana = false;   // rolling-stock slot (model.json `sarana`): no collision geometry kept for it
 };
 
 // `garis[]` class (spec §3.5): a body tile repeated every `langkah` metres along a spline, optional posts
@@ -84,6 +85,7 @@ private:
   std::vector<GarisEntry> garis_;
   std::map<std::string, std::unique_ptr<GpuModel>> models_;   // nullptr = known missing
   bool parseCatalog(const std::string& text);
+  bool keepGeometry(const std::string& id) const;
   RequestFn request_;
   std::map<std::string, std::vector<ImageHint>> hints_;   // streamed models: per-image wrap / colour-space / source
   std::map<std::string, bool> requested_;

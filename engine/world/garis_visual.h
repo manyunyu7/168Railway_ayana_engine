@@ -10,6 +10,7 @@
 #include "engine/render/model_renderer.h"
 #include "engine/world/asset_catalog.h"
 #include "engine/world/coords.h"
+#include "engine/world/walk_collision.h"
 #include <functional>
 #include <map>
 #include <string>
@@ -38,19 +39,26 @@ public:
   // (then one straight grade between the end heights).
   void build(const Json& hiasan, AssetCatalog& catalog, const WorldOrigin& origin, const GroundFn& ground);
   void draw(ModelRenderer& r, const Frustum* frustum = nullptr);
+  // Walk-mode floors (uji3dSpline.ts rabaKelas): tiles of the `datar` classes and of the categories peron /
+  // jalan / jembatan / tanggul / sawah / rel are floors only (a platform is climbed at its edge, a fence is
+  // passed through by design); `peron` tiles are flagged as platforms. Call after build().
+  void collectWalk(WalkCollider& out, const AssetCatalog& catalog) const;
   void destroy();
   Stats stats;
 
 private:
   struct ProcPart { vec3 centre, size; unsigned color; float rough; float rotX; };   // a box of the procedural prototype (tile-local, long axis +X)
-  struct ModelSlot { GpuModel* model = nullptr; mat4 norm; rhi::Buffer instances{}; std::vector<mat4> mats; AABB bounds; };
+  struct ModelSlot { GpuModel* model = nullptr; mat4 norm; rhi::Buffer instances{}; std::vector<mat4> mats; AABB bounds; bool walk = false, peron = false; };
   struct ProcMesh { rhi::Mesh mesh{}; Material mat; AABB bounds; };
+  struct ProcWalk { std::vector<vec3> pos; std::vector<uint32_t> idx; bool peron; };   // floor tiles of the procedural classes
   static bool procParts(const std::string& name, std::vector<ProcPart>& out);
-  void placeGlb(const std::string& catalogId, AssetCatalog& catalog, const std::vector<mat4>& mats);
-  void placeProc(const std::string& name, const std::vector<mat4>& mats);
+  static bool walkFloor(const GarisEntry& k);
+  void placeGlb(const std::string& catalogId, AssetCatalog& catalog, const std::vector<mat4>& mats, bool walk, bool peron);
+  void placeProc(const std::string& name, const std::vector<mat4>& mats, bool walk, bool peron);
   std::map<std::string, ModelSlot> slots_;                       // by catalog id
   std::map<unsigned, MeshBuilder> procBuild_;                     // by packed colour (rough in the high byte)
   std::vector<ProcMesh> proc_;
+  std::vector<ProcWalk> procWalk_;
 };
 
 } // namespace eng

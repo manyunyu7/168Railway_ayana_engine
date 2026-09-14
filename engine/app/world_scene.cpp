@@ -1,5 +1,6 @@
 #include "engine/app/world_scene.h"
 #include "engine/world/sun.h"
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -134,6 +135,7 @@ void WorldScene::buildDecor(const Json& world, bool testGaris, const Json* summa
     garis_.destroy();
     garis_.build(hiasan, catalog_, origin_, ground);
   }
+  buildWalkCollider();
   {   // in-world meja boards inside the placed station models
     std::vector<MejaBoard::Placed> placed; std::vector<MejaBoard::Station> stations;
     for (const Placed& p : scenery_) placed.push_back({p.model, p.xf});
@@ -147,7 +149,7 @@ void WorldScene::buildDecor(const Json& world, bool testGaris, const Json* summa
   decor_ = true;
   double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   char m[200];
-  std::snprintf(m, sizeof m, "; decor %.0f ms: %zu hiasan (%zu meja), %zu garis/%zu tiles, %zu trees", ms, scenery_.size(), meja_.count(), garis_.stats.lines, garis_.stats.tiles, trees_.stats.trees);
+  std::snprintf(m, sizeof m, "; decor %.0f ms: %zu hiasan (%zu meja), %zu garis/%zu tiles, %zu trees, walk %zu tris (%.0f ms)", ms, scenery_.size(), meja_.count(), garis_.stats.lines, garis_.stats.tiles, trees_.stats.trees, walk_.triangles(), walk_.stats.buildMs);
   stats_.summary += m;
 }
 
@@ -203,23 +205,36 @@ void WorldScene::draw(const mat4& viewProj, const mat4& view, vec3 eye, float fo
 void WorldScene::destroy() {
   trains_.shutdown(); trees_.destroy(); garis_.destroy(); clouds_.destroy(); boards_.destroy(); jpl_.destroy(); city_.destroy();
   meja_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy(); routes_.destroy();
-  scenery_.clear();
+  scenery_.clear(); walk_.clear();
   renderer_.shutdown(); sky_.shutdown();
   built_ = decor_ = false;
 }
 
-void WorldScene::collectWalkBoxes(std::vector<WalkBox>& out) const {
+// Scenery triangles for the walker: every primitive of every placed hiasan model (walls + floors + ceilings; a
+// primitive whose material is named after a platform — "peron", "platform" — is flagged so its 1 m edge is a
+// kerb), and the garis tiles as floors only (uji3dSpline.ts rabaKelas: peron/jalan/jembatan/tanggul/sawah/rel;
+// spline fences stay passable by design). Vehicles are not here (boxes, per step).
+void WorldScene::buildWalkCollider() {
+  walk_.clear();
+  auto peronName = [](std::string n) {
+    for (char& c : n) c = (char)std::tolower((unsigned char)c);
+    return n.find("peron") != std::string::npos || n.find("platform") != std::string::npos;
+  };
   for (const Placed& p : scenery_)
     for (size_t ni = 0; ni < p.model->nodes.size(); ++ni) {
       const Node& n = p.model->nodes[ni];
       if (n.mesh < 0 || n.mesh >= (int)p.model->meshes.size()) continue;
       mat4 xf = p.xf * p.model->world[ni];
       for (const GpuPrimitive& prim : p.model->meshes[(size_t)n.mesh].primitives) {
-        if (!prim.bounds.valid()) continue;
-        AABB b = prim.bounds.transformed(xf);
-        out.push_back({b, (b.max.x - b.min.x) * (b.max.z - b.min.z) <= 400});
+        bool peron = prim.material >= 0 && prim.material < (int)p.model->materials.size() && peronName(p.model->materials[(size_t)prim.material].name);
+        walk_.addMesh(prim.collisionPos, prim.collisionIdx, xf, peron, false);
       }
     }
+  garis_.collectWalk(walk_, catalog_);
+  walk_.finish();
+}
+
+void WorldScene::collectWalkBoxes(std::vector<WalkBox>& out) const {
   for (const VehicleInstance& v : trains_.vehicles()) if (v.bounds.valid()) out.push_back({v.bounds, true});
 }
 

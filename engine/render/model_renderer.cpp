@@ -32,7 +32,7 @@ rhi::Texture uploadImage(const Image& im) {
   return {};
 }
 
-void GpuModel::upload(const Model& m) {
+void GpuModel::upload(const Model& m, bool keepGeometry) {
   for (const Image& im : m.images) {
     textures.push_back(uploadImage(im));
     texturePending.push_back(im.placeholder() ? 1 : 0);
@@ -41,8 +41,15 @@ void GpuModel::upload(const Model& m) {
   const rhi::Attribute layout[] = {{0, 3, sizeof(Vertex), 0}, {1, 3, sizeof(Vertex), 12}, {2, 2, sizeof(Vertex), 24}};
   for (const Mesh& me : m.meshes) {
     GpuMesh gm;
-    for (const Primitive& p : me.primitives)
-      gm.primitives.push_back({rhi::createMesh(std::as_bytes(std::span(p.vertices)), layout, p.indices), p.material, AABB{p.boundsMin, p.boundsMax}});
+    for (const Primitive& p : me.primitives) {
+      GpuPrimitive gp{rhi::createMesh(std::as_bytes(std::span(p.vertices)), layout, p.indices), p.material, AABB{p.boundsMin, p.boundsMax}, {}, {}};
+      if (keepGeometry) {
+        gp.collisionPos.reserve(p.vertices.size());
+        for (const Vertex& v : p.vertices) gp.collisionPos.push_back(v.pos);
+        gp.collisionIdx = p.indices;
+      }
+      gm.primitives.push_back(std::move(gp));
+    }
     meshes.push_back(std::move(gm));
   }
   materials = m.materials; nodes = m.nodes; roots = m.roots; animations = m.animations;
