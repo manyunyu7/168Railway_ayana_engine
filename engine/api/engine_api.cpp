@@ -389,6 +389,7 @@ KEEP void eng_frame(float dt) {
   g->scene.refDistance = g->rig.acuan(g->orbit.distance);
   g->scene.cabView = g->rig.mode == CamMode::Kabin;
   g->scene.updateStreaming(g->rig.mode != CamMode::Bebas ? g->rig.look() : g->orbit.target, dt);
+  if (g->rig.mode == CamMode::Bebas && g->ready) g->orbit.keepAboveGround([](float x, float z) { return g->scene.groundScene(x, z); });
   float aspect = (float)w / (float)h;
   mat4 view = camView(), proj = camProj(aspect);
   vec3 eye = camEye();

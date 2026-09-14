@@ -381,6 +381,7 @@ void Game::render(Window& win) {
   int w, h; win.framebufferSize(w, h); screenW_ = w; screenH_ = h;
   rhi::setViewport(w, h);
   rhi::clear(0, 0, 0, 1);
+  if (rig_.mode == CamMode::Bebas && !useFly_) orbit_.keepAboveGround([this](float x, float z) { return scene_.groundScene(x, z); });
   float aspect = (float)w / (float)h;
   mat4 view = camView();
   mat4 proj = camProj(aspect);
