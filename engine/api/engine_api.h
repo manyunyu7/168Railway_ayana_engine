@@ -63,7 +63,8 @@ void eng_cycle_subject(int dir);
 void eng_telescope(int held);
 void eng_key(const char* code, int down);           // walk mode: KeyW/A/S/D, ShiftLeft, Arrow*
 void eng_pointer(float x, float y, int button, int phase);   // css px; phase 0 down 1 move 2 up; button 0 left 1 right
-const char* eng_camera_json(void);                   // {mode, eye:[x,y,z], look:[...], distance, yaw, pitch, fov}
+const char* eng_camera_json(void);                   // {mode, eye:[x,y,z], look:[...], distance, yaw, pitch, fov, azimuth, subject}
+                                                     // subject = followed train id ("" in bebas without an explicit follow)
 
 // picking / hover (css px). Returns "signal:<id>" | "point:<id>" | "".
 const char* eng_pick(float x, float y);

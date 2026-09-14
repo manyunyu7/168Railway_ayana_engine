@@ -457,9 +457,13 @@ KEEP void eng_pointer(float x, float y, int button, int phase) {
 KEEP const char* eng_camera_json(void) {
   if (!g) return "{}";
   vec3 e = camEye(); vec3 l = g->rig.mode != CamMode::Bebas ? g->rig.look() : g->orbit.target;
-  char b[300];
-  std::snprintf(b, sizeof b, "{\"mode\":%d,\"eye\":[%.2f,%.2f,%.2f],\"look\":[%.2f,%.2f,%.2f],\"distance\":%.2f,\"yaw\":%.4f,\"pitch\":%.4f,\"fov\":%.2f,\"azimuth\":%d}",
-                (int)g->rig.mode, e.x, e.y, e.z, l.x, l.y, l.z, g->orbit.distance, g->orbit.yaw, g->orbit.pitch, degrees(camFovY()), g->ready ? g->compass.azimuth(g->orbit) : 0);
+  // subject = the train the rig follows / would follow: the explicit follow id, else (in a train mode) the nearest
+  std::string subject = g->subjectId;
+  if (subject.empty() && g->rig.mode != CamMode::Bebas && g->ready) { TrainPath tp; subjectPath(tp, &subject); }
+  char b[400];
+  std::snprintf(b, sizeof b, "{\"mode\":%d,\"eye\":[%.2f,%.2f,%.2f],\"look\":[%.2f,%.2f,%.2f],\"distance\":%.2f,\"yaw\":%.4f,\"pitch\":%.4f,\"fov\":%.2f,\"azimuth\":%d,\"subject\":\"%s\"}",
+                (int)g->rig.mode, e.x, e.y, e.z, l.x, l.y, l.z, g->orbit.distance, g->orbit.yaw, g->orbit.pitch, degrees(camFovY()), g->ready ? g->compass.azimuth(g->orbit) : 0,
+                SimProcessEscapeShim(subject).c_str());
   return ret(b);
 }
 
