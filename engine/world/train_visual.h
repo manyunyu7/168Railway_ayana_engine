@@ -27,7 +27,7 @@ struct VehicleInstance {
   int pose = -1;       // index into TrainVisuals' per-frame node poses (door clips scrubbed); -1 = proto rest pose
 };
 
-struct TrainLabel { std::string id, no, name, state; float speed = 0; vec3 anchor; };
+struct TrainLabel { std::string id, no, name, state; float speed = 0; vec3 anchor; vec3 dir; };   // dir = unit travel direction (scene XZ)
 
 // One lit lamp: a directional additive corona (keretaVisual3d.ts pasangLampuKA)
 struct TrainLight { vec3 pos, aim; bool tail = false; };

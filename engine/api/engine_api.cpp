@@ -2,6 +2,7 @@
 // thread), so no locking. Native builds compile this too (the GL context then has to exist already), which
 // keeps the ABI honest and lets it be unit-tested without a browser.
 #include "engine/api/engine_api.h"
+#include "engine/api/engine_api_hud.h"
 #include "engine/app/camera_rig.h"
 #include "engine/app/compass.h"
 #include "engine/app/world_scene.h"
@@ -39,7 +40,7 @@ struct Api {
   int w = 1, h = 1; float dpr = 1;
   WorldScene scene;
   Json world, summary, catalogJson; std::string map;
-  SimState state; double timeScale = 1;
+  SimState state; double timeScale = 1; bool paused = false;
   // camera
   OrbitCamera orbit; CameraRig rig; Compass compass; std::string subjectId;
   mat4 viewProj; bool viewValid = false;
@@ -184,6 +185,13 @@ void terrainNone(const std::string& why) {
 }
 
 } // namespace
+
+// HUD projection bridge (engine_api_hud.cpp): the last drawn frame's view for the DOM overlays.
+bool eng_hud_view(EngHudView& v) {
+  if (!g || !g->ready || !g->viewValid) return false;
+  v.scene = &g->scene; v.world = &g->world; v.viewProj = g->viewProj; v.eye = camEye(); v.w = g->w; v.h = g->h;
+  return true;
+}
 
 // JSON string escaping (SimProcess::escape is native-only).
 static std::string SimProcessEscapeShim(const std::string& s) {
@@ -353,7 +361,7 @@ KEEP void eng_frame(float dt) {
   mat4 view = camView(), proj = camProj(aspect);
   vec3 eye = camEye();
   g->viewProj = proj * view; g->viewValid = true;
-  g->scene.draw(g->viewProj, view, eye, camFovY(), h, g->state.clock, dt, g->timeScale, g->rig.fogDensity(g->scene.worldWidth()), false);
+  g->scene.draw(g->viewProj, view, eye, camFovY(), h, g->state.clock, g->paused ? 0.f : dt, g->timeScale, g->rig.fogDensity(g->scene.worldWidth()), false);
   if (!g->hoverId.empty() && g->scene.objectPos(g->hoverId, g->hoverSignal, g->hoverPos)) g->scene.drawHoverRing(g->hoverPos, eye);
   { Frustum frustum(g->viewProj); g->scene.trains().draw(g->scene.renderer(), &frustum); }
   if (g->rig.mode == CamMode::Bebas) g->compass.draw(g->scene.renderer(), g->orbit);
@@ -363,6 +371,17 @@ KEEP void eng_frame(float dt) {
 }
 
 KEEP int eng_ready(void) { return g && g->ready; }
+KEEP void eng_set_paused(int paused) { if (g) g->paused = paused != 0; }
+KEEP int eng_set_layer(const char* name, int on) {
+  if (!g || !name) return 0;
+  std::string n = name; bool v = on != 0; SceneLayers& L = g->scene.layers;
+  if (n == "pita") L.pita = v; else if (n == "wesel") L.wesel = v; else if (n == "pohon") L.pohon = v;
+  else if (n == "awan") L.awan = v; else if (n == "kota") L.kota = v;
+  else if (n == "label" || n == "papan" || n == "tepi" || n == "pelat" || n == "benang") return 1;   // DOM-side layers
+  else return 0;
+  if (!L.wesel && !g->hoverSignal && !g->hoverId.empty()) g->hoverId.clear();   // a hidden arrow keeps no hover ring
+  return 1;
+}
 
 KEEP const char* eng_stats(void) {
   if (!g) return "{}";
@@ -482,14 +501,23 @@ KEEP int eng_set_preview(const char* json) {
 KEEP const char* eng_train_screen(void) {
   if (!g || !g->ready || !g->viewValid) return "[]";
   std::string out = "["; vec3 eye = camEye();
+  // Every train is reported (uji3dLabel.ts needs the off-screen ones for the edge markers): `front` = in front of
+  // the camera; behind it x/y are the mirrored projection (three's Vector3.project with w < 0 - the side is what
+  // matters there). `visible` = inside the viewport. ax/ay = the point 60 m ahead of the nose (screen heading glyph).
+  auto proj = [&](vec3 p, float& x, float& y, bool& front) {
+    vec4 c = g->viewProj * vec4(p, 1);
+    front = c.w > 0; float w = std::fabs(c.w) > 1e-6f ? std::fabs(c.w) : 1e-6f;
+    x = (c.x / w * 0.5f + 0.5f) * g->w; y = (1 - (c.y / w * 0.5f + 0.5f)) * g->h;
+  };
   for (const TrainLabel& l : g->scene.trains().labels()) {
-    vec4 c = g->viewProj * vec4(l.anchor, 1);
-    if (c.w <= 0) continue;
-    float x = (c.x / c.w * 0.5f + 0.5f) * g->w, y = (1 - (c.y / c.w * 0.5f + 0.5f)) * g->h;
-    if (x < -50 || y < -50 || x > g->w + 50 || y > g->h + 50) continue;
-    char b[320];
-    std::snprintf(b, sizeof b, "%s{\"id\":\"%s\",\"no\":\"%s\",\"name\":\"%s\",\"state\":\"%s\",\"speed\":%.1f,\"x\":%.1f,\"y\":%.1f,\"d\":%.0f}", out.size() > 1 ? "," : "",
-                  SimProcessEscapeShim(l.id).c_str(), SimProcessEscapeShim(l.no).c_str(), SimProcessEscapeShim(l.name).c_str(), SimProcessEscapeShim(l.state).c_str(), l.speed, x, y, length(l.anchor - eye));
+    float x, y, ax, ay; bool front, afront;
+    proj(l.anchor, x, y, front);
+    proj(l.anchor + l.dir * 60.f, ax, ay, afront);
+    bool visible = front && x >= 0 && y >= 0 && x <= g->w && y <= g->h;
+    char b[400];
+    std::snprintf(b, sizeof b, "%s{\"id\":\"%s\",\"no\":\"%s\",\"name\":\"%s\",\"state\":\"%s\",\"speed\":%.1f,\"x\":%.1f,\"y\":%.1f,\"d\":%.0f,\"front\":%s,\"visible\":%s,\"ax\":%.1f,\"ay\":%.1f}", out.size() > 1 ? "," : "",
+                  SimProcessEscapeShim(l.id).c_str(), SimProcessEscapeShim(l.no).c_str(), SimProcessEscapeShim(l.name).c_str(), SimProcessEscapeShim(l.state).c_str(), l.speed, x, y, length(l.anchor - eye),
+                  front ? "true" : "false", visible ? "true" : "false", afront ? ax : x, afront ? ay : y);
     out += b;
   }
   return ret(out + "]");

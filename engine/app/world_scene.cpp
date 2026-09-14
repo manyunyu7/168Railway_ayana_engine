@@ -161,20 +161,20 @@ void WorldScene::draw(const mat4& viewProj, const mat4& view, vec3 eye, float fo
   renderer_.beginFrame(viewProj, eye, light_);
   Frustum frustum(viewProj);
   terrain_.draw(renderer_, &frustum);
-  trees_.draw(renderer_, eye, &frustum);
+  if (layers.pohon) trees_.draw(renderer_, eye, &frustum);
   rails_.draw(renderer_, &frustum);
   for (const Placed& p : scenery_) if (frustum.contains(p.bounds)) renderer_.draw(*p.model, p.xf, &frustum);
   { double hh = std::fmod(clock / 3600.0, 24.0); bool night = hh < 6 || hh >= 18;
     signals_.setView(fovY, viewportH, night); trains_.setView(fovY, viewportH, night); }
   signals_.draw(renderer_, eye, &frustum);
-  points_.draw(renderer_, &frustum);
+  if (layers.wesel) points_.draw(renderer_, &frustum);
   boards_.draw(renderer_, &frustum);
   jpl_.animate(dt * (float)std::fmax(1.0, timeScale));
   jpl_.draw(renderer_, &frustum);
-  city_.draw(renderer_, &frustum);
-  clouds_.draw(viewProj, view, eye, sky_, light_, dt);
+  if (layers.kota) city_.draw(renderer_, &frustum);
+  if (layers.awan) clouds_.draw(viewProj, view, eye, sky_, light_, dt);
   garis_.draw(renderer_, &frustum);
-  routes_.draw(renderer_);   // blended ribbons before the trains' own transparent parts
+  routes_.draw(renderer_, layers.pita);   // blended ribbons before the trains' own transparent parts
   if (drawTrains) trains_.draw(renderer_, &frustum);
 }
 
@@ -191,7 +191,7 @@ void WorldScene::pickAt(float px, float py, int w, int h, const mat4& viewProj, 
   for (const ScreenPoint& sp : signals_.screenPositions(viewProj, w, h, eye)) {
     if (!sp.visible) continue; float d = std::hypot(sp.x - px, sp.y - py); if (d < ds) { ds = d; bs = sp.id; }
   }
-  for (const ScreenPoint& sp : points_.screenPositions(viewProj, w, h)) {
+  if (layers.wesel) for (const ScreenPoint& sp : points_.screenPositions(viewProj, w, h)) {
     if (!sp.visible) continue; float d = std::hypot(sp.x - px, sp.y - py); if (d < dw) { dw = d; bp = sp.id; }
   }
   bool hitSig = ds <= 26, hitPt = dw <= 40;

@@ -27,7 +27,8 @@ public:
   void clearPreview();
   bool hasPreview() const { return preview_.indexCount > 0; }
   // Draws blended, in the order route -> occupied -> preview (each flushes the renderer's transparent queue).
-  void draw(ModelRenderer& r) const;
+  // `ribbons` = false skips the route/occupancy ribbons (layer "pita" off); the hover preview is always drawn.
+  void draw(ModelRenderer& r, bool ribbons = true) const;
   // Hover highlight: white ring (radius 0.86..1.0 m) lying flat at `base`, scaled by `scale`.
   void drawHoverRing(ModelRenderer& r, vec3 base, float scale);
   void destroy();

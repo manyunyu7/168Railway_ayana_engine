@@ -42,6 +42,11 @@ int eng_city_json(const uint8_t* bytes, int len);
 int eng_set_state(const char* stepJson);
 void eng_frame(float dt);
 int eng_ready(void);                 // 1 once the static world is built
+void eng_set_paused(int paused);     // game paused: JPL arms / cloud drift freeze (the camera still moves)
+// Visibility layers (dunia3dKonst.ts TAMPIL_BAKU): "pita" route/occupancy ribbons, "wesel" point arrows (hidden = not
+// pickable either), "pohon" trees, "awan" clouds, "kota" city. "label" / "papan" / "tepi" / "pelat" / "benang" are the
+// host's DOM overlays: accepted (returns 1) but nothing changes in the engine. Unknown name = 0. All on by default.
+int eng_set_layer(const char* name, int on);
 const char* eng_stats(void);         // JSON: fps, drawCalls, buildMs, summary, pending assets, terrain {near, far, patches, resident, requested, pendingJobs, trees}
 
 // camera (modes as engine/app/camera_rig.h CamMode: 0 bebas 1 jalan 2 kabin 3 samping 4 atas 5 ekor)
@@ -65,7 +70,8 @@ const char* eng_pick(float x, float y);
 void eng_hover(const char* id);                      // "" = none; ring drawn on the object
 const char* eng_object_screen(const char* id);       // "x,y" css px of the object's label anchor, "" when off screen
 int eng_set_preview(const char* json);               // {"path":[segId...],"dead":bool} or "" / "null" to clear
-const char* eng_train_screen(void);                  // JSON [{id,no,name,state,speed,x,y,d}] label anchors on screen
+const char* eng_train_screen(void);                  // JSON [{id,no,name,state,speed,x,y,d,front,visible,ax,ay}] every train: roof anchor
+                                                     // (mirrored when behind the camera), ax/ay = 60 m ahead of the nose
 
 // asset ingestion
 void* eng_alloc(int bytes);

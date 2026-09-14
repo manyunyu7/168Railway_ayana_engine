@@ -203,7 +203,7 @@ void TrainVisuals::update(const SimState& st, const WorldOrigin& origin, const R
         markers_.push_back({f * mat4::translation({x, S21_TINGGI, -z}), false});
         markers_.push_back({f * mat4::translation({x, S21_TINGGI, z}), true});
       }
-      if (vi == 0) labels_.push_back({t.id, t.no, t.name, t.state, t.speed, inst.centre + vec3{0, 4.5f, 0}});
+      if (vi == 0) labels_.push_back({t.id, t.no, t.name, t.state, t.speed, inst.centre + vec3{0, 4.5f, 0}, {ux, 0, uz}});
       vehicles_.push_back(inst);
     }
   }

@@ -34,6 +34,11 @@ namespace eng {
 
 struct WorldSceneStats { double buildMs = 0; std::string summary; };
 
+// Visibility toggles (the web client's "Tampilan" drawer, dunia3dKonst.ts TAMPIL_BAKU): everything on by default
+// here, the host applies its own defaults (pita and wesel off in the reference client). Hidden point arrows are
+// also not pickable (turning a switch without seeing its setting is guessing).
+struct SceneLayers { bool pita = true, wesel = true, pohon = true, awan = true, kota = true; };
+
 class WorldScene {
 public:
   using Log = std::function<void(const std::string&)>;
@@ -100,6 +105,7 @@ public:
   JplVisuals& jpl() { return jpl_; }
   const WorldSceneStats& stats() const { return stats_; }
   bool built() const { return built_; }
+  SceneLayers layers;
 
   // Debug helper (ENG_TEST_GARIS): a synthetic platform + fence + wall along the station track.
   static void injectTestGaris(Json& hiasan, const Json& summary, vec3& stationScene, const WorldOrigin& origin, Log log);

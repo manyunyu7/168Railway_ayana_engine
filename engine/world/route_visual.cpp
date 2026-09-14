@@ -91,12 +91,12 @@ void RouteVisuals::setPreview(const std::vector<std::string>& segs, bool deadEnd
 
 void RouteVisuals::clearPreview() { rhi::destroyMesh(preview_); preview_ = {}; }
 
-void RouteVisuals::draw(ModelRenderer& r) const {
+void RouteVisuals::draw(ModelRenderer& r, bool ribbons) const {
   const mat4 I;
   // Ribbons overlap (a locked section that is also occupied must read red, the preview above
   // both): with depth writes off during blending, the draw order is the stacking order.
-  if (route_.indexCount) { r.drawMesh(route_, routeMat_, {}, I); r.flushTransparent(); }
-  if (occupied_.indexCount) { r.drawMesh(occupied_, occupiedMat_, {}, I); r.flushTransparent(); }
+  if (ribbons && route_.indexCount) { r.drawMesh(route_, routeMat_, {}, I); r.flushTransparent(); }
+  if (ribbons && occupied_.indexCount) { r.drawMesh(occupied_, occupiedMat_, {}, I); r.flushTransparent(); }
   if (preview_.indexCount) { r.drawMesh(preview_, previewDead_ ? deadEndMat_ : previewMat_, {}, I); r.flushTransparent(); }
 }
 
