@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { SimStateBuilder, worldSummary, r2, r3, type SimStateDeps } from './sim-state.ts';
+import { SimStateBuilder, worldSummary, panelLayoutJson, r2, r3, type SimStateDeps } from './sim-state.ts';
 
 // ---- locate the PPKA repo ----
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -261,80 +261,12 @@ function trainLabel(trainId?: string): string {
   return t ? `KA ${t.trainNo}` : 'kereta lain';
 }
 
-/** engine/panel.ts PanelLayout: the schematic control table ("meja layan"). Coordinates are
- *  panel units; the web draws them with y scaled ×3 (`Renderer.yScale`). Static per world. */
+/** engine/panel.ts PanelLayout: the schematic control table ("meja layan") — serialised by sim-state.ts
+ *  `panelLayoutJson` (shared with the browser adapter). Static per world. */
 function cmdPanel() {
   if (!world) throw new Error('load a map first');
   if (!panelCache || panelCache.key !== PanelLayout.keyOf(world)) panelCache = PanelLayout.build(world);
-  const lay = panelCache;
-  const g = world.graph;
-  // lane classification (render/renderer.ts ensureSepur): union through degree-2 nodes,
-  // 'lurus'/'belok' from the platform trackmark flag, track number from exit signals "K<n>[BT]"
-  const par = new Map<string, string>();
-  for (const id of g.segments.keys()) par.set(id, id);
-  const find = (x: string): string => { let r = x; while (par.get(r) !== r) r = par.get(r)!; while (par.get(x) !== r) { const nx = par.get(x)!; par.set(x, r); x = nx; } return r; };
-  for (const n of g.nodes.values()) if (n.segs.length === 2) par.set(find(n.segs[0]), find(n.segs[1]));
-  const laneSepur = new Map<string, string>(), laneJalur = new Map<string, number>();
-  for (const o of world.trackside.values()) {
-    if (!g.segments.has(o.segId)) continue;
-    if (o.kind === 'trackmark' && o.sepur) laneSepur.set(find(o.segId), o.sepur);
-    if (o.kind === 'signal') { const m = o.name.match(/ K(\d+)[BT]$/); if (m) laneJalur.set(find(o.segId), +m[1]); }
-  }
-  let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
-  const segments = [...g.segments.values()].map((sg: any) => {
-    const poly = lay.segPolyline(sg.id);
-    bx0 = Math.min(bx0, poly.bx0); by0 = Math.min(by0, poly.by0); bx1 = Math.max(bx1, poly.bx1); by1 = Math.max(by1, poly.by1);
-    const pts: number[] = []; for (const p of poly.pts) pts.push(r2(p.x), r2(p.y));
-    return { id: sg.id, a: sg.a, b: sg.b, len: r3(g.length(sg.id)), pts, cum: poly.cum.map(r2),
-      sepur: laneSepur.get(find(sg.id)) ?? null, jalur: laneJalur.get(find(sg.id)) ?? null };
-  });
-  const nodes = [...g.nodes.values()].map((n: any) => { const p = lay.nodePanelPos(n.id); return { id: n.id, x: r2(p.x), y: r2(p.y), deg: n.segs.length }; });
-  const points = [...g.nodes.values()].filter((n: any) => n.junction).map((n: any) => {
-    const p = lay.nodePanelPos(n.id);
-    return { id: n.id, x: r2(p.x), y: r2(p.y), facing: n.junction.facingSeg, legs: n.junction.legs };
-  });
-  const tsObj = (o: any) => {
-    const r = lay.posOnSeg(o.segId, o.s);
-    const out: any = { id: o.id, kind: o.kind, name: o.name, seg: o.segId, s: r3(o.s), dir: o.dir,
-      x: r2(r.p.x), y: r2(r.p.y), tx: r3(r.tan.x * o.dir), ty: r3(r.tan.y * o.dir) };
-    if (o.kind === 'signal') { out.signalType = o.signalType ?? 'interlocking'; out.lampu = o.lampu ?? 3; out.bentuk = o.bentuk ?? 'elektrik'; out.station = stasiunSinyal(o.name); }
-    if (o.kind === 'trackmark') { out.sepur = o.sepur ?? null; out.jalur = laneJalur.get(find(o.segId)) ?? null; }
-    return out;
-  };
-  const ts = [...world.trackside.values()].filter((o: any) => g.segments.has(o.segId));
-  // station boxes (renderer.ts ensureAreaStasiun): bbox of a station's interlocking signals
-  const grup = new Map<string, { x0: number; y0: number; x1: number; y1: number; n: number }>();
-  for (const o of ts) {
-    if (o.kind !== 'signal' || (o.signalType ?? 'interlocking') !== 'interlocking') continue;
-    const code = stasiunSinyal(o.name); if (!code) continue;
-    const p = lay.posOnSeg(o.segId, o.s).p;
-    const a = grup.get(code);
-    if (!a) grup.set(code, { x0: p.x, y0: p.y, x1: p.x, y1: p.y, n: 1 });
-    else { a.x0 = Math.min(a.x0, p.x); a.x1 = Math.max(a.x1, p.x); a.y0 = Math.min(a.y0, p.y); a.y1 = Math.max(a.y1, p.y); a.n++; }
-  }
-  const stationLabel = new Map<string, string>();
-  for (const s of world.stations()) if (s.code) stationLabel.set(s.code, s.label ?? s.code);
-  const stations = [...grup.entries()].map(([code, a]) => ({ code, label: stationLabel.get(code) ?? code,
-    x0: r2(a.x0), y0: r2(a.y0), x1: r2(a.x1), y1: r2(a.y1), signals: a.n }));
-  // "JALUR n" labels (renderer.ts drawPanelJalur): midpoint between the K<n>T / K<n>B pair
-  const byName = new Map<string, any>();
-  for (const o of ts) if (o.kind === 'signal') byName.set(o.name, o);
-  const jalur: any[] = [];
-  for (const o of byName.values()) {
-    const m = o.name.match(/^(.+) K(\d+)T$/); if (!m || m[2] === '0') continue;
-    const pair = byName.get(`${m[1]} K${m[2]}B`); if (!pair) continue;
-    const a = lay.posOnSeg(o.segId, o.s).p, b = lay.posOnSeg(pair.segId, pair.s).p;
-    jalur.push({ station: m[1], n: +m[2], x: r2((a.x + b.x) / 2), y: r2(Math.abs(a.y) > Math.abs(b.y) ? a.y : b.y) });
-  }
-  const scenery = [...world.scenery.values()].map((s: any) => { const p = lay.toPanel(s.pos); return { id: s.id, kind: s.kind, code: s.code ?? null, label: s.label ?? null, x: r2(p.x), y: r2(p.y) }; });
-  return {
-    ok: true, key: lay.key, yScale: 3, bbox: { x0: r2(bx0), y0: r2(by0), x1: r2(bx1), y1: r2(by1) },
-    segments, nodes, points,
-    signals: ts.filter((o: any) => o.kind === 'signal').map(tsObj),
-    berths: ts.filter((o: any) => o.kind === 'trackmark').map(tsObj),
-    portals: ts.filter((o: any) => o.kind === 'portal').map(tsObj),
-    stations, jalur, scenery,
-  };
+  return panelLayoutJson(world, panelCache, stasiunSinyal);
 }
 
 function cmdStep(c: any) {

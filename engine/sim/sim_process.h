@@ -10,24 +10,6 @@
 
 namespace eng {
 
-// Schematic control table ("meja layan", engine/panel.ts PanelLayout). Panel units; the web
-// draws y scaled by `yScale` (3). Static per loaded world — fetched once with panel().
-struct PanelSeg { std::string id, a, b, sepur; int jalur = 0; float len = 0; std::vector<float> pts; std::vector<float> cum; };   // pts = x0,y0,x1,y1,...; cum = metres at each vertex
-struct PanelPoint { std::string id, facing; std::string legs[2]; float x = 0, y = 0; };
-struct PanelObj { std::string id, kind, name, seg, signalType, station; float s = 0, x = 0, y = 0, tx = 1, ty = 0; int dir = 1, lampu = 3, jalur = 0; };
-struct PanelStation { std::string code, label; float x0 = 0, y0 = 0, x1 = 0, y1 = 0; };
-struct PanelJalur { std::string station; int n = 0; float x = 0, y = 0; };
-struct PanelLayout {
-  bool ok = false; float yScale = 3; float x0 = 0, y0 = 0, x1 = 0, y1 = 0;   // bbox
-  std::vector<PanelSeg> segments; std::vector<PanelPoint> points;
-  std::vector<PanelObj> signals, berths, portals;
-  std::vector<PanelStation> stations; std::vector<PanelJalur> jalur;
-  const PanelSeg* seg(const std::string& id) const { auto it = segIndex.find(id); return it == segIndex.end() ? nullptr : &segments[it->second]; }
-  // Panel position + tangent at `s` metres along a segment (interpolates the schematic polyline).
-  bool posOnSeg(const std::string& seg, float s, float& x, float& y, float& tx, float& ty) const;
-  std::unordered_map<std::string, size_t> segIndex;
-};
-
 class SimProcess {
 public:
   struct Options {

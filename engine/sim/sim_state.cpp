@@ -61,4 +61,57 @@ SimState parseSimState(const Json& j) {
   return st;
 }
 
+// ---- panel layout (bridge `panel`) ----
+static PanelObj parsePanelObj(const Json& o) {
+  PanelObj p;
+  p.id = o["id"].stringOr(""); p.kind = o["kind"].stringOr(""); p.name = o["name"].stringOr(""); p.seg = o["seg"].stringOr("");
+  p.signalType = o["signalType"].stringOr(""); p.station = o["station"].stringOr("");
+  p.s = (float)o["s"].numberOr(0); p.x = (float)o["x"].numberOr(0); p.y = (float)o["y"].numberOr(0);
+  p.tx = (float)o["tx"].numberOr(1); p.ty = (float)o["ty"].numberOr(0);
+  p.dir = o["dir"].intOr(1); p.lampu = o["lampu"].intOr(3); p.jalur = o["jalur"].intOr(0);
+  return p;
+}
+
+PanelLayout parsePanelLayout(const Json& j) {
+  PanelLayout L;
+  if (!j["ok"].boolOr(false)) return L;
+  L.yScale = (float)j["yScale"].numberOr(3);
+  L.x0 = (float)j["bbox"]["x0"].numberOr(0); L.y0 = (float)j["bbox"]["y0"].numberOr(0);
+  L.x1 = (float)j["bbox"]["x1"].numberOr(0); L.y1 = (float)j["bbox"]["y1"].numberOr(0);
+  for (const Json& sg : j["segments"].arr) {
+    PanelSeg ps; ps.id = sg["id"].stringOr(""); ps.a = sg["a"].stringOr(""); ps.b = sg["b"].stringOr("");
+    ps.sepur = sg["sepur"].stringOr(""); ps.jalur = sg["jalur"].intOr(0); ps.len = (float)sg["len"].numberOr(0);
+    for (const Json& v : sg["pts"].arr) ps.pts.push_back((float)v.numberOr(0));
+    for (const Json& v : sg["cum"].arr) ps.cum.push_back((float)v.numberOr(0));
+    L.segIndex[ps.id] = L.segments.size(); L.segments.push_back(std::move(ps));
+  }
+  for (const Json& p : j["points"].arr) {
+    PanelPoint pp; pp.id = p["id"].stringOr(""); pp.facing = p["facing"].stringOr("");
+    pp.legs[0] = p["legs"][0].stringOr(""); pp.legs[1] = p["legs"][1].stringOr("");
+    pp.x = (float)p["x"].numberOr(0); pp.y = (float)p["y"].numberOr(0); L.points.push_back(pp);
+  }
+  for (const Json& o : j["signals"].arr) L.signals.push_back(parsePanelObj(o));
+  for (const Json& o : j["berths"].arr) L.berths.push_back(parsePanelObj(o));
+  for (const Json& o : j["portals"].arr) L.portals.push_back(parsePanelObj(o));
+  for (const Json& s : j["stations"].arr)
+    L.stations.push_back({s["code"].stringOr(""), s["label"].stringOr(""), (float)s["x0"].numberOr(0), (float)s["y0"].numberOr(0), (float)s["x1"].numberOr(0), (float)s["y1"].numberOr(0)});
+  for (const Json& s : j["jalur"].arr) L.jalur.push_back({s["station"].stringOr(""), s["n"].intOr(0), (float)s["x"].numberOr(0), (float)s["y"].numberOr(0)});
+  L.ok = true;
+  return L;
+}
+
+bool PanelLayout::posOnSeg(const std::string& id, float s, float& x, float& y, float& tx, float& ty) const {
+  const PanelSeg* sg = seg(id);
+  if (!sg || sg->cum.size() < 2 || sg->pts.size() < 4) return false;
+  size_t n = sg->cum.size();
+  float sc = std::fmax(0.f, std::fmin(sg->cum[n - 1], s));
+  size_t i = 1; while (i < n - 1 && sg->cum[i] < sc) ++i;
+  float c0 = sg->cum[i - 1], c1 = sg->cum[i], f = c1 > c0 ? (sc - c0) / (c1 - c0) : 0;
+  float ax = sg->pts[2 * (i - 1)], ay = sg->pts[2 * (i - 1) + 1], bx = sg->pts[2 * i], by = sg->pts[2 * i + 1];
+  x = ax + (bx - ax) * f; y = ay + (by - ay) * f;
+  float dx = bx - ax, dy = by - ay, l = std::sqrt(dx * dx + dy * dy);
+  if (l < 1e-6f) { tx = 1; ty = 0; } else { tx = dx / l; ty = dy / l; }
+  return true;
+}
+
 } // namespace eng
