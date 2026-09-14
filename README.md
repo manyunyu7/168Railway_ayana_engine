@@ -7,6 +7,13 @@
 <p align="center">
   <em>Mojokerto station</em> &nbsp;&nbsp;&nbsp;&nbsp; <em>Bekasi with the AI dispatcher</em>
 </p>
+<p align="center">
+  <img src="docs/screenshot-cc203.jpg" width="49%" alt="CC 203 hauling a flat-car parcel train">
+  <img src="docs/screenshot-cilame-truss.jpg" width="49%" alt="Warren truss bridge on the Maswati–Cilame line">
+</p>
+<p align="center">
+  <em>CC 203 on KA 306 Parcel Selatan</em> &nbsp;&nbsp;&nbsp;&nbsp; <em>Warren truss over the Cilame valley</em>
+</p>
 
 Ayana is a small C++20 game engine written from zero for the **PPKA Simulator** (a train-dispatcher
 game): no Unity, no Godot, no three.js. It renders the simulator's real maps, rolling stock and

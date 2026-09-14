@@ -1,7 +1,7 @@
 // Example: rolling stock test. `traintest [map] [clock]` — runs the PPKA sim (AI PPKA on) at
 // 5x real time and renders every train with catalog GLBs (box fallback) on a flat grey ground.
 // Orbit camera follows the first train (drag to orbit, scroll to zoom). ENG_CAPTURE=/path.ppm
-// captures frame ENG_CAPTURE_FRAME (default 60) and exits.
+// captures frame ENG_CAPTURE_FRAME (default 60) and exits; ENG_VIEW=dist,yaw,pitch (radians).
 #include "engine/core/orbit_camera.h"
 #include "engine/core/window.h"
 #include "engine/render/mesh_builder.h"
@@ -61,6 +61,7 @@ int main(int argc, char** argv) {
   Material groundMat; groundMat.baseColor = {0.42f, 0.42f, 0.40f, 1}; groundMat.metallic = 0; groundMat.roughness = 1;
 
   OrbitCamera cam; cam.distance = 45; cam.yaw = radians(150); cam.pitch = radians(12); cam.near = 0.5f; cam.far = 6000;
+  if (const char* v = std::getenv("ENG_VIEW")) std::sscanf(v, "%f,%f,%f", &cam.distance, &cam.yaw, &cam.pitch);   // debug: dist,yaw(rad),pitch(rad)
   double mxPrev = 0, myPrev = 0; bool dragging = false; int frame = 0;
   auto tPrev = std::chrono::steady_clock::now();
   while (win.isOpen()) {
