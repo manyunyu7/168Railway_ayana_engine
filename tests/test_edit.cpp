@@ -116,6 +116,32 @@ int main() {
   CHECK(!eng_hiasan_remove(idx));
   eng_highlight("", 0); eng_gizmo("", 0, 0, 0, 0, 1, 0); eng_ghost("", 0, 0, 0, 1); eng_ukur_line("[]");
 
+  // ---- markers: a batch at the view centre, picked back by pixel, labels projected, cleared
+  {
+    char mk[600];
+    std::snprintf(mk, sizeof mk,
+      "[{\"id\":\"h:0\",\"kind\":\"sphere\",\"x\":%.2f,\"y\":%.2f,\"naik\":1.2,\"size\":1.1,\"color\":\"#4a9fe8\",\"label\":true},"
+      "{\"id\":\"c:0\",\"kind\":\"disc\",\"x\":%.2f,\"y\":%.2f,\"naik\":0.12,\"size\":1.7},"
+      "{\"id\":\"far\",\"kind\":\"diamond\",\"x\":%.2f,\"y\":%.2f,\"hm\":1,\"naik\":3.4,\"px\":6,\"label\":true},"
+      "{\"id\":\"ln\",\"kind\":\"polyline\",\"size\":0.5,\"pts\":[{\"x\":%.2f,\"y\":%.2f},{\"x\":%.2f,\"y\":%.2f,\"naik\":2}]}]",
+      ground[0], ground[1], ground[0], ground[1], ground[0] + 300, ground[1] + 300, ground[0] - 20, ground[1], ground[0] + 20, ground[1]);
+    CHECK(eng_markers(mk));
+    CHECK_EQ(eng_markers_count(), 4);
+    CHECK(!eng_markers("nonsense")); CHECK_EQ(eng_markers_count(), 0);
+    CHECK(eng_markers(mk));
+    eng_frame(0.016f);   // drawn without GL errors
+    float sc[4]; eng_project(ground[0], ground[1], 0, sc);
+    std::string pk = eng_markers_pick(sc[0], sc[1] - 6, 16);
+    CHECK_MSG(pk == "h:0" || pk == "c:0", "markers_pick at the handle -> " + pk);
+    CHECK(std::string(eng_markers_pick(2, 2, 4)).empty());   // sky corner: nothing within 4 px
+    Json scr = Json::parse(eng_markers_screen(), &err); CHECK_MSG(err.empty(), err);
+    CHECK(scr.size() >= 1 && scr.size() <= 2);   // only the `label` markers (the far one may be behind the camera)
+    bool sawH = false;
+    for (const Json& e : scr.arr) if (e["id"].stringOr("") == "h:0") { sawH = true; CHECK(e["v"].boolOr(false)); CHECK_NEAR(e["x"].numberOr(0), sc[0], 3); CHECK(e["y"].numberOr(0) < sc[1]); }
+    CHECK(sawH);
+    CHECK(eng_markers("[]")); CHECK_EQ(eng_markers_count(), 0);
+  }
+
   // ---- node height + rails rebuild: pin a mid-line node 6 m up, the profile follows (flat DEM: demBase 0)
   int ni = -1;
   for (size_t i = 0; i < g.nodes.size(); ++i) if (g.nodes[i].segs.size() == 2 && !g.nodes[i].isPoint()) { ni = (int)i; break; }

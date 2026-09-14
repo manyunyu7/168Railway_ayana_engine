@@ -3,6 +3,7 @@
 // keeps the ABI honest and lets it be unit-tested without a browser.
 #include "engine/api/engine_api.h"
 #include "engine/api/engine_api_edit.h"
+#include "engine/api/engine_api_markers.h"
 #include "engine/api/engine_api_hud.h"
 #include "engine/app/camera_rig.h"
 #include "engine/app/compass.h"
@@ -204,6 +205,10 @@ bool eng_hud_view(EngHudView& v) {
   return true;
 }
 
+// Marker overlay hooks (engine_api_markers.cpp): no-ops until that source is linked in.
+__attribute__((weak)) void eng_markers_draw(ModelRenderer&, vec3, float, int) {}
+__attribute__((weak)) void eng_markers_destroy(void) {}
+
 // Editing bridge (engine_api_edit.cpp): the scene + the save object, edited in place.
 bool eng_edit_ctx(EngEditCtx& c) {
   if (!g) return false;
@@ -264,6 +269,7 @@ KEEP void eng_resize(int width, int height, float dpr) {
 
 KEEP void eng_shutdown(void) {
   if (!g) return;
+  eng_markers_destroy();
   g->compass.shutdown(); g->scene.destroy();
   delete g; g = nullptr;
 }
@@ -410,6 +416,7 @@ KEEP void eng_frame(float dt) {
   if (!g->hoverId.empty() && g->scene.objectPos(g->hoverId, g->hoverSignal, g->hoverPos)) g->scene.drawHoverRing(g->hoverPos, eye);
   { Frustum frustum(g->viewProj); g->scene.trains().draw(g->scene.renderer(), &frustum); }
   g->scene.drawOverlays(eye, camFovY());   // editor: selection box, ghost, ukur, gizmo
+  eng_markers_draw(g->scene.renderer(), eye, camFovY(), h);   // editor markers (engine_api_markers.cpp)
   if (g->rig.mode == CamMode::Bebas) g->compass.draw(g->scene.renderer(), g->orbit);
   g->scene.renderer().flushTransparent();
   if (g->frame == 0) rhi::checkErrors("first frame");
