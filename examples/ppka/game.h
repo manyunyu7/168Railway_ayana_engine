@@ -1,33 +1,15 @@
 // PPKA — the playable dispatcher scene: sim bridge + world modules + camera + input.
 #pragma once
+#include "engine/app/camera_rig.h"
+#include "engine/app/compass.h"
+#include "engine/app/world_scene.h"
 #include "engine/core/fly_camera.h"
 #include "engine/core/orbit_camera.h"
 #include "engine/core/window.h"
-#include "engine/render/model_renderer.h"
-#include "engine/render/sky.h"
 #include "engine/render/text.h"
 #include "engine/sim/sim_process.h"
-#include "engine/world/asset_catalog.h"
-#include "engine/world/board_visual.h"
-#include "engine/world/city_visual.h"
-#include "engine/world/cloud_visual.h"
-#include "engine/world/jpl_visual.h"
-#include "engine/world/coords.h"
-#include "engine/world/garis_visual.h"
-#include "engine/world/point_visual.h"
-#include "engine/world/rail_builder.h"
-#include "engine/world/rail_profile.h"
-#include "engine/world/rolling_stock.h"
-#include "engine/world/route_visual.h"
-#include "engine/world/signal_visual.h"
-#include "engine/world/terrain.h"
-#include "engine/world/track_graph.h"
-#include "engine/world/train_visual.h"
-#include "examples/ppka/camera_rig.h"
-#include "examples/ppka/compass.h"
 #include "examples/ppka/panel_view.h"
 #include "examples/ppka/ui.h"
-#include "engine/world/vegetation.h"
 #include <deque>
 #include <string>
 
@@ -71,12 +53,11 @@ private:
   Window* win_ = nullptr;
   SimProcess sim_;
   GameOptions opt_;
-  WorldOrigin origin_;
-  vec3 stationScene_;               // scene position of the (first) station
-  ModelRenderer renderer_; Sky sky_; TextRenderer text_; Lighting light_;
+  WorldScene scene_;                // the drawn world (engine/app/world_scene.h); origin/station target live there
+  TextRenderer text_;
   OrbitCamera orbit_; FlyCamera fly_; bool useFly_ = false;
   // camera modes (§9.1): bebas = orbit_/fly_, others = rig_. Subject = selected train, else subjectId_, else nearest.
-  CameraRig rig_; std::string subjectId_; float worldW_ = 8000;
+  CameraRig rig_; std::string subjectId_;
   void setCamMode(CamMode m);
   void cycleSubject(int dir);
   bool subjectPath(TrainPath& out, std::string* idOut = nullptr) const;
@@ -94,16 +75,7 @@ private:
   mat4 viewProj_; int screenW_ = 1, screenH_ = 1;
   bool ready_ = false;
   bool buildWorld();
-  void injectTestGaris(Json& hiasan);   // debug: ENG_TEST_GARIS
   void applySimState();
-  // world
-  TrackGraph graph_; Terrain terrain_; VerticalProfile profile_; RailBuilder rails_;
-  SignalVisuals signals_; PointVisuals points_; RouteVisuals routes_;
-  TracksideBoards boards_; JplVisuals jpl_; CityVisuals city_; GarisVisuals garis_; CloudVisual clouds_;
-  AssetCatalog catalog_; RollingStock stock_; TrainVisuals trains_;
-  struct Placed { GpuModel* model; mat4 xf; AABB bounds; };
-  std::vector<Placed> scenery_;      // hiasan objects (station building etc.)
-  Vegetation trees_;
   std::string hoverId_;
   Compass compass_;             // hovered signal id or point node id ("" = none)
   bool hoverIsSignal_ = false; vec3 hoverPos_; float hoverX_ = 0, hoverY_ = 0;

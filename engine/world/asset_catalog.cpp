@@ -53,6 +53,17 @@ bool AssetCatalog::load(const Options& opt) {
   std::ifstream f(path, std::ios::binary);
   if (!f) { err_ = "cannot open " + path; return false; }
   std::string text((std::istreambuf_iterator<char>(f)), {});
+  if (!parseCatalog(text)) return false;
+  std::error_code ec; fs::create_directories(opt_.cacheDir, ec);
+  return true;
+}
+
+bool AssetCatalog::loadFromText(const std::string& modelJson, RequestFn request) {
+  request_ = std::move(request);
+  return parseCatalog(modelJson);
+}
+
+bool AssetCatalog::parseCatalog(const std::string& text) {
   std::string jerr; Json doc = Json::parse(text, &jerr);
   if (!jerr.empty()) { err_ = "model.json: " + jerr; return false; }
   entries_.clear();
@@ -80,7 +91,6 @@ bool AssetCatalog::load(const Options& opt) {
     for (size_t i = 0; i < g.slot.size(); ++i) reg("garis:" + g.id + ":slot" + std::to_string(i), g.slot[i].berkas);
     garis_.push_back(g);
   }
-  std::error_code ec; fs::create_directories(opt_.cacheDir, ec);
   return true;
 }
 
@@ -158,6 +168,12 @@ std::string AssetCatalog::emodPath(const std::string& id) {
 GpuModel* AssetCatalog::model(const std::string& id) {
   auto it = models_.find(id);
   if (it != models_.end()) return it->second.get();
+  if (request_) {   // streamed: ask the host once, box fallback until provide()/fail()
+    const CatalogEntry* e = find(id);
+    if (!e || e->berkas.empty() || e->prosedural) { models_[id] = nullptr; return nullptr; }
+    if (!requested_[id]) { requested_[id] = true; request_(id, e->berkas); }
+    return nullptr;
+  }
   std::unique_ptr<GpuModel> gpu;
   std::string path = emodPath(id);
   if (!path.empty()) {
@@ -170,9 +186,29 @@ GpuModel* AssetCatalog::model(const std::string& id) {
   return raw;
 }
 
+bool AssetCatalog::provide(const std::string& id, std::span<const uint8_t> emodBytes, std::string& error) {
+  Model m;
+  if (!loadEmod(emodBytes, m, error)) { models_[id] = nullptr; return false; }
+  auto gpu = std::make_unique<GpuModel>(); gpu->upload(m);
+  std::vector<ImageHint> h;
+  for (const Image& im : m.images) h.push_back({im.source, im.wrapS, im.wrapT, im.linear, im.placeholder()});
+  hints_[id] = std::move(h);
+  if (auto it = models_.find(id); it != models_.end() && it->second) it->second->destroy();
+  models_[id] = std::move(gpu);
+  return true;
+}
+
+const std::vector<AssetCatalog::ImageHint>* AssetCatalog::imageHints(const std::string& id) const {
+  auto it = hints_.find(id); return it == hints_.end() ? nullptr : &it->second;
+}
+
+GpuModel* AssetCatalog::streamedModel(const std::string& id) {
+  auto it = models_.find(id); return it == models_.end() ? nullptr : it->second.get();
+}
+
 void AssetCatalog::destroy() {
   for (auto& [id, m] : models_) if (m) m->destroy();
-  models_.clear();
+  models_.clear(); hints_.clear(); requested_.clear();
 }
 
 } // namespace eng

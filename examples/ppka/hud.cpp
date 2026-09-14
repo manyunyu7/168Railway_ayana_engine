@@ -21,12 +21,12 @@ void Game::drawHud(int w, int h) {
   // top bar: clock, time scale, score, fps
   char top[200];
   std::snprintf(top, sizeof top, "%s   x%g%s   score %d   viol %d   pending %d   fps %.0f   draws %u   az %03d   %s",
-                clockText(st.clock).c_str(), timeScale_, paused_ ? " PAUSED" : "", st.score, st.violations, st.pending, fps_, renderer_.drawCalls, compass_.azimuth(orbit_), pemula_ ? "PEMULA" : "AHLI");
+                clockText(st.clock).c_str(), timeScale_, paused_ ? " PAUSED" : "", st.score, st.violations, st.pending, fps_, scene_.renderer().drawCalls, compass_.azimuth(orbit_), pemula_ ? "PEMULA" : "AHLI");
   ui_.panel({0, 0, (float)w, lh * 2 + pad * 1.5f}, panel);
   text_.draw(top, pad, pad * 0.5f, white, 0.8f);
 
   // train labels projected from 3D
-  for (const TrainLabel& l : trains_.labels()) {
+  for (const TrainLabel& l : scene_.trains().labels()) {
     vec4 c = viewProj_ * vec4(l.anchor, 1);
     if (c.w <= 0) continue;
     float sx = (c.x / c.w * 0.5f + 0.5f) * (float)w, sy = (1 - (c.y / c.w * 0.5f + 0.5f)) * (float)h;

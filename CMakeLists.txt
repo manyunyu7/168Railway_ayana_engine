@@ -10,8 +10,11 @@ enable_testing()
 
 # ---- engine library ----
 file(GLOB ENGINE_WORLD_SRC CONFIGURE_DEPENDS engine/world/*.cpp)
+file(GLOB ENGINE_APP_SRC CONFIGURE_DEPENDS engine/app/*.cpp)   # world scene + cameras shared by the native app and the web C ABI
 add_library(engine STATIC
   ${ENGINE_WORLD_SRC}
+  ${ENGINE_APP_SRC}
+  engine/sim/sim_state.cpp
   engine/rhi/rhi_gl.cpp
   engine/core/window.cpp
   engine/core/fetch.cpp
@@ -56,6 +59,7 @@ if(EMSCRIPTEN)
                       -sEXIT_RUNTIME=0 -sEXPORTED_FUNCTIONS=_main,_viewer_load,_viewer_fps,_viewer_bytes,_viewer_ready
                       -sEXPORTED_RUNTIME_METHODS=ccall,cwrap)
   configure_file(web/index.html ${CMAKE_BINARY_DIR}/index.html COPYONLY)
+  add_subdirectory(engine/api)   # `ayana`: the engine as an ES module for the reference web client
   return()
 endif()
 add_executable(simtest examples/simtest/main.cpp)

@@ -19,6 +19,10 @@ Units: metres, seconds, m/s, radians. Clock = seconds since 00:00 (sim time). Co
 save's world coordinates (Web Mercator metres when `geo` is true, so ~1.2e7 — keep them in doubles).
 Numbers are rounded to 3 decimals (coordinates/metres) or 2 (speeds/times).
 
+The summary and the dynamic state are built by `bridge/sim-state.ts` (no Node imports), which the browser
+adapter in ppka-wannabe-2 (`src/tiga-ayana`, a copy made by `web/deploy-to-ppka.sh`) uses too: the same
+objects go straight into the Wasm engine (`eng_load_world` / `eng_set_state`). `step` also carries `timeScale`.
+
 ## Commands
 
 ### `{"cmd":"load","map":"kroya"}`

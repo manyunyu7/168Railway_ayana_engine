@@ -1,5 +1,5 @@
-// Port of ppka-wannabe-2/tests/kompas3d.ts against the pure functions in examples/ppka/compass.cpp.
-#include "examples/ppka/compass.h"
+// Port of ppka-wannabe-2/tests/kompas3d.ts against the pure functions in engine/app/compass.cpp.
+#include "engine/app/compass.h"
 #include "tests/check.h"
 #include <cmath>
 

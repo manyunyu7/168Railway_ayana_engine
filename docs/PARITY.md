@@ -13,8 +13,9 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
   the TypeScript simulator, reached through `bridge/sim-bridge.ts` (`bridge/PROTOCOL.md`).
   If the engine needs new information, add a bridge command that calls the existing TS function —
   do not re-implement it in C++.
-* **The engine draws and sends clicks.** Visual parity work happens in `engine/world/*` and
-  `examples/ppka/*`.
+* **The engine draws and sends clicks.** Visual parity work happens in `engine/world/*`; the world build/draw
+  shared by the native app and the web ABI is `engine/app/world_scene.*` (`examples/ppka/*` keeps input, HUD,
+  panel and cameras).
 * **Assets are converted offline** (`tools/convert`, `tools/fetch_tiles`, `tools/fontgen`); the runtime
   reads only our own formats (`.emod`, `.dem/.sat`, `.efnt`). Third-party decoders live in `tools/` only.
 * **Verify with screenshots.** Every example supports `ENG_CAPTURE=/tmp/x.ppm` (+ `ENG_CAPTURE_FRAME`,
@@ -96,5 +97,5 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
 | macOS (GLFW + OpenGL 4.1) | ✅ | |
 | Texture compression (ETC2/BC) in EMOD | ✅ | EMOD v5: `convert --target web\|desktop\|android`, KTX2 twins transcoded, mip chains, RGBA8 fallback; v6 placeholders (`--textures external`) for host-streamed textures; ASTC later |
 | GLES3 backend + Android EGL, Flutter `Texture` plugin | ❌ | prerequisite: C++ sim port (no Node on Android) |
-| WebAssembly (WebGL2) | 🟡 | viewer only: streamed geometry (`engine/core/fetch`) + KTX2 textures transcoded in a worker (`web/ktx2.js`) and pushed through `viewer_texture_*`; CC203 = 2.5 MB; no sim bridge, no terrain yet (per-tile files exist) |
+| WebAssembly (WebGL2) | ✅ | `ayana` target = the engine as a C ABI ES module (`engine/api`) inside ppka-wannabe-2 (`src/tiga-ayana/duniaAyana.ts`, `?renderer=ayana`): the browser runs the TS sim, the engine draws; per-tile terrain streaming (`Terrain::loadIndex/addDemTile/addSatTile`), geometry-only `.emod` per catalog slot on demand + KTX2 textures via `web/ktx2.js` (`ayanaApi`). Not yet in the web adapter: surveyor/hiasan/tanah editing tools, HUD signal plates, floating meja layan (stubs warn once) |
 | Automated tests (`ctest`: math, parsers, LUT vs TS, golden images) | ✅ | `tests/`, `ctest --preset mac-debug` (+ `mac-debug-gpu`) |

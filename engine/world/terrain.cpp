@@ -1,4 +1,5 @@
 #include "engine/world/terrain.h"
+#include "engine/asset/emod.h"
 #include "engine/render/mesh_builder.h"
 #include "engine/world/slippy.h"
 #include <algorithm>
@@ -97,7 +98,7 @@ bool SatLayer::covers(double wx, double wy) const {
   return has(slippy::worldToTileX(wx, zoom), slippy::worldToTileY(wy, zoom));
 }
 const uint8_t* SatLayer::tile(int tx, int ty) const {
-  return rgb.data() + (size_t)slot[(size_t)(ty - ty0) * nx + (tx - tx0)] * px * px * 3;
+  return rgb.data() + (size_t)slot[(size_t)(ty - ty0) * nx + (tx - tx0)] * rgbPx * rgbPx * 3;
 }
 
 bool SatImage::load(const std::string& path, std::string& error) {
@@ -112,7 +113,7 @@ bool SatImage::load(const std::string& path, std::string& error) {
   for (SatLayer& L : layers) {
     L.zoom = r.i32(); L.tx0 = r.i32(); L.ty0 = r.i32(); L.nx = r.i32(); L.ny = r.i32(); L.px = r.i32();
     if (!r.ok || L.nx < 1 || L.ny < 1 || L.px < 1 || L.px > 4096 || L.nx * L.ny > 65536) { error = path + ": bad layer"; return false; }
-    L.ts = slippy::tileSizeMeter(L.zoom); L.mpp = L.ts / L.px;
+    L.ts = slippy::tileSizeMeter(L.zoom); L.mpp = L.ts / L.px; L.rgbPx = L.px;
     L.present.resize((size_t)L.nx * L.ny);
     if (!r.bytes(L.present.data(), L.present.size())) { error = path + ": truncated"; return false; }
     L.slot.assign(L.present.size(), -1);
@@ -121,6 +122,12 @@ bool SatImage::load(const std::string& path, std::string& error) {
     L.rgb.resize((size_t)count * L.px * L.px * 3);
     if (!r.bytes(L.rgb.data(), L.rgb.size())) { error = path + ": truncated"; return false; }
   }
+  finish();
+  return true;
+}
+
+void SatImage::finish() {
+  int nl = (int)layers.size();
   detail.clear();
   for (int i = 0; i < nl; ++i) if (layers[(size_t)i].zoom > TILE_Z) detail.push_back(i);
   std::sort(detail.begin(), detail.end(), [&](int a, int b) { return layers[(size_t)a].mpp < layers[(size_t)b].mpp; });
@@ -131,7 +138,6 @@ bool SatImage::load(const std::string& path, std::string& error) {
     for (size_t i = 0; i + 2 < L.rgb.size(); i += 3 * 16) { sum += std::max({L.rgb[i], L.rgb[i + 1], L.rgb[i + 2]}); ++n; }
   }
   meanBrightness = n ? (float)(sum / n / 255.0) : 0.4f;
-  return true;
 }
 
 int Terrain::finestLayerAt(double wx, double wy) const {
@@ -146,13 +152,14 @@ bool Terrain::satColor(double wx, double wy, float radius, float rgb[3]) const {
   const SatLayer* L = &sat_.layers[(size_t)li];
   int tx = slippy::worldToTileX(wx, L->zoom), ty = slippy::worldToTileY(wy, L->zoom);
   const uint8_t* t = L->tile(tx, ty);
-  double fx = (wx - slippy::tileOriginX(tx, L->zoom)) / L->ts * L->px, fy = (wy - slippy::tileOriginY(ty, L->zoom)) / L->ts * L->px;
-  int r = std::max(0, (int)(radius / L->mpp));
-  int x0 = std::clamp((int)fx - r, 0, L->px - 1), x1 = std::clamp((int)fx + r, 0, L->px - 1);
-  int y0 = std::clamp((int)fy - r, 0, L->px - 1), y1 = std::clamp((int)fy + r, 0, L->px - 1);
+  const int P = L->rgbPx; const double mpp = L->ts / P;
+  double fx = (wx - slippy::tileOriginX(tx, L->zoom)) / L->ts * P, fy = (wy - slippy::tileOriginY(ty, L->zoom)) / L->ts * P;
+  int r = std::max(0, (int)(radius / mpp));
+  int x0 = std::clamp((int)fx - r, 0, P - 1), x1 = std::clamp((int)fx + r, 0, P - 1);
+  int y0 = std::clamp((int)fy - r, 0, P - 1), y1 = std::clamp((int)fy + r, 0, P - 1);
   double acc[3] = {0, 0, 0}; int n = 0;
   for (int y = y0; y <= y1; ++y)
-    for (int x = x0; x <= x1; ++x) { const uint8_t* p = t + ((size_t)y * L->px + x) * 3; acc[0] += p[0]; acc[1] += p[1]; acc[2] += p[2]; ++n; }
+    for (int x = x0; x <= x1; ++x) { const uint8_t* p = t + ((size_t)y * P + x) * 3; acc[0] += p[0]; acc[1] += p[1]; acc[2] += p[2]; ++n; }
   for (int c = 0; c < 3; ++c) rgb[c] = (float)(acc[c] / n / 255.0);
   return true;
 }
@@ -167,6 +174,115 @@ bool Terrain::load(const std::string& demPath, const std::string& satPath, std::
   backdropMat_ = {}; backdropMat_.baseColor = {0.616f, 0.690f, 0.537f, 1}; backdropMat_.metallic = 0; backdropMat_.roughness = 1;
   stats.loadMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   return true;
+}
+
+// ------------------------------------------------------------------ streaming (per-tile files)
+std::string Terrain::TileRef::path() const { return dir + "/" + std::to_string(z) + "_" + std::to_string(x) + "_" + std::to_string(y) + ".bin"; }
+
+// index.json (tools/fetch_tiles): { bbox:[x0,y0,x1,y1], dem:[{dir,zoom,tx0,ty0,nx,ny,px,present:"0101.."}], sat:[...] }
+bool Terrain::loadIndex(const Json& index, std::string& error) {
+  destroy();
+  dem_ = Dem{}; sat_ = SatImage{}; wanted_.clear(); streamed_ = true;
+  const Json& bb = index["bbox"];
+  if (bb.size() != 4) { error = "index.json: bbox missing"; return false; }
+  for (int i = 0; i < 4; ++i) dem_.bbox[i] = bb[(size_t)i].numberOr(0);
+  auto presentOf = [](const Json& L, size_t n) { std::vector<uint8_t> p(n, 0); const std::string& s = L["present"].str; for (size_t i = 0; i < n && i < s.size(); ++i) p[i] = s[i] == '1'; return p; };
+  for (const Json& L : index["dem"].arr) {
+    DemLayer d; d.zoom = L["zoom"].intOr(0); d.tx0 = L["tx0"].intOr(0); d.ty0 = L["ty0"].intOr(0); d.nx = L["nx"].intOr(0); d.ny = L["ny"].intOr(0); d.n = L["px"].intOr(256);
+    if (d.nx < 1 || d.ny < 1 || d.n < 2 || d.nx * d.ny > 4096) { error = "index.json: bad dem layer"; return false; }
+    d.ts = slippy::tileSizeMeter(d.zoom); d.x0 = slippy::tileOriginX(d.tx0, d.zoom); d.y0 = slippy::tileOriginY(d.ty0, d.zoom);
+    d.present.assign((size_t)d.nx * d.ny, 0);
+    d.h.assign((size_t)d.nx * d.ny * d.n * d.n, 0.f);
+    wanted_.push_back(presentOf(L, d.present.size()));
+    dem_.layers.push_back(std::move(d));
+  }
+  for (const Json& L : index["sat"].arr) {
+    SatLayer s; s.zoom = L["zoom"].intOr(0); s.tx0 = L["tx0"].intOr(0); s.ty0 = L["ty0"].intOr(0); s.nx = L["nx"].intOr(0); s.ny = L["ny"].intOr(0); s.px = L["px"].intOr(256);
+    if (s.nx < 1 || s.ny < 1 || s.px < 1 || s.nx * s.ny > 65536) { error = "index.json: bad sat layer"; return false; }
+    s.ts = slippy::tileSizeMeter(s.zoom); s.mpp = s.ts / s.px; s.rgbPx = 0;
+    std::vector<uint8_t> want = presentOf(L, (size_t)s.nx * s.ny);
+    s.present.assign(want.size(), 0);
+    s.slot.assign(want.size(), -1);
+    int32_t count = 0;
+    for (size_t t = 0; t < want.size(); ++t) if (want[t]) s.slot[t] = count++;
+    s.images.resize((size_t)count);
+    wanted_.push_back(std::move(want));
+    sat_.layers.push_back(std::move(s));
+  }
+  if (dem_.layers.empty() || sat_.layers.empty()) { error = "index.json: no layers"; return false; }
+  origin_ = dem_.origin();
+  ground_ = {}; ground_.baseColor = {0.81f, 0.81f, 0.81f, 1}; ground_.metallic = 0; ground_.roughness = 1;
+  backdropMat_ = {}; backdropMat_.baseColor = {0.616f, 0.690f, 0.537f, 1}; backdropMat_.metallic = 0; backdropMat_.roughness = 1;
+  return true;
+}
+
+std::vector<Terrain::TileRef> Terrain::tilesWanted() const {
+  std::vector<TileRef> out;
+  size_t li = 0;
+  for (const DemLayer& d : dem_.layers) {
+    const std::vector<uint8_t>& w = wanted_[li++];
+    for (int j = 0; j < d.ny; ++j) for (int i = 0; i < d.nx; ++i) if (w[(size_t)j * d.nx + i]) out.push_back({"dem", d.zoom, d.tx0 + i, d.ty0 + j});
+  }
+  for (size_t si = 0; si < sat_.layers.size(); ++si) {
+    const SatLayer& s = sat_.layers[si]; const std::vector<uint8_t>& w = wanted_[li++];
+    for (int j = 0; j < s.ny; ++j) for (int i = 0; i < s.nx; ++i) if (w[(size_t)j * s.nx + i]) out.push_back({"sat/" + std::to_string(si), s.zoom, s.tx0 + i, s.ty0 + j});
+  }
+  return out;
+}
+
+bool Terrain::addDemTile(int z, int x, int y, std::span<const uint8_t> bytes) {
+  for (size_t li = 0; li < dem_.layers.size(); ++li) {
+    DemLayer& d = dem_.layers[li];
+    if (d.zoom != z) continue;
+    int i = x - d.tx0, j = y - d.ty0;
+    if (i < 0 || j < 0 || i >= d.nx || j >= d.ny) continue;
+    size_t t = (size_t)j * d.nx + i;
+    if (li < wanted_.size()) wanted_[li][t] = 0;
+    if (bytes.size() != (size_t)d.n * d.n * 4) return false;   // failed fetch / wrong size: stays absent
+    std::memcpy(d.h.data() + t * d.n * d.n, bytes.data(), bytes.size());
+    d.present[t] = 1;
+    return true;
+  }
+  return false;
+}
+
+bool Terrain::addSatTile(int layer, int z, int x, int y, std::span<const uint8_t> bytes, std::string& error) {
+  if (layer < 0 || (size_t)layer >= sat_.layers.size()) { error = "bad layer"; return false; }
+  SatLayer& s = sat_.layers[(size_t)layer];
+  int i = x - s.tx0, j = y - s.ty0;
+  if (s.zoom != z || i < 0 || j < 0 || i >= s.nx || j >= s.ny) { error = "tile outside the layer"; return false; }
+  size_t t = (size_t)j * s.nx + i; int32_t sl = s.slot[t];
+  size_t wi = dem_.layers.size() + (size_t)layer;
+  if (wi < wanted_.size()) wanted_[wi][t] = 0;
+  if (sl < 0) { error = "tile not in the index"; return false; }
+  if (bytes.empty()) return false;   // failed fetch: absent
+  Image im;
+  if (!loadImageFile(bytes, im, error)) return false;
+  // rgb copy for satColor / the vegetation mask: the RGBA8 variant (small fallback on the web, full size on desktop)
+  const MipLevel* rgba = nullptr;
+  for (const ImageVariant& v : im.variants) if (v.format == TexFormat::RGBA8 && !v.mips.empty()) rgba = &v.mips[0];
+  int P = rgba ? rgba->width : (im.pixels.empty() ? 0 : im.width);
+  if (P > 0 && (s.rgbPx == 0 || s.rgb.empty())) { s.rgbPx = P; s.rgb.assign(s.images.size() * (size_t)P * P * 3, 0x60); }
+  if (P > 0 && P == s.rgbPx) {
+    const uint8_t* src = rgba ? rgba->data.data() : im.pixels.data();
+    uint8_t* dst = s.rgb.data() + (size_t)sl * P * P * 3;
+    for (size_t k = 0; k < (size_t)P * P; ++k) std::memcpy(dst + k * 3, src + k * 4, 3);
+  }
+  im.wrapS = im.wrapT = 1;
+  s.images[(size_t)sl] = std::move(im);
+  s.present[t] = 1;
+  return true;
+}
+
+void Terrain::finishTiles() {
+  dem_.rawMin = 1e30f;
+  for (const DemLayer& L : dem_.layers)
+    for (size_t t = 0; t < L.present.size(); ++t)
+      if (L.present[t]) for (size_t k = 0; k < (size_t)L.n * L.n; ++k) dem_.rawMin = std::min(dem_.rawMin, L.h[t * L.n * L.n + k]);
+  if (dem_.rawMin > 1e29f) dem_.rawMin = 0;
+  dem_.demBase = dem_.rawHeight((dem_.bbox[0] + dem_.bbox[2]) / 2, (dem_.bbox[1] + dem_.bbox[3]) / 2);
+  for (SatLayer& s : sat_.layers) if (s.rgbPx == 0) { s.rgbPx = 1; s.rgb.assign(s.images.size() * 3, 0x60); }
+  sat_.finish();
 }
 
 void Terrain::addChord(vec3 a, vec3 b, float ba, float bb) {
@@ -319,10 +435,14 @@ void Terrain::upload(Tile& t, MeshBuilder& mb, const SatLayer* layer, int tx, in
   t.xf = mat4::translation(pos);
   t.bounds = mb.bounds.transformed(t.xf);
   if (layer && layer->has(tx, ty)) {
-    const uint8_t* px = layer->tile(tx, ty);
-    t.tex = rhi::createTexture(layer->px, layer->px, rhi::Format::RGB8,
-                               std::as_bytes(std::span(px, (size_t)layer->px * layer->px * 3)), true, true);
-    t.textured = true;
+    size_t sl = (size_t)layer->slot[(size_t)(ty - layer->ty0) * layer->nx + (tx - layer->tx0)];
+    if (sl < layer->images.size() && !layer->images[sl].placeholder()) t.tex = uploadImage(layer->images[sl]);   // streamed record (ETC2 chain / RGBA8)
+    else {
+      const uint8_t* px = layer->tile(tx, ty);
+      t.tex = rhi::createTexture(layer->rgbPx, layer->rgbPx, rhi::Format::RGB8,
+                                 std::as_bytes(std::span(px, (size_t)layer->rgbPx * layer->rgbPx * 3)), true, true);
+    }
+    t.textured = t.tex.id != 0;
   }
   stats.vertices += mb.vertices.size();
   stats.triangles += mb.indices.size() / 3;

@@ -6,7 +6,9 @@
 #pragma once
 #include "engine/render/model_renderer.h"
 #include <map>
+#include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -42,6 +44,19 @@ public:
   };
 
   bool load(const Options& opt = Options());   // parses model.json; false + error() on failure
+  // Host-streamed mode (web C ABI): the catalog text is handed over and there is no filesystem. model(id)
+  // then returns nullptr for anything not provided yet and reports the id ONCE through `request`; the host
+  // fetches the geometry-only `.emod` and calls provide(). Textures arrive later through texture streaming
+  // (imageHints + streamedModel), the model draws white until then.
+  using RequestFn = std::function<void(const std::string& id, const std::string& berkas)>;
+  bool loadFromText(const std::string& modelJson, RequestFn request);
+  bool provide(const std::string& id, std::span<const uint8_t> emodBytes, std::string& error);
+  void fail(const std::string& id) { models_[id] = nullptr; }   // the host could not fetch it: box fallback from now on
+  struct ImageHint { int source = -1; uint8_t wrapS = 0, wrapT = 0; bool linear = false, placeholder = false; };
+  const std::vector<ImageHint>* imageHints(const std::string& id) const;   // streamed models only
+  GpuModel* streamedModel(const std::string& id);                          // resident streamed model (nullptr otherwise)
+  bool streaming() const { return (bool)request_; }
+  bool pending(const std::string& id) const { return requested_.count(id) && !models_.count(id); }   // asked, not answered
   const std::string& error() const { return err_; }
   const Options& options() const { return opt_; }
 
@@ -62,6 +77,10 @@ private:
   std::map<std::string, CatalogEntry> entries_;
   std::vector<GarisEntry> garis_;
   std::map<std::string, std::unique_ptr<GpuModel>> models_;   // nullptr = known missing
+  bool parseCatalog(const std::string& text);
+  RequestFn request_;
+  std::map<std::string, std::vector<ImageHint>> hints_;   // streamed models: per-image wrap / colour-space / source
+  std::map<std::string, bool> requested_;
 };
 
 } // namespace eng

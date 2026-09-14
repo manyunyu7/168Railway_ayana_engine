@@ -1,4 +1,4 @@
-#include "examples/ppka/compass.h"
+#include "engine/app/compass.h"
 #include "engine/render/mesh_builder.h"
 #include <cmath>
 

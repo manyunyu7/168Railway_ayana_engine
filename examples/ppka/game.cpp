@@ -13,7 +13,7 @@ bool Game::init(Window& win, const GameOptions& opt) {
   win_ = &win; opt_ = opt;
   rhi::init();
   rhi::setAnisotropy(8);
-  renderer_.init(); sky_.init();
+  scene_.initGpu();
   std::string err;
   if (!text_.load("assets/font.efnt", err)) std::fprintf(stderr, "font: %s\n", err.c_str());
 
@@ -22,23 +22,14 @@ bool Game::init(Window& win, const GameOptions& opt) {
   const Json& loaded = sim_.load(opt.map);
   if (!loaded["ok"].boolOr(false)) { std::fprintf(stderr, "load failed: %s\n", loaded["error"].stringOr("?").c_str()); return false; }
 
-  // origin = bbox centre of track nodes (spec §2.2)
-  const Json& nodes = sim_.world()["graph"]["nodes"];
-  double x0 = 1e30, y0 = 1e30, x1 = -1e30, y1 = -1e30;
-  for (const Json& n : nodes.arr) { double x = n["x"].num, y = n["y"].num; x0 = std::fmin(x0, x); x1 = std::fmax(x1, x); y0 = std::fmin(y0, y); y1 = std::fmax(y1, y); }
-  origin_ = {(x0 + x1) / 2, (y0 + y1) / 2};
-  worldW_ = (float)std::fmax(std::fmax(x1 - x0, y1 - y0), 800.0);   // lebarDunia (corridor fog)
-
-  // first station scenery object → camera target
-  stationScene_ = {};
-  for (const Json& s : sim_.world()["scenery"].arr)
-    if (s["kind"].stringOr("") == "station") { stationScene_ = origin_.toScene(s["pos"]["x"].num, s["pos"]["y"].num, 0); break; }
-
-  if (const char* t = std::getenv("ENG_TARGET")) { double wx, wy; if (std::sscanf(t, "%lf,%lf", &wx, &wy) == 2) stationScene_ = origin_.toScene(wx, wy, 0); }   // debug: aim at a world point
-  orbit_.target = stationScene_; orbit_.distance = 160; orbit_.pitch = radians(18); orbit_.yaw = radians(35);
+  scene_.setWorld(sim_.world());
+  vec3 station = scene_.stationScene();
+  if (const char* t = std::getenv("ENG_TARGET")) { double wx, wy; if (std::sscanf(t, "%lf,%lf", &wx, &wy) == 2) station = scene_.origin().toScene(wx, wy, 0); }   // debug: aim at a world point
+  scene_.setStationScene(station);
+  orbit_.target = station; orbit_.distance = 160; orbit_.pitch = radians(18); orbit_.yaw = radians(35);
   orbit_.near = 1; orbit_.far = 40000; orbit_.fovY = radians(52);
   if (const char* v = std::getenv("ENG_VIEW")) std::sscanf(v, "%f,%f,%f", &orbit_.distance, &orbit_.yaw, &orbit_.pitch);   // debug: dist,yaw,pitch
-  fly_.position = stationScene_ + vec3{0, 30, 120}; fly_.far = 40000;
+  fly_.position = station + vec3{0, 30, 120}; fly_.far = 40000;
 
   if (!buildWorld()) return false;
 
@@ -51,135 +42,45 @@ bool Game::init(Window& win, const GameOptions& opt) {
   if (const char* f = std::getenv("ENG_FOLLOW")) for (const SimTrain& t : sim_.state().trains) if (t.no == f || t.id == f) subjectId_ = t.id;   // camera subject
   if (const char* c = std::getenv("ENG_CAMERA")) { CamMode cm; if (parseCamMode(c, cm)) setCamMode(cm); else pushMessage(std::string("ENG_CAMERA: unknown mode ") + c); }   // debug: start in a camera mode
   char m[160]; std::snprintf(m, sizeof m, "map %s loaded: %zu nodes, %d trains on line, bridge %.0f ms",
-                             opt.map.c_str(), nodes.size(), (int)sim_.state().trains.size(), sim_.startupMs());
+                             opt.map.c_str(), sim_.world()["graph"]["nodes"].size(), (int)sim_.state().trains.size(), sim_.startupMs());
   pushMessage(m);
   ready_ = true;
   return true;
 }
 
+// The world itself is built by WorldScene (shared with the web ABI); this only supplies the native file paths.
 bool Game::buildWorld() {
   std::string err; const std::string root = ENG_SOURCE_DIR;
-  auto t0 = std::chrono::steady_clock::now();
-  const Json& world = sim_.world();
-  if (!graph_.fromJson(world, &err)) { std::fprintf(stderr, "graph: %s\n", err.c_str()); return false; }
-  if (!terrain_.load(root + "/assets/terrain/" + opt_.map + ".dem", root + "/assets/terrain/" + opt_.map + ".sat", err)) {
+  if (!scene_.terrain().load(root + "/assets/terrain/" + opt_.map + ".dem", root + "/assets/terrain/" + opt_.map + ".sat", err)) {
     std::fprintf(stderr, "terrain: %s (run: ./build/mac-debug/fetch_tiles %s)\n", err.c_str(), opt_.map.c_str()); return false;
   }
-  std::vector<StationZone> stations;
-  for (const Json& sc : world["scenery"].arr)
-    if (sc["kind"].stringOr("") == "station") stations.push_back({sc["pos"]["x"].numberOr(0), sc["pos"]["y"].numberOr(0), 160});
-  const float demBase = terrain_.dem().demBase;
-  profile_.build(graph_, terrain_.dem(), stations, demBase);
-  rails_.build(graph_, profile_, &terrain_.dem(), demBase);
-  terrain_.setBrushDeltas(world["tanah"]);
-  terrain_.setRails(rails_.samples());
-  terrain_.build();
-  { const double* bb = terrain_.dem().bbox; clouds_.build((float)(bb[0] - origin_.ox), (float)(bb[1] - origin_.oz), (float)(bb[2] - origin_.ox), (float)(bb[3] - origin_.oz)); }
-  signals_.build(graph_, profile_, world["trackside"]);
-  points_.build(graph_, profile_);
-  routes_.init(&graph_, &profile_);
-  auto ground = [this](double wx, double wy) { return terrain_.groundHeight(wx, wy); };
-  boards_.build(graph_, profile_, world, origin_, ground, root + "/assets/font.efnt");
-  jpl_.build(graph_, world, origin_, ground);
   // baked OSM city: slug = map name; `bks` shares its geography with the `bekasi` bake (Bekasi Timur–Cibitung)
-  if (!std::getenv("ENG_NO_CITY")) {   // debug: ENG_NO_CITY=1 skips the city (fps comparison)
-    std::string slug = opt_.map == "bks" ? "bekasi" : opt_.map;
-    city_.build(root + "/../ppka-wannabe-2/public/kota/" + slug + ".json", origin_, graph_, ground); }
-  if (!catalog_.load()) std::fprintf(stderr, "catalog: %s\n", catalog_.error().c_str());
-  stock_.init(catalog_); trains_.init(stock_);
-  // hiasan objects (spec §5.4): position on carved ground, yaw = rot degrees
-  for (const Json& o : world["hiasan"]["objek"].arr) {
-    GpuModel* m = catalog_.model(o["model"].stringOr(""));
-    if (!m) { pushMessage("missing model: " + o["model"].stringOr("")); continue; }
-    double wx = o["x"].numberOr(0), wy = o["y"].numberOr(0);
-    vec3 p = origin_.toScene(wx, wy, terrain_.groundHeight(wx, wy) + (float)o["naik"].numberOr(0));
-    float yaw = radians((float)o["rot"].numberOr(0)), sc = (float)o["skala"].numberOr(1);
-    mat4 norm = RollingStock::normalizeTransform(*m, true);
-    mat4 xf = mat4::translation(p) * mat4::rotationY(yaw) * mat4::scale({sc, sc, sc}) * norm;
-    scenery_.push_back({m, xf, m->bounds.transformed(xf)});
-  }
-  // hiasan.garis (spec §3.5): spline objects. ENG_TEST_GARIS=1 injects a synthetic platform + fence + wall
-  // along the station track (no save carries any `garis` yet).
-  {
-    Json hiasan = world["hiasan"];
-    if (std::getenv("ENG_TEST_GARIS")) injectTestGaris(hiasan);
-    garis_.build(hiasan, catalog_, origin_, ground);
-  }
-  // trees from the satellite green mask, kept out of the hiasan footprints (§4.4)
-  std::vector<AABB> footprints;
-  for (const Placed& p : scenery_) footprints.push_back(p.bounds);
-  trees_.build(terrain_, catalog_, footprints);
-  compass_.init([this](float x, float z) { return terrain_.groundHeight(x + origin_.ox, z + origin_.oz); });
-  // camera height follows the ground at the station
-  float gy = terrain_.groundHeight(stationScene_.x + origin_.ox, stationScene_.z + origin_.oz);
-  stationScene_.y = gy; orbit_.target = stationScene_; fly_.position.y = gy + 30;
-  double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-  char m[400];
-  std::snprintf(m, sizeof m, "world built in %.0f ms: %.1f km track, %d points, %zu signals, rails %u tris, terrain %zu tris, %zu hiasan, %zu garis/%zu tiles, %zu trees, %zu boards, %zu jpl, city %zu bldg/%u tris/%d meshes (%.0f ms)",
-                ms, graph_.totalLength() / 1000, graph_.pointCount(), signals_.signals().size(), rails_.stats().tris, terrain_.stats.triangles, scenery_.size(), garis_.stats.lines, garis_.stats.tiles, trees_.stats.trees, boards_.stats.boards, jpl_.crossings().size(), city_.stats.buildings, city_.stats.tris, city_.stats.meshes, city_.stats.buildMs);
-  pushMessage(m); std::printf("%s\n", m);
+  std::string city;
+  if (!std::getenv("ENG_NO_CITY")) city = root + "/../ppka-wannabe-2/public/kota/" + (opt_.map == "bks" ? "bekasi" : opt_.map) + ".json";   // debug: ENG_NO_CITY=1 skips the city (fps comparison)
+  if (!scene_.catalog().load()) std::fprintf(stderr, "catalog: %s\n", scene_.catalog().error().c_str());
+  if (!scene_.buildStatic(sim_.world(), opt_.map, root + "/assets/font.efnt", city, [this](const std::string& s) { pushMessage(s); })) return false;
+  scene_.buildDecor(sim_.world(), std::getenv("ENG_TEST_GARIS") != nullptr, &sim_.summary());
+  std::printf("%s\n", scene_.stats().summary.c_str());
+  for (const Json& o : sim_.world()["hiasan"]["objek"].arr) if (!scene_.catalog().model(o["model"].stringOr(""))) pushMessage("missing model: " + o["model"].stringOr(""));
+  // the station target was lifted to the carved ground (and maybe moved by ENG_TEST_GARIS)
+  vec3 st = scene_.stationScene(); st.y = scene_.groundScene(st.x, st.z); scene_.setStationScene(st);
+  orbit_.target = st; fly_.position.y = st.y + 30;
+  compass_.init([this](float x, float z) { return scene_.groundScene(x, z); });
   if (std::getenv("ENG_TERRAIN_DEBUG")) {
-    double wx, wy; origin_.toWorld(stationScene_, wx, wy);
-    int li = terrain_.finestLayerAt(wx, wy);
-    std::printf("origins: game (%.1f, %.1f) terrain (%.1f, %.1f) graph (%.1f, %.1f)\n", origin_.ox, origin_.oz, terrain_.origin().ox, terrain_.origin().oz, graph_.origin().ox, graph_.origin().oz);
-    std::printf("terrain: %d patches (%d detail); station (%.0f, %.0f) on layer %d (z%d @ %.2f m/px)\n", terrain_.stats.patches, terrain_.stats.detailPatches,
-                wx, wy, li, li >= 0 ? terrain_.sat().layers[(size_t)li].zoom : 0, li >= 0 ? terrain_.sat().layers[(size_t)li].mpp : 0.0);
+    double wx, wy; scene_.origin().toWorld(st, wx, wy);
+    const Terrain& terrain = scene_.terrain();
+    int li = terrain.finestLayerAt(wx, wy);
+    std::printf("origins: game (%.1f, %.1f) terrain (%.1f, %.1f) graph (%.1f, %.1f)\n", scene_.origin().ox, scene_.origin().oz, terrain.origin().ox, terrain.origin().oz, scene_.graph().origin().ox, scene_.graph().origin().oz);
+    std::printf("terrain: %d patches (%d detail); station (%.0f, %.0f) on layer %d (z%d @ %.2f m/px)\n", terrain.stats.patches, terrain.stats.detailPatches,
+                wx, wy, li, li >= 0 ? terrain.sat().layers[(size_t)li].zoom : 0, li >= 0 ? terrain.sat().layers[(size_t)li].mpp : 0.0);
   }
   return true;
 }
 
-// Debug: a 220 m island platform 5 m beside the station track, a blue fence 11 m on the other side and a
-// concrete wall 16 m out, as `hiasan.garis` entries (world coordinates), so the spline tiling can be seen.
-void Game::injectTestGaris(Json& hiasan) {
-  const Json& segs = sim_.summary()["segments"];
-  const Json* best = nullptr; double bd = 1e30; double sx = stationScene_.x + origin_.ox, sy = stationScene_.z + origin_.oz;
-  for (const Json& sg : segs.arr) {
-    const Json& poly = sg["poly"];
-    for (size_t i = 0; i + 1 < poly.size(); i += 2) { double d = std::hypot(poly[i].num - sx, poly[i + 1].num - sy); if (d < bd) { bd = d; best = &sg; } }
-  }
-  if (!best) return;
-  const Json& poly = (*best)["poly"];
-  size_t n = poly.size() / 2, ic = 0; bd = 1e30;
-  for (size_t i = 0; i < n; ++i) { double d = std::hypot(poly[2 * i].num - sx, poly[2 * i + 1].num - sy); if (d < bd) { bd = d; ic = i; } }
-  ic = std::min(n - 1, ic + 40);   // 160 m past the building so the tiles are not hidden by the station GLB
-  { size_t a = ic > 0 ? ic - 1 : ic, b = ic + 1 < n ? ic + 1 : ic; double tx = poly[2 * b].num - poly[2 * a].num, ty = poly[2 * b + 1].num - poly[2 * a + 1].num, l = std::hypot(tx, ty);
-    if (l > 0 && !std::getenv("ENG_TARGET")) stationScene_ = origin_.toScene(poly[2 * ic].num - ty / l * 3, poly[2 * ic + 1].num + tx / l * 3, 0); }   // aim the default camera at the platform
-  auto line = [&](const char* kelas, double offset, double halfLen, double naik) {
-    Json g; g.type = Json::Type::Object;
-    Json k; k.type = Json::Type::String; k.str = kelas; g.obj["kelas"] = k;
-    Json nk; nk.type = Json::Type::Number; nk.num = naik; g.obj["naik"] = nk;
-    Json pts; pts.type = Json::Type::Array;
-    double acc = 0;
-    for (size_t i = ic; i + 1 < n && acc < halfLen; ++i) acc += std::hypot(poly[2 * i + 2].num - poly[2 * i].num, poly[2 * i + 3].num - poly[2 * i + 1].num);
-    size_t i0 = ic, i1 = ic; acc = 0;
-    while (i0 > 0 && acc < halfLen) { acc += std::hypot(poly[2 * i0].num - poly[2 * i0 - 2].num, poly[2 * i0 + 1].num - poly[2 * i0 - 1].num); --i0; }
-    acc = 0; while (i1 + 1 < n && acc < halfLen) { acc += std::hypot(poly[2 * i1 + 2].num - poly[2 * i1].num, poly[2 * i1 + 3].num - poly[2 * i1 + 1].num); ++i1; }
-    for (size_t i = i0; i <= i1; i += 4) {
-      size_t a = i > 0 ? i - 1 : i, b = i + 1 < n ? i + 1 : i;
-      double tx = poly[2 * b].num - poly[2 * a].num, ty = poly[2 * b + 1].num - poly[2 * a + 1].num, l = std::hypot(tx, ty); if (l <= 0) continue;
-      Json pt; pt.type = Json::Type::Object;
-      Json px; px.type = Json::Type::Number; px.num = poly[2 * i].num - ty / l * offset; pt.obj["x"] = px;
-      Json py; py.type = Json::Type::Number; py.num = poly[2 * i + 1].num + tx / l * offset; pt.obj["y"] = py;
-      pts.arr.push_back(pt);
-    }
-    g.obj["titik"] = pts;
-    if (hiasan.type != Json::Type::Object) hiasan.type = Json::Type::Object;
-    Json& arr = hiasan.obj["garis"]; if (arr.type != Json::Type::Array) arr.type = Json::Type::Array;
-    arr.arr.push_back(g);
-  };
-  line("peron-kanopi", 5, 110, 0);
-  line("bn-pager-rel-biru", -11, 150, 0);
-  line("tembok-beton-cc0", -16, 150, 0);
-  pushMessage("ENG_TEST_GARIS: platform + fence + wall injected along " + (*best)["id"].stringOr(""));
-}
-
 void Game::applySimState() {
   const SimState& st = sim_.state();
-  for (const SimSignal& s : st.signals) signals_.setAspect(s.id, s.aspect);
-  for (const SimPoint& p : st.points) points_.setState(p.id, p.setting, !p.lockedBy.empty());
-  signals_.animate();
-  routes_.update(st);
-  trains_.update(st, origin_, &profile_, timeScale_);
+  scene_.applyState(st, timeScale_);
+  TrainVisuals& trains_ = scene_.trains();
   if (const char* f = std::getenv("ENG_FOLLOW")) {   // debug: orbit target tracks a train (number) every frame; ENG_FOLLOW_TAIL = its last car
     for (size_t i = 0; i < trains_.labels().size(); ++i) {
       const TrainLabel& l = trains_.labels()[i]; if (l.no != f && l.id != f) continue;
@@ -187,12 +88,10 @@ void Game::applySimState() {
       if (std::getenv("ENG_FOLLOW_TAIL")) { size_t n = 0; for (const SimTrain& t : st.trains) { if (t.no == f || t.id == f) { orbit_.target = trains_.vehicles()[n + t.vehicles.size() - 1].centre + vec3{0, 1.5f, 0}; break; } n += t.vehicles.size(); } }
     }
   }
-  jpl_.setState(st.jpl);
 }
 
 void Game::shutdown() {
-  sim_.stop(); compass_.shutdown(); trains_.shutdown(); trees_.destroy(); garis_.destroy(); clouds_.destroy(); boards_.destroy(); jpl_.destroy(); city_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy(); routes_.destroy();
-  renderer_.shutdown(); sky_.shutdown(); text_.shutdown();
+  sim_.stop(); compass_.shutdown(); scene_.destroy(); text_.shutdown();
 }
 
 void Game::handleInput(Window& win, double dt) {
@@ -347,7 +246,7 @@ void Game::selectTrain(const std::string& id, bool jump) {
   refreshDetail(true);
   if (!jump) return;
   for (const SimTrain& t : sim_.state().trains) if (t.id == id) {
-    vec3 p = origin_.toScene(t.x, t.y, 0); p.y = terrain_.groundHeight(p.x + origin_.ox, p.z + origin_.oz);
+    vec3 p = scene_.origin().toScene(t.x, t.y, 0); p.y = scene_.groundScene(p.x, p.z);
     compass_.jumpTo(orbit_, p);
   }
 }
@@ -369,7 +268,7 @@ void Game::setPaused(bool p) { paused_ = p; }
 void Game::setClock(const std::string& hhmm) {
   const Json& r = sim_.setClock(hhmm);
   if (!r["ok"].boolOr(false)) { pushMessage("set clock failed: " + r["error"].stringOr("?")); return; }
-  selectedTrain_.clear(); menu_.open = false; routes_.clearPreview(); hoverId_.clear();
+  selectedTrain_.clear(); menu_.open = false; scene_.routes().clearPreview(); hoverId_.clear();
   pushMessage("session restarted at " + hhmm + " (live trains re-spawned from the GAPEKA)");
   afterCommand();
 }
@@ -388,22 +287,10 @@ void Game::removeTrain(const std::string& id) {
   afterCommand();
 }
 
-// Screen-space picking (spec §6.5): nearest signal within 26 px wins over a point within 40 px
-// unless the point is closer and the signal is farther than 18 px.
+// Screen-space picking (spec §6.5): WorldScene::pickAt with the window -> framebuffer scale.
 void Game::pickAt(double mx, double my, int w, int h, std::string& sigId, std::string& ptId) const {
   int ww, wh; glfwGetWindowSize((GLFWwindow*)win_->handle, &ww, &wh);
-  float px = (float)(mx * w / ww), py = (float)(my * h / wh);
-  vec3 eye = camEye();
-  std::string bs, bp; float ds = 1e9f, dw = 1e9f;
-  for (const ScreenPoint& sp : signals_.screenPositions(viewProj_, w, h, eye)) {
-    if (!sp.visible) continue; float d = std::hypot(sp.x - px, sp.y - py); if (d < ds) { ds = d; bs = sp.id; }
-  }
-  for (const ScreenPoint& sp : points_.screenPositions(viewProj_, w, h)) {
-    if (!sp.visible) continue; float d = std::hypot(sp.x - px, sp.y - py); if (d < dw) { dw = d; bp = sp.id; }
-  }
-  bool hitSig = ds <= 26, hitPt = dw <= 40;
-  sigId.clear(); ptId.clear();
-  if (hitSig && (!hitPt || ds < dw || ds < 18)) sigId = bs; else if (hitPt) ptId = bp;
+  scene_.pickAt((float)(mx * w / ww), (float)(my * h / wh), w, h, viewProj_, camEye(), sigId, ptId);
 }
 
 // Hover (§6.5): ring + tooltip on the picked object; for an unrouted signal the route preview
@@ -418,12 +305,13 @@ void Game::updateHover() {
     else if (!ui_.blocked(fmx_, fmy_)) pickAt(mx, my, screenW_, screenH_, sigId, ptId);
   }
   std::string id = sigId.empty() ? ptId : sigId;
+  RouteVisuals& routes_ = scene_.routes();
   if (id != hoverId_ || onPanel != hoverOnPanel_) { hoverId_ = id; hoverOnPanel_ = onPanel; hoverIsSignal_ = !sigId.empty(); previewAt_ = -1; routes_.clearPreview(); hoverTip_.clear(); hoverAction_.clear(); hoverReject_ = false; }
   if (hoverId_.empty()) return;
   const SimState& st = sim_.state();
   if (hoverIsSignal_) {
-    int i = signals_.indexOf(hoverId_); if (i < 0) { hoverId_.clear(); return; }
-    const SignalInstance& si = signals_.signals()[(size_t)i];
+    int i = scene_.signals().indexOf(hoverId_); if (i < 0) { hoverId_.clear(); return; }
+    const SignalInstance& si = scene_.signals().signals()[(size_t)i];
     hoverPos_ = si.pos;
     const SimRoute* active = nullptr;
     for (const SimRoute& r : st.routes) if (r.entry == hoverId_) active = &r;
@@ -447,7 +335,7 @@ void Game::updateHover() {
     hoverTip_ = head + (hoverAction_.empty() ? "" : "  |  " + hoverAction_);
   } else {
     const PointInstance* pi = nullptr;
-    for (const PointInstance& p : points_.points()) if (p.nodeId == hoverId_) pi = &p;
+    for (const PointInstance& p : scene_.points().points()) if (p.nodeId == hoverId_) pi = &p;
     if (!pi) { hoverId_.clear(); return; }
     hoverPos_ = pi->pos;
     hoverTip_ = "point " + hoverId_ + "  " + (pi->setting ? "reverse" : "normal") + (pi->locked ? " · locked" : "") + "  |  click = flip";
@@ -485,35 +373,18 @@ void Game::render(Window& win) {
   mat4 proj = camProj(aspect);
   vec3 eye = camEye();
   viewProj_ = proj * view;
-  { double lon, lat; worldToLonLat(origin_.ox, origin_.oz, lon, lat); applySun(sim_.state().clock, lon, lat, light_, sky_); }
-  light_.fogDensity = rig_.fogDensity(worldW_);   // per-mode fog (§9.1), exponential-squared matched at the linear midpoint
-  sky_.draw(viewProj_.inverse(), eye);
-  renderer_.beginFrame(viewProj_, eye, light_);
-  Frustum frustum(viewProj_);
-  terrain_.draw(renderer_, &frustum);
-  trees_.draw(renderer_, eye, &frustum);
-  rails_.draw(renderer_, &frustum);
-  for (const Placed& p : scenery_) if (frustum.contains(p.bounds)) renderer_.draw(*p.model, p.xf, &frustum);
-  { double hh = std::fmod(sim_.state().clock / 3600.0, 24.0); bool night = hh < 6 || hh >= 18;
-    signals_.setView(camFovY(), h, night); trains_.setView(camFovY(), h, night); }
-  signals_.draw(renderer_, eye, &frustum);
-  points_.draw(renderer_, &frustum);
-  boards_.draw(renderer_, &frustum);
-  jpl_.animate(paused_ ? 0.f : (float)std::fmin(realDt_, 0.1) * (float)std::fmax(1.0, timeScale_));
-  jpl_.draw(renderer_, &frustum);
-  city_.draw(renderer_, &frustum);
-  clouds_.draw(viewProj_, view, eye, sky_, light_, (float)realDt_);
-  garis_.draw(renderer_, &frustum);
+  float dt = paused_ ? 0.f : (float)std::fmin(realDt_, 0.1);
+  // per-mode fog (§9.1), exponential-squared matched at the linear midpoint; trains drawn after the hover ring
+  scene_.draw(viewProj_, view, eye, camFovY(), h, sim_.state().clock, dt, timeScale_, rig_.fogDensity(scene_.worldWidth()), false);
   updateHover();
-  routes_.draw(renderer_);   // blended ribbons before the trains' own transparent parts
   if (!hoverId_.empty() && !hoverOnPanel_) {
-    routes_.drawHoverRing(renderer_, hoverPos_, std::max(1.f, length(hoverPos_ - eye) / 46));
+    scene_.drawHoverRing(hoverPos_, eye);
     vec4 c = viewProj_ * vec4(hoverPos_ + vec3{0, hoverIsSignal_ ? 4.5f : 3.f, 0}, 1);
     hoverX_ = c.w > 0 ? (c.x / c.w * 0.5f + 0.5f) * (float)w : -1; hoverY_ = c.w > 0 ? (1 - (c.y / c.w * 0.5f + 0.5f)) * (float)h : -1;
   }
-  trains_.draw(renderer_, &frustum);
-  if (!useFly_ && rig_.mode == CamMode::Bebas) compass_.draw(renderer_, orbit_);
-  renderer_.flushTransparent();
+  { Frustum frustum(viewProj_); scene_.trains().draw(scene_.renderer(), &frustum); }
+  if (!useFly_ && rig_.mode == CamMode::Bebas) compass_.draw(scene_.renderer(), orbit_);
+  scene_.renderer().flushTransparent();
   drawHud(w, h);
   // the click that no widget took goes to the meja layan or the 3D scene
   if (pendingClick_) {
@@ -540,11 +411,11 @@ void Game::frame(Window& win, double realDt) {
     vec3 eye = camEye();
     std::string k = kind, want;   // "signal" | "point" | "signal:<name>" | "point:<nodeId>"
     if (size_t c = k.find(':'); c != std::string::npos) { want = k.substr(c + 1); k = k.substr(0, c); }
-    auto pts = k == "point" ? points_.screenPositions(viewProj_, w, h) : signals_.screenPositions(viewProj_, w, h, eye);
+    auto pts = k == "point" ? scene_.points().screenPositions(viewProj_, w, h) : scene_.signals().screenPositions(viewProj_, w, h, eye);
     float best = 1e9f; ScreenPoint hit;
     for (const ScreenPoint& sp : pts) {
       if (!sp.visible) continue;
-      if (!want.empty()) { int i = k == "point" ? -1 : signals_.indexOf(sp.id); std::string nm = i >= 0 ? signals_.signals()[(size_t)i].name : sp.id; if (nm != want) continue; }
+      if (!want.empty()) { int i = k == "point" ? -1 : scene_.signals().indexOf(sp.id); std::string nm = i >= 0 ? scene_.signals().signals()[(size_t)i].name : sp.id; if (nm != want) continue; }
       float d = std::hypot(sp.x - w / 2.f, sp.y - h / 2.f); if (d < best) { best = d; hit = sp; }
     }
     hit.x = hit.x * (float)ww / (float)w; hit.y = hit.y * (float)wh / (float)h;
@@ -593,14 +464,14 @@ bool Game::subjectPath(TrainPath& out, std::string* idOut) const {
   if (!t) for (const SimTrain& x : st.trains) if (!subjectId_.empty() && x.id == subjectId_) t = &x;
   if (!t) {
     vec3 eye = camEye(); float bd = 1e30f;
-    for (const SimTrain& x : st.trains) { vec3 p = origin_.toScene(x.x, x.y, 0); float d = (p.x - eye.x) * (p.x - eye.x) + (p.z - eye.z) * (p.z - eye.z); if (d < bd) { bd = d; t = &x; } }
+    for (const SimTrain& x : st.trains) { vec3 p = scene_.origin().toScene(x.x, x.y, 0); float d = (p.x - eye.x) * (p.x - eye.x) + (p.z - eye.z) * (p.z - eye.z); if (d < bd) { bd = d; t = &x; } }
   }
   if (!t || t->vehicles.empty()) return false;
   out = TrainPath{};
   out.sarana = t->vehicles[0].sarana;
   float acc = 0;
   auto push = [&](double wx, double wy, const std::string& seg, float s) {
-    vec3 p = origin_.toScene(wx, wy, profile_.railHeight(seg.c_str(), s));
+    vec3 p = scene_.origin().toScene(wx, wy, scene_.profile().railHeight(seg.c_str(), s));
     if (!out.pts.empty()) acc += length(horizontalXZ(p - out.pts.back()));
     out.pts.push_back(p); out.cum.push_back(acc);
   };
@@ -623,7 +494,7 @@ void Game::setCamMode(CamMode m) {
     useFly_ = false;
   }
   rig_.setMode(m, eye, look);
-  auto ground = [this](float x, float z) { return terrain_.groundHeight(x + origin_.ox, z + origin_.oz); };
+  auto ground = [this](float x, float z) { return scene_.groundScene(x, z); };
   if (m == CamMode::Jalan) rig_.enterWalk(eye, look, ground);
   const CamProfile p = camProfile(m);
   pushMessage(m == CamMode::Bebas ? "Kamera bebas (orbit)" : m == CamMode::Jalan ? "Jalan-jalan - WASD = jalan, Shift = lari, seret = menoleh, Esc kembali"
@@ -642,7 +513,7 @@ void Game::cycleSubject(int dir) {
 
 void Game::updateCamera(float dt) {
   if (rig_.mode == CamMode::Bebas) { rig_.step(dt, nullptr, {}, {}); return; }
-  auto ground = [this](float x, float z) { return terrain_.groundHeight(x + origin_.ox, z + origin_.oz); };
+  auto ground = [this](float x, float z) { return scene_.groundScene(x, z); };
   WalkInput in;
   if (rig_.mode == CamMode::Jalan && !clockPrompt_) {
     in.forward = (win_->key(GLFW_KEY_W) || win_->key(GLFW_KEY_UP) ? 1.f : 0.f) - (win_->key(GLFW_KEY_S) || win_->key(GLFW_KEY_DOWN) ? 1.f : 0.f);

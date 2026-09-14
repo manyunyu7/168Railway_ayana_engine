@@ -39,6 +39,7 @@ public:
   void init(AssetCatalog& catalog) { catalog_ = &catalog; }
   // Prototype for a catalog slot id; nullptr when the body model is unavailable. Cached.
   const VehicleProto* proto(const std::string& slotId);
+  void forget() { protos_.clear(); }   // streamed models: rebuild the prototypes after a model arrived
   // Normalisation of a raw model (also usable for scenery: steps 1-2 of §10.3).
   static mat4 normalizeTransform(const GpuModel& m, bool dropToGround, vec3* sizeOut = nullptr);
 private:

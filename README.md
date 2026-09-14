@@ -95,6 +95,27 @@ The same RHI runs on WebGL2 (`ENG_GL_ES`); only the window hints and the main lo
 font is preloaded: geometry is streamed with `emscripten_fetch` (`engine/core/fetch.h`) when the page calls the
 exported `viewer_load(url)`. The simulator bridge is native-only, so the web build currently ships the model viewer.
 
+### Ayana: the engine inside the reference web client
+
+`engine/api/engine_api.h` is a C ABI (`eng_*`, `extern "C"`) that turns the whole world renderer into a library
+for a host that owns the simulation and the UI. The `ayana` CMake target (Emscripten only) builds it as an ES module:
+
+```bash
+cmake --preset wasm && cmake --build --preset wasm --target ayana   # build/wasm/ayana.js/.wasm/.data (font)
+build/mac-release/fetch_tiles mojokerto --target web                # per-tile terrain (assets/terrain/<map>/, index.json)
+web/build-models.sh --all mojokerto bks                             # geometry-only .emod per catalog slot the maps need
+web/deploy-to-ppka.sh mojokerto bks                                 # -> ../ppka-wannabe-2/public/ayana + src/tiga-ayana/simState.ts
+```
+In ppka-wannabe-2 the adapter `src/tiga-ayana/duniaAyana.ts` implements the `Dunia3D` surface `main.ts` uses;
+`?renderer=ayana` (or `localStorage pk-3d-renderer = ayana`) switches the 3D view to it. The host feeds the save
+(`World.toJSON()`), the bridge summary and, every frame, the same object the bridge's `step` returns
+(`bridge/sim-state.ts`, shared by the Node bridge and the browser), and answers the engine's asset requests
+(`Module.onAssetRequest(kind, path)`): terrain tiles, the baked city, `.emod` geometry and KTX2 textures through
+`eng_texture_*`. Clicks come back as `signal:<id>` / `point:<id>` and go through the client's own `klikSinyal` /
+`klikWesel`. Everything the native app draws (`engine/app/world_scene.*`) is shared. Models and terrain tiles
+are served from `public/ayana/` in dev (gitignored there) and belong on R2 in production. Mojokerto in headless
+Chromium: 63 MB download (48 MB terrain, 8 MB geometry, 5 MB KTX2), world built ~1 s after the data arrived, 60 fps.
+
 ### Web textures: KTX2 transcoded in the browser
 
 Raw ETC2 blocks are ~10x larger than the Basis Universal KTX2 (ETC1S + zstd) files the reference client already
@@ -152,7 +173,7 @@ examples/ ppka (the game) · viewer · railtest · terraintest · traintest · t
 tools/    offline converters (the only place third-party decoders are allowed):
           convert (GLB → .emod, KTX2 transcoding) · fetch_tiles (DEM/imagery → .dem/.sat + per-tile files)
           fontgen (TTF → .efnt) · texcomp (ETC1/EAC + BC encoders shared by the converters)
-web/      index.html demo page, build-models.sh
+web/      index.html demo page, build-models.sh, deploy-to-ppka.sh (Ayana renderer into ppka-wannabe-2)
 docs/     world-spec.md (how the reference three.js scene is built, with exact constants)
 ```
 

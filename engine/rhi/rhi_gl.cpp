@@ -175,8 +175,12 @@ Program createProgram(std::string_view vs, std::string_view fs) {
   glDeleteShader(v); glDeleteShader(f);
   return p;
 }
-void destroyProgram(Program p) { if (p.id) glDeleteProgram(p.id); }
-void useProgram(Program p) { glUseProgram(p.id); }
+static unsigned g_program = 0;   // currently bound program (see useProgram)
+void destroyProgram(Program p) { if (p.id) { if (g_program == p.id) g_program = 0; glDeleteProgram(p.id); } }
+// Cached: other passes (sky, clouds, text) bind their own program mid-frame and the PBR renderer re-binds
+// before every draw. On WebGL a uniform set while another program is bound is an error (Emscripten resolves
+// locations against the current program), on desktop GL it is silently wrong.
+void useProgram(Program p) { if (p.id != g_program) { g_program = p.id; glUseProgram(p.id); } }
 int  uniformLocation(Program p, const char* name) { return glGetUniformLocation(p.id, name); }
 void setUniform(int loc, const float* m) { glUniformMatrix4fv(loc, 1, GL_FALSE, m); }
 void setUniform(int loc, float x, float y) { glUniform2f(loc, x, y); }

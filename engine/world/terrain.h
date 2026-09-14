@@ -13,6 +13,7 @@
 //               layers 2.. = detail (z16/z17 around the track and stations, spec DETAIL_TANAH); the ground
 //               mesh textures every 153 m block with the finest present layer covering it.
 #pragma once
+#include "engine/asset/model.h"
 #include "engine/core/json.h"
 #include "engine/math/geometry.h"
 #include "engine/render/model_renderer.h"
@@ -77,15 +78,19 @@ public:
 struct SatLayer {
   int zoom = 0, tx0 = 0, ty0 = 0, nx = 0, ny = 0, px = 0;
   double ts = 0, mpp = 0;                      // tile size (m) and metres per pixel
-  std::vector<uint8_t> present, rgb;           // rgb: present tiles only, packed
-  std::vector<int32_t> slot;                   // per tile: index into rgb (-1 = absent)
+  std::vector<uint8_t> present, rgb;           // rgb: present tiles only, packed, rgbPx*rgbPx each
+  std::vector<int32_t> slot;                   // per tile: index into rgb / images (-1 = absent)
+  int rgbPx = 0;                               // pixel size of the rgb copies (= px for the monolithic file; the
+                                               // streamed path keeps only the small RGBA8 fallback for satColor)
+  std::vector<Image> images;                   // streamed path: GPU-ready image record per slot (empty otherwise)
   bool has(int tx, int ty) const;
   bool covers(double wx, double wy) const;     // a present tile contains the point
-  const uint8_t* tile(int tx, int ty) const;   // RGB8 px*px (caller checks has())
+  const uint8_t* tile(int tx, int ty) const;   // RGB8 rgbPx*rgbPx (caller checks has())
 };
 
 struct SatImage {
   bool load(const std::string& path, std::string& error);
+  void finish();                               // detail order + mean brightness (after load / streamed tiles)
   std::vector<SatLayer> layers;
   std::vector<int> detail;                     // indices of layers finer than the near layer, finest first
   float meanBrightness = 0.4f;                 // mean max(R,G,B) of the near layer (vegetation mask)
@@ -97,6 +102,16 @@ public:
 
   // Reads the two data files; the world origin becomes the track-node bbox centre.
   bool load(const std::string& demPath, const std::string& satPath, std::string& error);
+  // Streaming path (the per-tile files `fetch_tiles` writes next to the monolithic ones, web client):
+  // describe the layers from `index.json`, feed every tile the host fetched, then finishTiles() before
+  // build(). Tiles never delivered simply count as absent (DEM falls back to the coarser layer).
+  struct TileRef { std::string dir; int z = 0, x = 0, y = 0; std::string path() const; };   // dir "dem" | "sat/<i>"
+  bool loadIndex(const Json& index, std::string& error);
+  std::vector<TileRef> tilesWanted() const;                    // present in the index, not delivered yet
+  bool addDemTile(int z, int x, int y, std::span<const uint8_t> bytes);   // f32[n*n] Terrarium metres
+  bool addSatTile(int layer, int z, int x, int y, std::span<const uint8_t> bytes, std::string& error);   // EIMG record
+  void finishTiles();
+  bool streamed() const { return streamed_; }
   // Registers rail centreline chords for carving. Consecutive at-grade samples closer than
   // CHORD_MAX form a chord; consecutive bridge samples (bridgeBlend >= 0) form deck chords for the
   // trough under the slab. Call before build().
@@ -145,7 +160,8 @@ private:
   std::vector<Tile> near_, far_;
   Tile backdrop_{};
   Material ground_, backdropMat_;
-  bool built_ = false;
+  bool built_ = false, streamed_ = false;
+  std::vector<std::vector<uint8_t>> wanted_;   // streaming: per layer (dem layers first, then sat) tiles still expected
 };
 
 } // namespace eng

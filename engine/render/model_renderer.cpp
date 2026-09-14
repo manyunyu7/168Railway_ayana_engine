@@ -98,6 +98,7 @@ void ModelRenderer::beginFrame(const mat4& viewProj, vec3 eye, const Lighting& l
 }
 
 void ModelRenderer::drawItem(const DrawItem& d) {
+  rhi::useProgram(prog_);
   const Material& mt = *d.material;
   rhi::setUniform(u_.model, d.world.data());
   rhi::setUniform(u_.baseColor, mt.baseColor.x, mt.baseColor.y, mt.baseColor.z, mt.baseColor.w);

@@ -1,4 +1,4 @@
-#include "examples/ppka/camera_rig.h"
+#include "engine/app/camera_rig.h"
 #include <algorithm>
 #include <cmath>
 
