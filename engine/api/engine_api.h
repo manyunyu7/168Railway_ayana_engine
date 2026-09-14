@@ -66,8 +66,9 @@ void eng_set_tree_density(float k);       // `Kerapatan pohon` 0..16 (RAPAT_BAKU
 // sends), < 0 = follow the sim clock again (eng_set_state).
 void eng_set_sky_time(double sec);
 void eng_set_theme(int dark);             // UI theme (TEMA): fog / dome-ground tint, backdrop plane colour
-// The host changed its ground imagery source (SUMBER_TANAH): every resident imagery tile is dropped and requested
-// again through onAssetRequest. `flat` = the plain "polos" mode: the host fails every request and the tiles are
+// The host changed its ground imagery source (SUMBER_TANAH): every resident AND in-flight imagery tile is dropped
+// and requested again through onAssetRequest — the host must discard answers to requests issued before this call
+// (they carry the old source). `flat` = the plain "polos" mode: the host fails every request and the tiles are
 // painted in the theme's ground colour (hampar) instead of the loading colour.
 void eng_reset_imagery(int flat);
 

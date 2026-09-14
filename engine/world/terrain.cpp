@@ -887,6 +887,11 @@ void Terrain::draw(ModelRenderer& r, const Frustum* frustum) {
   }
 }
 
+// Every layer: resident tiles are evicted, failed AND in-flight ones go back to Absent so the next check
+// re-issues them. Tiles still in flight at the switch were the bug: their answers (old source) were
+// accepted as Resident and never asked for again, leaving patches of the previous imagery among the new
+// (and, since the tiles nearest the camera are exactly the ones in flight, a switch appeared to revert).
+// The host must discard answers to requests issued before the drop (duniaAyana: source generation).
 void Terrain::dropImagery() {
   for (size_t li = 0; li < sat_.layers.size(); ++li) {
     SatLayer& L = sat_.layers[li];
@@ -894,7 +899,7 @@ void Terrain::dropImagery() {
       for (int i = 0; i < L.nx; ++i) {
         size_t t = (size_t)j * L.nx + i;
         if (L.state[t] == SatLayer::Resident) evict((int)li, L.tx0 + i, L.ty0 + j);
-        else if (L.state[t] == SatLayer::Failed) L.state[t] = SatLayer::Absent;
+        else if (L.state[t] == SatLayer::Failed || L.state[t] == SatLayer::Requested) L.state[t] = SatLayer::Absent;
       }
   }
   meanSum_ = 0; meanN_ = 0;
