@@ -13,7 +13,7 @@ constexpr float RADIUS_JALAN = 0.38f, NAIK_MAKS = 0.45f, GRAVITASI = 9.81f, LAJU
 constexpr float TINGGI_SINAR[3] = {0.35f, 1.05f, 1.55f};   // knee, chest, head above the feet
 constexpr float DRAG_KABIN = 0.004f, DRAG_ORBIT = 0.005f, DRAG_JALAN = 0.005f;
 constexpr float KABIN_SISI_MAKS = 1.2f, KABIN_TINGGI_MIN = 0.5f, KABIN_TINGGI_MAKS = 3.5f;   // cab eye limits
-constexpr float LAJU_KABIN = 1.5f, LAJU_KABIN_CEPAT = 4, KABIN_SCROLL = 0.5f;               // m/s, m per scroll step
+constexpr float LAJU_KABIN = 1.5f, LAJU_KABIN_CEPAT = 4;               // m/s
 constexpr float AKSEL_TAU = 0.35f;
 
 float fovTeropong(float baku) { return std::max(FOV_MIN, baku / ZOOM_LIPAT); }
@@ -277,7 +277,7 @@ void CameraRig::drag(float dx, float dy) {
 void CameraRig::scroll(float steps) {
   float f = std::pow(0.9f, steps);
   switch (mode) {
-    case CamMode::Kabin: kabinMaju += steps * KABIN_SCROLL; break;   // forward/back along the vehicle (clamped in rig)
+    case CamMode::Kabin: fovKabin = std::clamp(fovKabin * f, 20.f, 90.f); break;   // zoom (fov); W/S move the eye
     case CamMode::Jalan: fovJalan = std::clamp(fovJalan * f, 45.f, 95.f); break;
     case CamMode::Samping: jarakSamping = std::clamp(jarakSamping * f, 8.f, 160.f); break;
     case CamMode::Atas: tinggiAtas = std::clamp(tinggiAtas * f, 40.f, 2000.f); break;
