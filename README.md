@@ -15,6 +15,16 @@
   <em>CC 203 on KA 306 Parcel Selatan</em> &nbsp;&nbsp;&nbsp;&nbsp; <em>Warren truss over the Cilame valley</em>
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/C%2B%2B-92.7%25-f34b7d?logo=cplusplus&logoColor=white" alt="C++ 92.7%">
+  <img src="https://img.shields.io/badge/TypeScript-5.0%25-3178c6?logo=typescript&logoColor=white" alt="TypeScript 5.0%">
+  <img src="https://img.shields.io/badge/JavaScript-0.9%25-f1e05a?logo=javascript&logoColor=black" alt="JavaScript 0.9%">
+  <img src="https://img.shields.io/badge/CMake-0.8%25-064f8c?logo=cmake&logoColor=white" alt="CMake 0.8%">
+  <img src="https://img.shields.io/badge/HTML-0.5%25-e34c26?logo=html5&logoColor=white" alt="HTML 0.5%">
+  <img src="https://img.shields.io/badge/Shell-0.1%25-89e051?logo=gnubash&logoColor=black" alt="Shell 0.1%">
+</p>
+<p align="center"><sub>Lines of code by language, third-party code excluded (<code>tools/third_party</code>, <code>web/vendor</code>). C++20 with no engine dependencies; the TypeScript is the simulation bridge, the JavaScript/HTML the web viewer page.</sub></p>
+
 Ayana is a small C++20 game engine written from zero for the **PPKA Simulator** (a train-dispatcher
 game): no Unity, no Godot, no three.js. It renders the simulator's real maps, rolling stock and
 interlocking in 3D, and it is designed to run everywhere the game needs to live — macOS today,
