@@ -9,7 +9,9 @@ behind the engine's **editing ABI** (`engine/api/engine_api.h`, "editing" block;
 Mojokerto through a hidden GL window), `tsc` / `npm run build`, and one headless smoke
 (`ppka-wannabe-2/playtest/_cek-ayana-tata.mjs`). No screenshot comparisons.
 
-Status: **phase 1** = audit + ABI + first tool (Tata objek). Phase 2 = the remaining tools (§3).
+Status: **phase 1** = audit + ABI + first tool (Tata objek). **Phase 2 (2B, landed)**: node height (`tinggiAyana.ts`),
+editor rel 3D (`relAyana.ts`), kuas tanah + pohon (`kuasAyana.ts`) — see §2 additions and §4. Gambar garis / objek
+rel / ukur = 2A (`eng_markers`, `garisAyana.ts`, `objekRelAyana.ts`, `ukurAyana.ts`).
 
 ## 1. Audit — what each tool needed from three.js
 
@@ -71,6 +73,25 @@ Overlays (drawn after the world in `eng_frame`; gizmo / ukur depth-test-off like
 - `eng_ghost(modelId, wx, wy, rotDeg, skala)` — translucent blue model (`ModelRenderer::draw` material override); requests the model when not resident.
 - `eng_ukur_line(json)` — `[{x,y}]` polyline 0.4 m over the ground + end posts; labels via `eng_project`.
 
+Phase 2 additions (2B)
+- `eng_pick_node(x, y, maxPx) → "<id>"` — node handle within maxPx whatever covers it (the `editorRel3d.ts nodeDiLayar`
+  order: handles win over models); orphan nodes have no handle.
+- `eng_node_info(id) → {h, tulis, grad[]}` — raw DEM metres at the rail head (the pin when hand-written), permille to
+  each neighbour; the host's `infoTinggiNode` (`tiga/editorRelInti.ts`) reads `h` for the nodes that follow the DEM.
+- `eng_veg_mask(json)` — the whole `world.vegMask` (`[{x,y,r,a}]`, last stamp wins, a −1 clear / +1 plant) or `null`;
+  `Vegetation::setMask` diffs against the previous list and re-scatters only the cells under the stamps that changed
+  (one stroke = one or two cells). The save's `vegMask` is applied in `buildDecor`.
+- `eng_highlight("node:<id>" | "segment:<id>[:s]", mode)` — green screen-sized sphere on the handle / amber ribbon
+  along the centreline (cached mesh, rebuilt when the id or the profile changes).
+- `eng_node_handles(on, tier)` — every node with a segment as a 4.5 px dot at rail head + 0.6: points orange,
+  hand-written magenta, chain ends white, plain blue; tier 1 = the important ones only. Minimal handles drawn in
+  `world_edit.cpp` (no `eng_markers` dependency).
+- `eng_ghost_lines(json)` — `[[{x,y}],...]` thin blue ribbons 0.9 m over the rail head near each point (drag preview
+  of the affected segments, chain-draw rubber band).
+- Timing (Mojokerto, wasm release, headless smoke `playtest/_cek-ayana-sunting.mjs`): `eng_rails_rebuild` 23–32 ms per
+  Alt-drag step (host debounce 80 ms), `eng_track_edit` 25–39 ms on node release, `eng_terrain_delta` 0.2–1.2 ms per
+  stroke frame (the tiles re-cut under the per-frame budget afterwards).
+
 Engine-side pieces added: `WorldScene::{rayGround, pickHiasan, pickTrack, pickGaris, hiasanScreenBox, hiasanPlace,
 hiasanSet/Add/Remove/Refresh, garisSet, nodeHeight, railsRebuild, terrainDelta, trackEdit, setHighlight, setGizmo,
 gizmoHit, gizmoAngle, setGhost, setUkur, drawOverlays}`, `Placed::objIndex` (scenery ↔ `world.hiasan.objek` index),
@@ -82,8 +103,8 @@ lazy `walkCollider()`, `Terrain::applyBrushDeltas`, `ModelRenderer::draw(..., ma
 | Tool | Work | Effort |
 |---|---|---|
 | Gambar garis (`garisAyana.ts`) | Port `uji3dSpline.ts` on `eng_pick_ground` / `eng_pick_object("garis:")` / `eng_garis_set` / `eng_highlight`; handles + end markers as DOM dots through `eng_project` (or a small `eng_markers(json)` overlay: spheres / rings at world points, pickable as `marker:<id>`); procedural classes already exist in `garis_visual` | 1.5 days (0.5 with `eng_markers`) |
-| Kuas tanah | Brush maths already pure; wire `eng_terrain_delta` per stroke (debounced) + brush ring via `eng_gizmo("move")`; `world.vegMask` needs `eng_veg_mask(json)` in `Vegetation` (stamp list → cell re-scatter) | 1 day |
-| Node height + Editor rel 3D | `eng_node_info(id)` (rail height / hand-written / gradients) for `infoTinggiNode`; node handles = `eng_markers`; drag: `eng_pick_ground` + `world.moveNode` + `eng_track_edit` on release; Alt-drag: `eng_node_height` + `eng_rails_rebuild` per move (26 ms); `node:` / `segment:` highlight kinds | 2 days |
+| Kuas tanah (done, `kuasAyana.ts`) | Brush maths already pure; wire `eng_terrain_delta` per stroke (debounced) + brush ring via `eng_gizmo("move")`; `world.vegMask` needs `eng_veg_mask(json)` in `Vegetation` (stamp list → cell re-scatter) | 1 day |
+| Node height + Editor rel 3D (done, `tinggiAyana.ts` / `relAyana.ts`) | `eng_node_info(id)` (rail height / hand-written / gradients) for `infoTinggiNode`; node handles = `eng_markers`; drag: `eng_pick_ground` + `world.moveNode` + `eng_track_edit` on release; Alt-drag: `eng_node_height` + `eng_rails_rebuild` per move (26 ms); `node:` / `segment:` highlight kinds | 2 days |
 | Objek rel / scenery markers | `eng_markers` (diamond / cone / cube / foot ring per kind) + `marker:<id>` pick; edits through `surveyorOps` + `eng_track_edit` (already) | 1 day |
 | Ukur in 3D | New for both renderers: `eng_ukur_line` + labels; `eng_pick_track` for Shift snap | 0.5 day |
 | Palette thumbnails | `eng_thumbnail(id, px) → rgba` (offscreen FBO render of a resident model) | 0.5 day |
