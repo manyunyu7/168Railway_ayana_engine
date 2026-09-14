@@ -1,4 +1,5 @@
 #include "engine/app/camera_rig.h"
+#include "engine/world/sway.h"
 #include <algorithm>
 #include <cmath>
 
@@ -9,6 +10,9 @@ constexpr float ZOOM_LIPAT = 4, FOV_MIN = 8, ZOOM_TAU = 0.09f;     // uji3dZoom.
 constexpr float EL_MIN = -8 * PI / 180, EL_MAKS = PI / 2;            // uji3dOrbit.ts elevation clamp
 constexpr float MATA_JALAN = 1.62f, LAJU_JALAN = 4.5f, LAJU_LARI = 12; // walker eye / speeds
 constexpr float DRAG_KABIN = 0.004f, DRAG_ORBIT = 0.005f, DRAG_JALAN = 0.005f;
+constexpr float KABIN_SISI_MAKS = 1.2f, KABIN_TINGGI_MIN = 0.5f, KABIN_TINGGI_MAKS = 3.5f;   // cab eye limits
+constexpr float LAJU_KABIN = 1.5f, LAJU_KABIN_CEPAT = 4, KABIN_SCROLL = 0.5f;               // m/s, m per scroll step
+constexpr float AKSEL_TAU = 0.35f;
 
 float fovTeropong(float baku) { return std::max(FOV_MIN, baku / ZOOM_LIPAT); }
 float fovDariCampur(float baku, float c) { c = std::clamp(c, 0.f, 1.f); return baku + (fovTeropong(baku) - baku) * c; }
@@ -81,11 +85,26 @@ bool CameraRig::rig(const TrainPath& t, const GroundFn& ground) {
   switch (mode) {
     case CamMode::Kabin: {
       MataKabin mk = mataKabin(t.sarana);
-      vec3 mata = t.pointBehind(std::max(0.f, mk.mundur));
-      if (!arahKA(0)) return false;
-      posKam_ = mata + vFwd_ * std::max(0.f, -mk.mundur) + vKanan_ * mk.sisi; posKam_.y = mata.y + mk.tinggi;
-      lihatKam_ = posKam_ + vFwd_ * 100;   // sway terms (goyangKabin) not ported: no head-shake
-      upKam_ = {0, 1, 0};
+      float lim = std::max(0.f, panjang * 0.5f);
+      kabinMaju = std::clamp(kabinMaju, -lim, lim);
+      kabinSisi = std::clamp(kabinSisi, -KABIN_SISI_MAKS - mk.sisi, KABIN_SISI_MAKS - mk.sisi);
+      kabinNaik = std::clamp(kabinNaik, KABIN_TINGGI_MIN - mk.tinggi, KABIN_TINGGI_MAKS - mk.tinggi);
+      float mundur = mk.mundur - kabinMaju;   // metres behind the nose (negative = ahead of it)
+      vec3 mata = t.pointBehind(std::max(0.f, mundur));
+      if (!arahKA(std::max(0.f, mundur))) return false;
+      posKam_ = mata + vFwd_ * std::max(0.f, -mundur) + vKanan_ * (mk.sisi + kabinSisi); posKam_.y = mata.y + mk.tinggi + kabinNaik;
+      // cab sway (dunia3d.ts rig 'kabin'): shifting terms damped while zoomed (redamGoyang), roll not
+      sway::Goyang g;
+      float skala = sway::skalaLaju(t.timeScale) * std::max(0.f, goyangSkala);
+      if (skala > 0) {
+        auto yawAt = [&](float d) { vec3 f = horizontal(t.pointBehind(d) - t.pointBehind(d + 12)); return std::atan2(-f.z, f.x); };
+        float kurva = sway::kurvaRel(yawAt(0), yawAt(sway::BASIS_KURVA), sway::BASIS_KURVA);
+        g = sway::goyangKabin(sway::hitungGoyang({posKam_.x, posKam_.z, t.speed, kurva, aksel_, skala}));
+      }
+      float rg = std::sqrt(skalaSeret(fovKini_, fovBaku()));
+      posKam_ += vKanan_ * (g.geser * rg); posKam_.y += g.naik * rg;
+      lihatKam_ = posKam_ + vFwd_ * 100 + vKanan_ * (-100 * g.yaw * rg); lihatKam_.y += 100 * g.angguk * rg;
+      upKam_ = vec3{0, 1, 0} * std::cos(g.roll) + vKanan_ * std::sin(g.roll);
       return true;
     }
     case CamMode::Samping: {
@@ -155,6 +174,18 @@ void CameraRig::langkahJalan(float dt, const GroundFn& ground, const WalkInput& 
   camPos_ = posKam_; camLook_ = lihatKam_; camUp_ = {0, 1, 0};
 }
 
+// KABIN: move the eye with the keys (clamped in rig()) and filter the subject's acceleration for the brake pitch.
+void CameraRig::langkahKabin(float dt, const WalkInput& in, const TrainPath& t) {
+  if (in.reset) resetKabin();
+  float v = (in.run ? LAJU_KABIN_CEPAT : LAJU_KABIN) * std::max(0.f, dt);
+  kabinMaju += in.forward * v; kabinSisi += in.side * v; kabinNaik += in.up * v;
+  if (t.id != subjekId_) { subjekId_ = t.id; vSebelum_ = t.speed; aksel_ = 0; return; }
+  float dtSim = std::max(0.f, dt) * (float)std::max(0.0, t.timeScale);
+  if (dtSim <= 0) return;
+  aksel_ += ((t.speed - vSebelum_) / dtSim - aksel_) * std::min(1.f, dtSim / AKSEL_TAU);
+  vSebelum_ = t.speed;
+}
+
 void CameraRig::langkahZoom(float dt) {
   float mau = bolehTeropong() && (teropongTahan || teropongKunci) ? 1.f : 0.f;
   if (zoomCampur_ != mau) {
@@ -168,7 +199,9 @@ bool CameraRig::step(float dt, const TrainPath* subject, const GroundFn& ground,
   langkahZoom(dt);
   if (mode == CamMode::Bebas) return true;
   if (mode == CamMode::Jalan) { langkahJalan(dt, ground, walk); return true; }
-  if (!subject || !subject->valid() || !rig(*subject, ground)) return false;
+  if (!subject || !subject->valid()) return false;
+  if (mode == CamMode::Kabin) langkahKabin(dt, walk, *subject);
+  if (!rig(*subject, ground)) return false;
   toleh_ += dt;
   if (mode == CamMode::Kabin) {
     if (toleh_ > 1.2f) { float kk = 1 - std::exp(-3 * dt); lihatYaw_ -= lihatYaw_ * kk; lihatPitch_ -= lihatPitch_ * kk; }   // the neck returns by itself
@@ -194,7 +227,7 @@ void CameraRig::drag(float dx, float dy) {
 void CameraRig::scroll(float steps) {
   float f = std::pow(0.9f, steps);
   switch (mode) {
-    case CamMode::Kabin: fovKabin = std::clamp(fovKabin * f, 40.f, 95.f); break;
+    case CamMode::Kabin: kabinMaju += steps * KABIN_SCROLL; break;   // forward/back along the vehicle (clamped in rig)
     case CamMode::Jalan: fovJalan = std::clamp(fovJalan * f, 45.f, 95.f); break;
     case CamMode::Samping: jarakSamping = std::clamp(jarakSamping * f, 8.f, 160.f); break;
     case CamMode::Atas: tinggiAtas = std::clamp(tinggiAtas * f, 40.f, 2000.f); break;

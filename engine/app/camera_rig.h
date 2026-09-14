@@ -1,6 +1,10 @@
 // Camera modes of the 3D client (docs/world-spec.md §9.1, port of dunia3d.ts:1546-2050 rig/langkahKamera,
 // uji3dOrbit.ts orbitSubjek, uji3dZoom.ts telescope). `bebas` (orbit) stays in Game; this class owns the
 // train-following rigs (kabin/samping/atas/ekor), the walk mode (jalan) and the damping/telescope maths.
+// KABIN: the eye starts at MATA_KABIN and can be moved (engine addition): W/S or up/down = along the vehicle
+// axis (−L/2..+L/2 from the default), A/D = sideways (±1.2 m from the centreline), Q/E = height (0.5..3.5 m
+// over the rail head), scroll = along too, R = back to MATA_KABIN; nothing is persisted. The cab rocks with
+// speed / curvature / braking (uji3dGoyang.ts goyangKabin, engine/world/sway.h), damped while zoomed.
 #pragma once
 #include "engine/math/math.h"
 #include <functional>
@@ -28,11 +32,15 @@ struct TrainPath {
   std::vector<float> cum;     // metres from the nose at each point
   float length = 0;           // consist length (cars + gaps)
   std::string sarana;         // first car's catalog id (cab eye lookup)
+  std::string id;             // train id (the cab's acceleration filter restarts when the subject changes)
+  float speed = 0;            // m/s (sim speed, not scaled by the clock)
+  double timeScale = 1;       // session clock scale (sway amplitude damping, skalaLaju)
   bool valid() const { return pts.size() >= 2; }
   vec3 pointBehind(float d) const;   // clamped to [0, cum.back()], extrapolated past the tail
 };
 
-struct WalkInput { float forward = 0, side = 0; bool run = false; };
+// Movement keys: jalan = walking; kabin = moving the eye (forward/side/up, run = faster, reset = R).
+struct WalkInput { float forward = 0, side = 0, up = 0; bool run = false, reset = false; };
 
 class CameraRig {
 public:
@@ -43,6 +51,10 @@ public:
   float fovKabin = 62, fovJalan = 70, jarakSamping = 28, tinggiSamping = 7, sisiSamping = 1, tinggiAtas = 120, jarakEkor = 34;
   // telescope (Z held / locked): fov/4, floor 8°, blend tau 0.09 s
   bool teropongTahan = false, teropongKunci = false;
+  // cab eye offsets from MATA_KABIN (m): along the vehicle axis (+ forward), to the right, up; clamped in rig()
+  float kabinMaju = 0, kabinSisi = 0, kabinNaik = 0;
+  float goyangSkala = 1;      // sway slider (0 = still cab)
+  void resetKabin() { kabinMaju = kabinSisi = kabinNaik = 0; }
 
   // Enter a mode. `eye/look` = the current camera so the damping starts from where the view is.
   void setMode(CamMode m, vec3 eye, vec3 look);
@@ -50,7 +62,7 @@ public:
   // the mode needs a train and none is available (caller falls back to orbit).
   bool step(float dt, const TrainPath* subject, const GroundFn& ground, const WalkInput& walk);
   void drag(float dx, float dy);     // pixels: kabin = turn the head, others = orbit the subject, jalan = look
-  void scroll(float steps);          // adjusts the mode's parameter (profile "atur")
+  void scroll(float steps);          // adjusts the mode's parameter (profile "atur"); kabin = eye forward/back
   void enterWalk(vec3 eye, vec3 look, const GroundFn& ground);   // turunJalan: stand where the orbit target was
 
   vec3 eye() const { return camPos_; }
@@ -67,6 +79,7 @@ public:
 
 private:
   bool rig(const TrainPath& t, const GroundFn& ground);
+  void langkahKabin(float dt, const WalkInput& in, const TrainPath& t);   // eye offsets + acceleration filter
   void tolehKepala();
   void orbitKe(const GroundFn& ground);
   void langkahJalan(float dt, const GroundFn& ground, const WalkInput& in);
@@ -78,6 +91,8 @@ private:
   float lihatYaw_ = 0, lihatPitch_ = 0, orbitAz_ = 0, orbitEl_ = 0, toleh_ = 0;
   // walker (uji3dJalanKaki): body position on the ground, heading, look pitch, distance walked (step bob)
   vec3 pejalan_; float jalanYaw_ = 0, jalanPitch_ = 0, tempuh_ = 0;
+  // cab sway inputs: filtered longitudinal acceleration of the subject (keretaVisual3d.ts perbaruiAksel, τ 0.35 s)
+  std::string subjekId_; float vSebelum_ = 0, aksel_ = 0;
 };
 
 } // namespace eng

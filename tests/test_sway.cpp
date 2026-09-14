@@ -41,4 +41,8 @@ TEST_MAIN({
   CHECK_NEAR(yawTiga(1, 0), 0, 1e-6); CHECK_NEAR(yawTiga(0, 1), -3.14159265f / 2, 1e-6);   // world +y -> scene +z = yaw -90°
   // time-scale damping
   CHECK(skalaLaju(1) == 1 && skalaLaju(2) == 1); CHECK_NEAR(skalaLaju(8), 0.25, 1e-6); CHECK(skalaLaju(0.5) == 1);
+  // the driver's share (goyangKabin PORSI): roll 0.75, pitch 0.60, yaw 0.50, lift 0.45, shift 0.60
+  Goyang k = goyangKabin({1, 1, 1, 1, 1});
+  CHECK_NEAR(k.roll, 0.75, 1e-6); CHECK_NEAR(k.angguk, 0.60, 1e-6); CHECK_NEAR(k.yaw, 0.50, 1e-6); CHECK_NEAR(k.naik, 0.45, 1e-6); CHECK_NEAR(k.geser, 0.60, 1e-6);
+  CHECK(BASIS_KURVA == 25);
 })

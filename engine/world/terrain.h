@@ -20,8 +20,12 @@
 // Streaming (update()): centre = the camera focus. Near z14 tiles live while their edge is within
 // R_LOAD (4000 m) and are evicted beyond R_EVICT (6000 m); detail z16 within 1500/2200 m, z17 within
 // 450/800 m; the far layer and the DEM are resident for good. At most REQUESTS_PER_CHECK (2) requests
-// per CHECK_INTERVAL (220 ms), nearest first; at most GPU_JOBS_PER_FRAME (2) mesh builds / texture
-// uploads per frame. prime() fills the radius without throttling (native start, deterministic captures).
+// per CHECK_INTERVAL (220 ms), nearest first — the far layer (<= 40 tiles, the only ground beyond
+// R_LOAD) is requested EAGERLY on the first check, outside that budget; at most GPU_JOBS_PER_FRAME (2)
+// mesh builds / texture uploads per frame. prime() fills the radius without throttling (native start,
+// deterministic captures). The far meshes (uncarved DEM, one per far tile, loading colour 0x1a2027
+// until their imagery arrives) are punched only where a near tile is BUILT (dunia3d.ts
+// segarkanLubangJauh) and re-cut when that set changes, so the ground never ends at R_LOAD.
 #pragma once
 #include "engine/asset/model.h"
 #include "engine/core/json.h"
@@ -167,6 +171,13 @@ public:
   // Streaming step: `centre` = camera focus in scene space, dt = real seconds. Issues requests (throttled),
   // builds / re-cuts / textures tiles under the GPU budget, evicts beyond the radii.
   void update(vec3 centre, float dt);
+  // One streaming check on its own (no GPU work: near-tile bookkeeping + requests) — what update() runs
+  // every CHECK_INTERVAL; public so the request policy is testable without a GL context.
+  void checkStreaming(vec3 centre, bool unthrottled);
+  // Geometry of one far tile (uncarved DEM, FAR_CELLS_PER_TILE cells per z14 tile, holes where a near tile
+  // is built); no GPU. Returns the number of cells left open.
+  int farTileGeometry(int tx, int ty, MeshBuilder& mb) const;
+  bool nearTileBuilt(int tx, int ty) const;
   // Unthrottled fill: requests everything inside the radii and finishes every job that can be done now
   // (synchronous sources: the whole neighbourhood is built on return).
   void prime(vec3 centre);
@@ -200,7 +211,7 @@ private:
   struct Key { int layer, tx, ty; bool operator==(const Key& o) const { return layer == o.layer && tx == o.tx && ty == o.ty; } };
   struct Patch { Key key; rhi::Mesh mesh; AABB bounds; uint32_t verts = 0; };
   struct NearTile { int tx, ty; std::vector<Patch> patches; mat4 xf; bool built = false, dirty = false; float dirtyAge = 0; };
-  struct FarTile { int tx, ty; rhi::Mesh mesh; AABB bounds; mat4 xf; bool built = false; uint32_t verts = 0; };
+  struct FarTile { int tx, ty; rhi::Mesh mesh; AABB bounds; mat4 xf; bool built = false; bool dirty = false; uint32_t verts = 0; };
   struct Job { int kind; int layer, tx, ty; double dist; };   // 0 build near, 1 build far, 2 upload texture
 
   void resetLayers();
@@ -217,6 +228,7 @@ private:
   void issue(int layer, int tx, int ty);
   void evict(int layer, int tx, int ty);
   void markDirty(int layer, int tx, int ty);
+  void markFarDirty(int tx14, int ty14);      // the far tile under a z14 tile is re-cut (hole set changed)
   void noteImagery();
   const rhi::Texture* textureOf(const Key& k) const;
 

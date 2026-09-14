@@ -65,7 +65,7 @@ void Game::drawHud(int w, int h) {
   for (const std::string& m : messages_) { text_.draw(m, pad, my, white, 0.8f); my += lh; }
 
   // help (bottom-right)
-  text_.draw("LMB orbit | RMB tap = fly focus, hold = glide | F fly | 1-6 kamera | , . KA | Z teropong | click signal/point | space pause | +/- speed | M meja | P mode | J jam",
+  text_.draw("LMB orbit | RMB tap = fly focus, hold = glide | F fly | 1-6 kamera | , . KA | Z teropong | kabin: WASD/QE geser mata, R reset | click signal/point | space pause | +/- speed | M meja | P mode | J jam",
              (float)w - 900, bottom - lh - pad * 0.5f, dim, 0.65f);
   text_.flush(w, h);
 }

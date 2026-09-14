@@ -3,6 +3,7 @@
 // then the streaming data path without a GPU: index.json layers, DEM tiles from Terrarium pixels,
 // demTilesWanted / failTile / demComplete, and the satellite tile state machine (provide / edge distance).
 #include "engine/core/json.h"
+#include "engine/render/mesh_builder.h"
 #include "engine/world/slippy.h"
 #include "engine/world/terrain.h"
 #include "tests/check.h"
@@ -79,6 +80,35 @@ TEST_MAIN({
   float rgb[3];
   CHECK(!s2.satColor(wx, wy, 4, rgb));
   CHECK(s2.imageryVersion() == 0);
+
+  // ---- client-synthesized index (indeksMedan.ts, a 31 x 11 km corridor like gombong-wns): the near layer's
+  // RANGE covers the whole bbox but only tiles within R_LOAD get a mesh; the far layer (z10 here, <= 40 tiles)
+  // must be requested eagerly on the first (throttled) check and its meshes must stay whole where no near tile
+  // is built — otherwise the ground ends at R_LOAD in the backdrop colour.
+  Terrain s4; err.clear();
+  Json big = Json::parse(R"({"bbox":[12280000,860000,12311000,871000],
+    "dem":[{"dir":"dem","zoom":13,"tx0":6605,"ty0":4270,"nx":9,"ny":6,"px":256,"present":"111111111111111111111111111111111111111111111111111111"},
+           {"dir":"dem","zoom":10,"tx0":825,"ty0":533,"nx":2,"ny":2,"px":256,"present":"1111"}],
+    "sat":[{"dir":"sat/0","zoom":14,"tx0":13210,"ty0":8541,"nx":18,"ny":10,"px":512,"present":"111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111"},
+           {"dir":"sat/1","zoom":10,"tx0":825,"ty0":533,"nx":2,"ny":2,"px":256,"present":"1111"}]})", &err);
+  CHECK_MSG(err.empty(), err);
+  CHECK_MSG(s4.loadIndex(big, err), err);
+  std::vector<Terrain::TileRef> asked;
+  s4.setRequestFn([&](const Terrain::TileRef& t) { asked.push_back(t); });
+  for (const Terrain::TileRef& d : s4.demTilesWanted()) CHECK(s4.provideDemRgba(d.z, d.x, d.y, 256, 256, px.data()));
+  s4.finishDem();
+  vec3 centre = s4.origin().toScene((big["bbox"][0].num + big["bbox"][2].num) / 2, (big["bbox"][1].num + big["bbox"][3].num) / 2, 0);
+  s4.checkStreaming(centre, false);   // throttled: REQUESTS_PER_CHECK near tiles + EVERY far tile
+  int farAsked = 0, nearAsked = 0;
+  for (const Terrain::TileRef& t : asked) { if (t.dir == "sat/1") ++farAsked; else if (t.dir == "sat/0") ++nearAsked; }
+  CHECK(farAsked == 4 && nearAsked == terrain::REQUESTS_PER_CHECK);
+  CHECK(s4.sat().layers[1].state[0] == SatLayer::Requested && s4.sat().layers[1].state[1] == SatLayer::Requested);
+  MeshBuilder fmb;
+  int N = 16 * terrain::FAR_CELLS_PER_TILE;   // z10 = 16 z14 tiles per side
+  CHECK(s4.farTileGeometry(825, 533, fmb) == N * N);                         // no near tile built: no hole
+  CHECK(fmb.vertices.size() == (size_t)(N + 1) * (N + 1) && fmb.indices.size() == (size_t)N * N * 6);
+  CHECK_NEAR(fmb.vertices[0].pos.y, 100.5 - s4.dem().demBase, 1e-3);          // uncarved DEM height
+  CHECK(!s4.nearTileBuilt(13218, 8545));
 
   // ---- no terrain: a missing / empty / invalid index degrades to flat ground, nothing indexes into empty layers ----
   Terrain s3;

@@ -46,7 +46,7 @@ struct Api {
   mat4 viewProj; bool viewValid = false;
   // input
   double mx = 0, my = 0, mxPrev = 0, myPrev = 0; bool left = false, right = false, ctrl = false;
-  bool keyW = false, keyA = false, keyS = false, keyD = false, shift = false, up = false, down = false, kl = false, kr = false;
+  bool keyW = false, keyA = false, keyS = false, keyD = false, keyQ = false, keyE = false, shift = false, up = false, down = false, kl = false, kr = false;
   int compassClickFrames = 0; float compassX = 0, compassY = 0; bool compassGlide = false;
   // hover
   std::string hoverId; bool hoverSignal = false; vec3 hoverPos;
@@ -97,6 +97,7 @@ bool subjectPath(TrainPath& out, std::string* idOut = nullptr) {
   };
   for (const SimVehicle& v : t->vehicles) { push(v.x1, v.y1, v.seg, v.s); push(v.x2, v.y2, v.seg2, v.s2); }
   out.length = t->length > 0 ? t->length : acc;
+  out.id = t->id; out.speed = t->speed;
   if (idOut) *idOut = t->id;
   return out.valid();
 }
@@ -105,12 +106,14 @@ void updateCamera(float dt) {
   if (g->rig.mode == CamMode::Bebas) { g->rig.step(dt, nullptr, {}, {}); return; }
   auto ground = [](float x, float z) { return g->scene.groundScene(x, z); };
   WalkInput in;
-  if (g->rig.mode == CamMode::Jalan) {
+  if (g->rig.mode == CamMode::Jalan || g->rig.mode == CamMode::Kabin) {   // jalan = walk, kabin = move the eye
     in.forward = (g->keyW || g->up ? 1.f : 0.f) - (g->keyS || g->down ? 1.f : 0.f);
     in.side = (g->keyD || g->kr ? 1.f : 0.f) - (g->keyA || g->kl ? 1.f : 0.f);
+    in.up = (g->keyE ? 1.f : 0.f) - (g->keyQ ? 1.f : 0.f);
     in.run = g->shift;
   }
   TrainPath tp; bool has = subjectPath(tp);
+  if (has) { tp.timeScale = g->paused ? 0 : g->timeScale; }
   if (!g->rig.step(dt, has ? &tp : nullptr, ground, in)) eng_camera_mode(0);
 }
 
@@ -444,6 +447,8 @@ KEEP void eng_key(const char* code, int down) {
   if (!g || !code) return;
   std::string c = code; bool d = down != 0;
   if (c == "KeyW") g->keyW = d; else if (c == "KeyA") g->keyA = d; else if (c == "KeyS") g->keyS = d; else if (c == "KeyD") g->keyD = d;
+  else if (c == "KeyQ") g->keyQ = d; else if (c == "KeyE") g->keyE = d;
+  else if (c == "KeyR") { if (d && g->rig.mode == CamMode::Kabin) g->rig.resetKabin(); }   // cab eye back to MATA_KABIN
   else if (c == "ShiftLeft" || c == "ShiftRight") g->shift = d;
   else if (c == "ArrowUp") g->up = d; else if (c == "ArrowDown") g->down = d; else if (c == "ArrowLeft") g->kl = d; else if (c == "ArrowRight") g->kr = d;
   else if (c == "ControlLeft" || c == "ControlRight" || c == "MetaLeft") g->ctrl = d;

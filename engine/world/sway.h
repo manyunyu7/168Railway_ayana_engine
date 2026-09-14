@@ -75,4 +75,9 @@ inline Goyang hitungGoyang(const Masukan& m) {
           AMP_YAW * r * derau(m.x, m.z, D_YAW), md.naik, md.geser};
 }
 
+// The share that reaches the DRIVER'S EYE (uji3dGoyang.ts goyangKabin): the neck damps, vertical bounce
+// most of all (motion sickness), roll least (the tilted horizon in a curve is the "riding" feel).
+inline Goyang goyangKabin(const Goyang& g) { return {g.roll * 0.75f, g.angguk * 0.60f, g.yaw * 0.50f, g.naik * 0.45f, g.geser * 0.60f}; }
+constexpr float BASIS_KURVA = 25;   // m between the two yaw samples of the running curvature (dunia3dKonst.ts)
+
 } // namespace eng::sway

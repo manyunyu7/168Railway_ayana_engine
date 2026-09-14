@@ -522,6 +522,11 @@ void Terrain::freeNear(NearTile& t) {
   t.patches.clear(); t.built = false; t.dirty = false;
 }
 
+bool Terrain::nearTileBuilt(int tx, int ty) const {
+  for (const NearTile& t : near_) if (t.tx == tx && t.ty == ty) return t.built;
+  return false;
+}
+
 // Ground mesh of one z14 tile (dunia3d.ts geoTanah): K×K blocks, cell size by tier (near rails / near
 // a near block / far). Each block is textured by the finest RESIDENT satellite layer whose tile contains
 // it (z17 > z16 > z14) and appended to the patch mesh of that texture tile, so one draw per texture; a
@@ -529,6 +534,7 @@ void Terrain::freeNear(NearTile& t) {
 // UVs from position over the texture tile; normals from central differences of the carved height field
 // (consistent across patch seams); skirts at density seams and z14 tile edges.
 void Terrain::buildNearTile(NearTile& nt) {
+  const bool wasBuilt = nt.built;
   freeNear(nt);
   const int tx = nt.tx, ty = nt.ty;
   const double ts = slippy::tileSizeMeter(TILE_Z);
@@ -629,36 +635,49 @@ void Terrain::buildNearTile(NearTile& nt) {
     Patch p{P.key, P.mb.upload(), P.mb.bounds.transformed(nt.xf), (uint32_t)P.mb.vertices.size()};
     nt.patches.push_back(p);
   }
+  if (!wasBuilt) markFarDirty(tx, ty);   // a new hole in the far layer
   nt.built = true; nt.dirty = false; nt.dirtyAge = 0;
 }
 
-// Far layer: one coarse tile, uncarved DEM, cells aligned with the z14 grid, holes where near tiles exist.
-void Terrain::buildFarTile(FarTile& ft) {
+// Far layer: one coarse tile, uncarved DEM, cells aligned with the z14 grid, holes only where a near tile
+// is BUILT (dunia3d.ts segarkanLubangJauh: ubinHidup) — the near layer's RANGE covers the whole corridor,
+// but only the tiles within R_LOAD ever get a mesh, so punching the range would leave the backdrop showing
+// beyond a few km.
+int Terrain::farTileGeometry(int tx, int ty, MeshBuilder& mb) const {
+  if (sat_.layers.size() < 2) return 0;
   const SatLayer& far = sat_.layers[1];
   const double ts = slippy::tileSizeMeter(far.zoom), ts14 = slippy::tileSizeMeter(TILE_Z);
-  const double cx = slippy::tileOriginX(ft.tx, far.zoom) + ts / 2, cy = slippy::tileOriginY(ft.ty, far.zoom) + ts / 2;
+  const double cx = slippy::tileOriginX(tx, far.zoom) + ts / 2, cy = slippy::tileOriginY(ty, far.zoom) + ts / 2;
   const int N = std::max(1, (int)std::lround(ts / ts14)) * FAR_CELLS_PER_TILE;
   const double bs = ts / N;
-  const SatLayer& nearL = sat_.layers[0];
-  MeshBuilder mb;
   for (int j = 0; j <= N; ++j)
     for (int i = 0; i <= N; ++i) {
       double lx = -ts / 2 + ts * i / N, lz = -ts / 2 + ts * j / N;
       float u = (0.5f + (float)i / N * (far.px - 1)) / far.px, v = (0.5f + (float)j / N * (far.px - 1)) / far.px;
       mb.vertex({(float)lx, dem_.heightScene(cx + lx, cy + lz), (float)lz}, {0, 1, 0}, {u, v});
     }
+  int open = 0;
   for (int j = 0; j < N; ++j)
     for (int i = 0; i < N; ++i) {
       double wx = cx - ts / 2 + (i + 0.5) * bs, wy = cy - ts / 2 + (j + 0.5) * bs;
-      int qx = slippy::worldToTileX(wx, TILE_Z), qy = slippy::worldToTileY(wy, TILE_Z);
-      if (nearL.inside(qx, qy)) continue;
+      if (nearTileBuilt(slippy::worldToTileX(wx, TILE_Z), slippy::worldToTileY(wy, TILE_Z))) continue;
       uint32_t a = (uint32_t)(j * (N + 1) + i);
       mb.triangle(a, a + N + 1, a + 1); mb.triangle(a + 1, a + N + 1, a + N + 2);
+      ++open;
     }
-  rhi::destroyMesh(ft.mesh); ft.mesh = {};
+  return open;
+}
+
+void Terrain::buildFarTile(FarTile& ft) {
+  const SatLayer& far = sat_.layers[1];
+  const double ts = slippy::tileSizeMeter(far.zoom);
+  const double cx = slippy::tileOriginX(ft.tx, far.zoom) + ts / 2, cy = slippy::tileOriginY(ft.ty, far.zoom) + ts / 2;
+  MeshBuilder mb;
+  int open = farTileGeometry(ft.tx, ft.ty, mb);
+  rhi::destroyMesh(ft.mesh); ft.mesh = {}; ft.verts = 0;
   ft.xf = mat4::translation(origin_.toScene(cx, cy, 0));
-  if (!mb.empty()) { mb.computeSmoothNormals(); ft.mesh = mb.upload(); ft.bounds = mb.bounds.transformed(ft.xf); ft.verts = (uint32_t)mb.vertices.size(); }
-  ft.built = true;
+  if (open > 0) { mb.computeSmoothNormals(); ft.mesh = mb.upload(); ft.bounds = mb.bounds.transformed(ft.xf); ft.verts = (uint32_t)mb.vertices.size(); }
+  ft.built = true; ft.dirty = false;
 }
 
 void Terrain::build() {
@@ -675,7 +694,7 @@ void Terrain::build() {
   if (sat_.layers.size() > 1) {
     const SatLayer& farL = sat_.layers[1];
     for (int ty = farL.ty0; ty < farL.ty0 + farL.ny; ++ty)
-      for (int tx = farL.tx0; tx < farL.tx0 + farL.nx; ++tx) far_.push_back({tx, ty, {}, {}, mat4::identity(), false, 0});
+      for (int tx = farL.tx0; tx < farL.tx0 + farL.nx; ++tx) far_.push_back({tx, ty, {}, {}, mat4::identity(), false, false, 0});
   }
   built_ = true; firstCheck_ = true; checkTimer_ = 0;
   stats.buildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -691,6 +710,14 @@ void Terrain::markDirty(int layer, int tx, int ty) {
   if (shift < 0) return;
   int qx = tx >> shift, qy = ty >> shift;
   for (NearTile& t : near_) if (t.tx == qx && t.ty == qy && t.built) { t.dirty = true; t.dirtyAge = 0; }
+}
+
+void Terrain::markFarDirty(int tx14, int ty14) {
+  if (sat_.layers.size() < 2) return;
+  int shift = TILE_Z - sat_.layers[1].zoom;
+  if (shift < 0) return;
+  int fx = tx14 >> shift, fy = ty14 >> shift;
+  for (FarTile& f : far_) if (f.tx == fx && f.ty == fy && f.built) f.dirty = true;
 }
 
 void Terrain::issue(int layer, int tx, int ty) {
@@ -729,7 +756,7 @@ void Terrain::streamCheck(double wx, double wy, bool unthrottled) {
   // near tiles: alive within R_LOAD (edge distance), dropped beyond R_EVICT
   for (size_t i = 0; i < near_.size();) {
     NearTile& t = near_[i];
-    if (nearL.edgeDistance(t.tx, t.ty, wx, wy) > R_EVICT) { freeNear(t); near_[i] = near_.back(); near_.pop_back(); } else ++i;
+    if (nearL.edgeDistance(t.tx, t.ty, wx, wy) > R_EVICT) { if (t.built) markFarDirty(t.tx, t.ty); freeNear(t); near_[i] = near_.back(); near_.pop_back(); } else ++i;
   }
   {
     int c0 = slippy::worldToTileX(wx, TILE_Z), r0 = slippy::worldToTileY(wy, TILE_Z), rr = (int)std::ceil(R_LOAD / nearL.ts) + 1;
@@ -766,9 +793,23 @@ void Terrain::streamCheck(double wx, double wy, bool unthrottled) {
         cands.push_back({(int)li, tx, ty, d});
       }
   }
+  // the far layer (resident for good, <= 40 tiles) is requested eagerly: it is the only ground beyond R_LOAD
+  size_t n = 0;
+  for (size_t i = 0; i < cands.size(); ++i) {
+    const Cand& c = cands[i];
+    if (sat_.layers[(size_t)c.layer].inR <= 0) issue(c.layer, c.tx, c.ty); else cands[n++] = c;
+  }
+  cands.resize(n);
   std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.d != b.d ? a.d < b.d : a.layer < b.layer; });
   int budget = unthrottled ? (int)cands.size() : REQUESTS_PER_CHECK;
   for (int i = 0; i < budget && i < (int)cands.size(); ++i) issue(cands[(size_t)i].layer, cands[(size_t)i].tx, cands[(size_t)i].ty);
+}
+
+void Terrain::checkStreaming(vec3 centre, bool unthrottled) {
+  if (sat_.layers.empty()) return;
+  double wx, wy; origin_.toWorld(centre, wx, wy);
+  streamCheck(wx, wy, unthrottled);
+  firstCheck_ = false; checkTimer_ = 0;
 }
 
 // GPU work under a budget: near tile builds / re-cuts, far tile builds, texture uploads — nearest first.
@@ -781,7 +822,7 @@ void Terrain::runJobs(double wx, double wy, int budget) {
     if (!t.built || (t.dirty && (immediate || t.dirtyAge >= RECUT_DELAY))) jobs.push_back({0, 0, t.tx, t.ty, nearL.edgeDistance(t.tx, t.ty, wx, wy) + (t.built ? 1 : 0)});
   }
   if (sat_.layers.size() > 1)
-    for (const FarTile& f : far_) if (!f.built) jobs.push_back({1, 1, f.tx, f.ty, sat_.layers[1].edgeDistance(f.tx, f.ty, wx, wy)});
+    for (const FarTile& f : far_) if (!f.built || f.dirty) jobs.push_back({1, 1, f.tx, f.ty, sat_.layers[1].edgeDistance(f.tx, f.ty, wx, wy)});
   for (size_t li = 0; li < sat_.layers.size(); ++li) {
     const SatLayer& L = sat_.layers[li];
     for (const auto& [t, r] : L.res) if (!r.uploaded) jobs.push_back({2, (int)li, L.tx0 + t % L.nx, L.ty0 + t / L.nx, L.edgeDistance(L.tx0 + t % L.nx, L.ty0 + t / L.nx, wx, wy)});
@@ -834,7 +875,7 @@ void Terrain::draw(ModelRenderer& r, const Frustum* frustum) {
     if (!f.built || !f.mesh.indexCount) continue;
     if (frustum && !frustum->contains(f.bounds)) { ++r.culled; continue; }
     const rhi::Texture* tex = textureOf({1, f.tx, f.ty});
-    r.drawMesh(f.mesh, tex ? ground_ : backdropMat_, tex ? *tex : rhi::Texture{}, f.xf);
+    r.drawMesh(f.mesh, tex ? ground_ : loadingMat_, tex ? *tex : rhi::Texture{}, f.xf);   // 0x1a2027 until the imagery arrives (WARNA_UBIN_MUAT)
   }
   for (NearTile& t : near_) {
     if (!t.built) continue;

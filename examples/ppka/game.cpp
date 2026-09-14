@@ -484,6 +484,7 @@ bool Game::subjectPath(TrainPath& out, std::string* idOut) const {
   };
   for (const SimVehicle& v : t->vehicles) { push(v.x1, v.y1, v.seg, v.s); push(v.x2, v.y2, v.seg2, v.s2); }
   out.length = t->length > 0 ? t->length : acc;
+  out.id = t->id; out.speed = t->speed;
   if (idOut) *idOut = t->id;
   return out.valid();
 }
@@ -505,7 +506,8 @@ void Game::setCamMode(CamMode m) {
   if (m == CamMode::Jalan) rig_.enterWalk(eye, look, ground);
   const CamProfile p = camProfile(m);
   pushMessage(m == CamMode::Bebas ? "Kamera bebas (orbit)" : m == CamMode::Jalan ? "Jalan-jalan - WASD = jalan, Shift = lari, seret = menoleh, Esc kembali"
-              : std::string("Kamera ") + p.nama + " - seret = " + (m == CamMode::Kabin ? "menoleh" : "mengelilingi KA") + ", scroll = atur, , . = ganti KA, Z = teropong");
+              : m == CamMode::Kabin ? "Kamera Kabin - seret = menoleh, WASD/QE = geser mata, scroll = maju/mundur, R = kembali, , . = ganti KA, Z = teropong"
+              : std::string("Kamera ") + p.nama + " - seret = mengelilingi KA, scroll = atur, , . = ganti KA, Z = teropong");
 }
 
 void Game::cycleSubject(int dir) {
@@ -522,12 +524,15 @@ void Game::updateCamera(float dt) {
   if (rig_.mode == CamMode::Bebas) { rig_.step(dt, nullptr, {}, {}); return; }
   auto ground = [this](float x, float z) { return scene_.groundScene(x, z); };
   WalkInput in;
-  if (rig_.mode == CamMode::Jalan && !clockPrompt_) {
+  if ((rig_.mode == CamMode::Jalan || rig_.mode == CamMode::Kabin) && !clockPrompt_) {   // jalan = walk, kabin = move the eye
     in.forward = (win_->key(GLFW_KEY_W) || win_->key(GLFW_KEY_UP) ? 1.f : 0.f) - (win_->key(GLFW_KEY_S) || win_->key(GLFW_KEY_DOWN) ? 1.f : 0.f);
     in.side = (win_->key(GLFW_KEY_D) || win_->key(GLFW_KEY_RIGHT) ? 1.f : 0.f) - (win_->key(GLFW_KEY_A) || win_->key(GLFW_KEY_LEFT) ? 1.f : 0.f);
+    in.up = (win_->key(GLFW_KEY_E) ? 1.f : 0.f) - (win_->key(GLFW_KEY_Q) ? 1.f : 0.f);
     in.run = win_->key(GLFW_KEY_LEFT_SHIFT) || win_->key(GLFW_KEY_RIGHT_SHIFT);
+    in.reset = rig_.mode == CamMode::Kabin && win_->key(GLFW_KEY_R);
   }
   TrainPath tp; bool has = subjectPath(tp);
+  if (has) tp.timeScale = paused_ ? 0 : timeScale_;
   if (!rig_.step(dt, has ? &tp : nullptr, ground, in)) { pushMessage("KA subjek hilang dari lintas - kembali ke kamera bebas"); setCamMode(CamMode::Bebas); }
 }
 
