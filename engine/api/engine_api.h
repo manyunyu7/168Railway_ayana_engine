@@ -5,12 +5,15 @@
 // Load sequence (the host drives every fetch; the engine never touches the network):
 //   eng_init(w, h, dpr)                            GL context on <canvas id="ayana-canvas">, renderer, font
 //   eng_load_world(world, summary, map, catalog)   save "world" object, bridge summary, map slug, model.json
-//     -> asset requests through Module.onAssetRequest(kind, path):  kind "terrain" <map>/index.json, then every
-//        tile <map>/dem/<z>_<x>_<y>.bin and <map>/sat/<layer>/<z>_<x>_<y>.bin (fetch_tiles --target web output);
+//     -> asset requests through Module.onAssetRequest(kind, path):  kind "terrain" <map>/index.json, then the DEM
+//        tiles <map>/dem/<z>_<x>_<y>.bin (eagerly, the static world needs them) and, while streaming, satellite
+//        tiles <map>/sat/<layer>/<z>_<x>_<y>.bin as the camera moves (the host fetches from wherever it likes:
+//        fetch_tiles output, or the tile servers decoded by the browser -> eng_terrain_tile_rgba);
 //        "city" <slug>.json (baked OSM city, optional); "model" <catalog id> (geometry-only .emod, convert
 //        --target web --textures external), then the KTX2 textures through eng_texture_* per image.
-//   eng_terrain_index(bytes) / eng_terrain_tile(dir, z, x, y, bytes)   the static world is built when the last
-//        wanted tile arrived (len 0 = fetch failed: the tile is absent)
+//   eng_terrain_index(bytes) / eng_terrain_tile(dir, z, x, y, bytes) / eng_terrain_tile_rgba(dir, z, x, y, w, h, px) /
+//        eng_terrain_tile_fail(dir, z, x, y)   the static world is built when the last DEM tile answered (a failed
+//        tile stays flat); every other answer streams in (2 GPU uploads per frame)
 //   eng_city_json(bytes), eng_model_begin(slot, bytes) / eng_model_fail(slot)   decor (hiasan, garis, trees) is
 //        built once every decor model answered; train models can arrive any time (box until then)
 // Per frame: eng_set_state(stepJson) with the bridge's `step` object, then eng_frame(dt).
@@ -27,12 +30,14 @@ void eng_resize(int width, int height, float dpr);
 void eng_shutdown(void);
 int eng_load_world(const char* worldJson, const char* summaryJson, const char* mapSlug, const char* catalogJson);
 int eng_terrain_index(const uint8_t* bytes, int len);
-int eng_terrain_tile(const char* dir, int z, int x, int y, const uint8_t* bytes, int len);
+int eng_terrain_tile(const char* dir, int z, int x, int y, const uint8_t* bytes, int len);   // dem: f32[n*n]; sat/<i>: EIMG record
+int eng_terrain_tile_rgba(const char* dir, int z, int x, int y, int w, int h, const uint8_t* rgba);   // dem: Terrarium PNG pixels; sat/<i>: imagery
+void eng_terrain_tile_fail(const char* dir, int z, int x, int y);
 int eng_city_json(const uint8_t* bytes, int len);
 int eng_set_state(const char* stepJson);
 void eng_frame(float dt);
 int eng_ready(void);                 // 1 once the static world is built
-const char* eng_stats(void);         // JSON: fps, drawCalls, buildMs, summary, pending assets
+const char* eng_stats(void);         // JSON: fps, drawCalls, buildMs, summary, pending assets, terrain {near, far, patches, resident, requested, pendingJobs, trees}
 
 // camera (modes as engine/app/camera_rig.h CamMode: 0 bebas 1 jalan 2 kabin 3 samping 4 atas 5 ekor)
 int eng_camera_mode(int mode);       // returns the mode in effect (a train mode without a train stays put)

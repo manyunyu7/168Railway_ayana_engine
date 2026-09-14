@@ -51,7 +51,7 @@ bool Game::init(Window& win, const GameOptions& opt) {
 // The world itself is built by WorldScene (shared with the web ABI); this only supplies the native file paths.
 bool Game::buildWorld() {
   std::string err; const std::string root = ENG_SOURCE_DIR;
-  if (!scene_.terrain().load(root + "/assets/terrain/" + opt_.map + ".dem", root + "/assets/terrain/" + opt_.map + ".sat", err)) {
+  if (!scene_.loadTerrain(root + "/assets/terrain", opt_.map, err)) {
     std::fprintf(stderr, "terrain: %s (run: ./build/mac-debug/fetch_tiles %s)\n", err.c_str(), opt_.map.c_str()); return false;
   }
   // baked OSM city: slug = map name; `bks` shares its geography with the `bekasi` bake (Bekasi Timur–Cibitung)
@@ -65,6 +65,10 @@ bool Game::buildWorld() {
   // the station target was lifted to the carved ground (and maybe moved by ENG_TEST_GARIS)
   vec3 st = scene_.stationScene(); st.y = scene_.groundScene(st.x, st.z); scene_.setStationScene(st);
   orbit_.target = st; fly_.position.y = st.y + 30;
+  scene_.primeStreaming(st);   // the neighbourhood of the station before the first frame; the rest streams
+  { const Terrain::Stats& ts = scene_.terrain().stats; char t[200];
+    std::snprintf(t, sizeof t, "terrain streaming: %d near + %d far tiles, %d patches, %d textures resident, %zu trees around the station", ts.nearTiles, ts.farTiles, ts.patches, ts.resident, scene_.trees().stats.trees);
+    pushMessage(t); }
   compass_.init([this](float x, float z) { return scene_.groundScene(x, z); });
   if (std::getenv("ENG_TERRAIN_DEBUG")) {
     double wx, wy; scene_.origin().toWorld(st, wx, wy);
@@ -132,6 +136,8 @@ void Game::handleInput(Window& win, double dt) {
   bool lmb = win.mouseButton(0), rmb = win.mouseButton(1);
   // debug: ENG_AUTOJUMP=1 simulates a short right-click at (30 %, 65 %) of the window at frame 40
   if (std::getenv("ENG_AUTOJUMP") && frame_ >= 40 && frame_ < 43) { mx = ww * 0.3; my = wh * 0.65; rmb = frame_ < 42; }
+  // debug: ENG_AUTOGLIDE=1 holds the right button at (50 %, 12 %) from frame 40 on (compass glide forward: terrain streaming)
+  if (std::getenv("ENG_AUTOGLIDE") && frame_ >= 40) { mx = ww * 0.5; my = wh * 0.12; rmb = true; }
   if (lmb) {
     if (!dragging_) {
       clickArmed_ = true; clickX_ = mx; clickY_ = my;
@@ -443,6 +449,7 @@ void Game::frame(Window& win, double realDt) {
   }
   stepSim(realDt);
   updateCamera((float)std::fmin(realDt, 0.1));
+  scene_.updateStreaming(rig_.mode != CamMode::Bebas ? rig_.look() : useFly_ ? fly_.position : orbit_.target, (float)std::fmin(realDt, 0.1));
   render(win);
   ++frame_;
 }

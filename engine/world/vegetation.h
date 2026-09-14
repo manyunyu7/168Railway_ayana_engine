@@ -1,8 +1,9 @@
 // Vegetation (docs/world-spec.md §4.4, port of ppka-wannabe-2 src/tiga/vegetasi.ts): instanced GLB trees
 // scattered per 192 m cell where the satellite imagery is green and dark (ExG mask), away from the
-// track and outside given footprints. Every cell within reach of the rails is scattered once at
-// build(); draw() picks the cells around the eye, thins them with distance and uploads one instance
-// buffer per tree model.
+// track and outside given footprints. Cells within reach of the rails are scattered from the imagery
+// that is resident: build() does every cell whose imagery is there, update() (re)scatters cells whose
+// finest imagery tile changed since (streaming arrivals / evictions), a few cells per call. draw() picks
+// the cells around the eye, thins them with distance and uploads one instance buffer per tree model.
 #pragma once
 #include "engine/math/geometry.h"
 #include "engine/render/model_renderer.h"
@@ -36,17 +37,22 @@ public:
   // Scatters trees. terrain must be loaded with rails registered; exclude = scene-space footprints
   // (xz used) such as station buildings. Tree models = catalog `objek` entries with kategori 'vegetasi'.
   void build(const Terrain& terrain, AssetCatalog& catalog, std::span<const AABB> exclude = {});
+  // Follows the streamed imagery: cells whose finest resident tile changed are re-scattered, at most
+  // `maxCells` per call (0 = all). Cheap when nothing changed (imageryVersion check).
+  void update(const Terrain& terrain, int maxCells = 48);
   void draw(ModelRenderer& r, vec3 eye, const Frustum* frustum = nullptr);
   void destroy();
   Stats stats;
 
 private:
   struct Tree { float x, y, z, scale, rot, rank; uint8_t model; };
-  struct Cell { AABB bounds; uint32_t first, count; };
+  struct Cell { int cx, cz; int64_t key = -2; AABB bounds; std::vector<Tree> trees; };   // key: Terrain::imageryKeyAt at the centre (-2 = never scattered)
   struct ModelSlot { GpuModel* model; mat4 norm; rhi::Buffer instances; std::vector<mat4> mats; };
-  std::vector<Tree> trees_;
+  void scatter(const Terrain& terrain, Cell& cell);
   std::vector<Cell> cells_;
   std::vector<ModelSlot> models_;
+  std::vector<AABB> exclude_;
+  unsigned version_ = 0; size_t scan_ = 0; bool scanning_ = false;
 };
 
 } // namespace eng

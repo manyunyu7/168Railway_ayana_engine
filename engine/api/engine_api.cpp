@@ -115,7 +115,7 @@ void updateCamera(float dt) {
 // The static world: terrain data complete -> rails, signals, ... ; then the decor models are requested.
 void buildStaticWorld() {
   if (g->ready) return;
-  g->scene.terrain().finishTiles();
+  g->scene.terrain().finishDem();
   std::string city;   // the baked city arrives through eng_city_json as a MEMFS file (may come later: built then)
   FILE* f = std::fopen("/ayana-city.json", "rb");
   if (f) { std::fclose(f); city = "/ayana-city.json"; }
@@ -127,6 +127,7 @@ void buildStaticWorld() {
   g->orbit.near = 1; g->orbit.far = 40000; g->orbit.fovY = radians(52);
   g->compass.init([](float x, float z) { return g->scene.groundScene(x, z); });
   g->ready = true;
+  g->scene.primeStreaming(st);   // every tile inside the radii is requested at once (the host limits the fetches)
   // decor models: hiasan objects, garis classes, trees. catalog.model() files the requests; ids still missing
   // are awaited before buildDecor (a failed one just drops out).
   AssetCatalog& cat = g->scene.catalog();
@@ -241,23 +242,40 @@ KEEP int eng_terrain_index(const uint8_t* bytes, int len) {
   std::string err;
   Json idx = Json::parse(std::string_view((const char*)bytes, (size_t)std::max(0, len)), &err);
   if (!err.empty() || !g->scene.terrain().loadIndex(idx, err)) { std::fprintf(stderr, "[ayana] terrain index: %s\n", err.c_str()); return 0; }
-  std::vector<Terrain::TileRef> tiles = g->scene.terrain().tilesWanted();
+  g->scene.terrain().setRequestFn([](const Terrain::TileRef& t) { request("terrain", g->map + "/" + t.path()); });
+  std::vector<Terrain::TileRef> tiles = g->scene.terrain().demTilesWanted();
   g->tilesPending = (int)tiles.size();
   for (const Terrain::TileRef& t : tiles) request("terrain", g->map + "/" + t.path());
   if (g->tilesPending == 0) buildStaticWorld();
   return g->tilesPending;
 }
 
+// A DEM answer (delivered or failed) counts down to the static build; satellite answers just stream in.
+static void afterTile(const char* dir, bool ok, int z, int x, int y, const std::string& err) {
+  if (!ok) { if (!err.empty()) std::fprintf(stderr, "[ayana] tile %s %d/%d/%d rejected: %s\n", dir, z, x, y, err.c_str()); g->scene.terrain().failTile({dir, z, x, y}); }
+  if (!std::strcmp(dir, "dem") && --g->tilesPending <= 0 && !g->ready) { g->tilesPending = 0; buildStaticWorld(); }
+}
+
 KEEP int eng_terrain_tile(const char* dir, int z, int x, int y, const uint8_t* bytes, int len) {
   if (!g || !dir) return 0;
   std::span<const uint8_t> b(bytes, (size_t)std::max(0, len));
   bool ok = false; std::string err;
-  if (!std::strcmp(dir, "dem")) ok = g->scene.terrain().addDemTile(z, x, y, b);
-  else if (!std::strncmp(dir, "sat/", 4)) ok = g->scene.terrain().addSatTile(std::atoi(dir + 4), z, x, y, b, err);
-  if (!ok && len > 0) std::fprintf(stderr, "[ayana] tile %s %d/%d/%d rejected: %s\n", dir, z, x, y, err.c_str());
-  if (--g->tilesPending <= 0 && !g->ready) { g->tilesPending = 0; buildStaticWorld(); }
+  if (!std::strcmp(dir, "dem")) ok = b.size() >= 4 && g->scene.terrain().provideDem(z, x, y, std::span<const float>((const float*)b.data(), b.size() / 4));
+  else if (!std::strncmp(dir, "sat/", 4) && !b.empty()) ok = g->scene.terrain().provideSatFile(std::atoi(dir + 4), z, x, y, b, err);
+  afterTile(dir, ok, z, x, y, err);
   return ok;
 }
+
+KEEP int eng_terrain_tile_rgba(const char* dir, int z, int x, int y, int w, int h, const uint8_t* rgba) {
+  if (!g || !dir) return 0;
+  bool ok = false; std::string err;
+  if (!std::strcmp(dir, "dem")) ok = g->scene.terrain().provideDemRgba(z, x, y, w, h, rgba);
+  else if (!std::strncmp(dir, "sat/", 4)) ok = g->scene.terrain().provideSatRgba(std::atoi(dir + 4), z, x, y, w, h, rgba, err);
+  afterTile(dir, ok, z, x, y, err);
+  return ok;
+}
+
+KEEP void eng_terrain_tile_fail(const char* dir, int z, int x, int y) { if (g && dir) afterTile(dir, false, z, x, y, ""); }
 
 KEEP int eng_city_json(const uint8_t* bytes, int len) {
   if (!g || len <= 0) return 0;
@@ -299,6 +317,7 @@ KEEP void eng_frame(float dt) {
     g->compass.update(g->orbit, cx, cy, w, h, rmb, g->ctrl, g->kl, g->kr, g->up, g->down, dt, g->viewProj.inverse());
   }
   updateCamera(dt);
+  g->scene.updateStreaming(g->rig.mode != CamMode::Bebas ? g->rig.look() : g->orbit.target, dt);
   float aspect = (float)w / (float)h;
   mat4 view = camView(), proj = camProj(aspect);
   vec3 eye = camEye();
@@ -316,10 +335,13 @@ KEEP int eng_ready(void) { return g && g->ready; }
 
 KEEP const char* eng_stats(void) {
   if (!g) return "{}";
-  char b[512];
-  std::snprintf(b, sizeof b, "{\"fps\":%.1f,\"drawCalls\":%u,\"culled\":%u,\"buildMs\":%.0f,\"ready\":%s,\"decor\":%s,\"tilesPending\":%d,\"decorPending\":%zu,\"modelsRequested\":%d,\"frame\":%d,\"summary\":\"%s\"}",
+  char b[768];
+  const Terrain::Stats& ts = g->scene.terrain().stats;
+  std::snprintf(b, sizeof b, "{\"fps\":%.1f,\"drawCalls\":%u,\"culled\":%u,\"buildMs\":%.0f,\"ready\":%s,\"decor\":%s,\"tilesPending\":%d,\"decorPending\":%zu,\"modelsRequested\":%d,\"frame\":%d,"
+                "\"terrain\":{\"near\":%d,\"far\":%d,\"patches\":%d,\"resident\":%d,\"requested\":%d,\"pendingJobs\":%d,\"trees\":%zu},\"summary\":\"%s\"}",
                 g->fps, g->scene.renderer().drawCalls, g->scene.renderer().culled, g->scene.stats().buildMs, g->ready ? "true" : "false", g->decorDone ? "true" : "false",
-                g->tilesPending, g->decorPending.size(), g->modelsPending, g->frame, SimProcessEscapeShim(g->scene.stats().summary).c_str());
+                g->tilesPending, g->decorPending.size(), g->modelsPending, g->frame, ts.nearTiles, ts.farTiles, ts.patches, ts.resident, ts.requested, ts.pendingJobs, g->scene.trees().stats.trees,
+                SimProcessEscapeShim(g->scene.stats().summary).c_str());
   return ret(b);
 }
 

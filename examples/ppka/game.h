@@ -23,6 +23,7 @@ public:
   void shutdown();
   void frame(Window& win, double realDt);
   bool wantsCapture(int& frameNo) const;
+  std::string debugCamera() const { char b[200]; vec3 e = camEye(); std::snprintf(b, sizeof b, "target %.4f %.4f %.4f eye %.4f %.4f %.4f d %.3f yaw %.5f pitch %.5f clock %.3f", orbit_.target.x, orbit_.target.y, orbit_.target.z, e.x, e.y, e.z, orbit_.distance, orbit_.yaw, orbit_.pitch, sim_.state().clock); return b; }
 
 private:
   void handleInput(Window& win, double dt);

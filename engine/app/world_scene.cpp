@@ -4,6 +4,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <sstream>
 
 namespace eng {
 
@@ -20,6 +23,58 @@ void WorldScene::setWorld(const Json& world) {
   stationScene_ = {};
   for (const Json& s : world["scenery"].arr)
     if (s["kind"].stringOr("") == "station") { stationScene_ = origin_.toScene(s["pos"]["x"].num, s["pos"]["y"].num, 0); break; }
+}
+
+namespace {
+bool readFile(const std::string& path, std::vector<uint8_t>& out) {
+  std::ifstream f(path, std::ios::binary);
+  if (!f) return false;
+  out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+  return !out.empty();
+}
+std::vector<float> asFloats(const std::vector<uint8_t>& b) { std::vector<float> f(b.size() / 4); std::memcpy(f.data(), b.data(), f.size() * 4); return f; }
+} // namespace
+
+// Per-tile files are preferred (only the neighbourhood is read); the monolithic pair is the fallback.
+bool WorldScene::loadTerrain(const std::string& terrainDir, const std::string& mapSlug, std::string& error) {
+  tileDir_.clear();
+  const std::string dir = terrainDir + "/" + mapSlug;
+  std::ifstream idx(dir + "/index.json");
+  if (idx) {
+    std::stringstream ss; ss << idx.rdbuf();
+    std::string err; Json j = Json::parse(ss.str(), &err);
+    if (err.empty() && j["target"].stringOr("") == "desktop" && terrain_.loadIndex(j, err)) {
+      tileDir_ = dir;
+      terrain_.setRequestFn([this](const Terrain::TileRef& t) {
+        std::vector<uint8_t> bytes; std::string e; bool ok = false;
+        if (readFile(tileDir_ + "/" + t.path(), bytes)) {
+          if (t.dir == "dem") ok = terrain_.provideDem(t.z, t.x, t.y, asFloats(bytes));
+          else ok = terrain_.provideSatFile(std::atoi(t.dir.c_str() + 4), t.z, t.x, t.y, bytes, e);
+        }
+        if (!ok) { terrain_.failTile(t); if (!e.empty()) std::fprintf(stderr, "terrain tile %s: %s\n", t.path().c_str(), e.c_str()); }
+      });
+      for (const Terrain::TileRef& t : terrain_.demTilesWanted()) {
+        std::vector<uint8_t> bytes;
+        if (!readFile(dir + "/" + t.path(), bytes) || !terrain_.provideDem(t.z, t.x, t.y, asFloats(bytes))) terrain_.failTile(t);
+      }
+      terrain_.finishDem();
+      return true;
+    }
+    if (!err.empty()) std::fprintf(stderr, "terrain: %s/index.json: %s (using the monolithic files)\n", dir.c_str(), err.c_str());
+  }
+  return terrain_.load(terrainDir + "/" + mapSlug + ".dem", terrainDir + "/" + mapSlug + ".sat", error);
+}
+
+void WorldScene::updateStreaming(vec3 centre, float dt) {
+  if (!built_) return;
+  terrain_.update(centre, dt);
+  if (decor_) trees_.update(terrain_);
+}
+
+void WorldScene::primeStreaming(vec3 centre) {
+  if (!built_) return;
+  terrain_.prime(centre);
+  if (decor_) trees_.update(terrain_, 0);
 }
 
 bool WorldScene::buildStatic(const Json& world, const std::string& mapSlug, const std::string& fontPath, const std::string& cityPath, Log log) {

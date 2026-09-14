@@ -122,6 +122,9 @@ int main(int argc, char** argv) {
   cam.target = org.toScene(stationX, stationY, terrain.groundHeight(stationX, stationY));
   cam.distance = envf("ENG_DIST", 500); cam.pitch = radians(envf("ENG_PITCH", 28)); cam.yaw = radians(envf("ENG_YAW", -30));
   cam.near = 1; cam.far = 40000;
+  terrain.prime(cam.target);   // everything within the streaming radii before the first frame (ENG_CAPTURE)
+  if (!std::getenv("ENG_NO_TREES")) trees.update(terrain, 0);
+  std::printf("primed: %d near + %d far tiles, %d patches (%d detail), %d resident textures, %zu tris; %zu trees\n", s.nearTiles, s.farTiles, s.patches, s.detailPatches, s.resident, s.triangles, trees.stats.trees);
 
   double mxPrev = 0, myPrev = 0, tPrev = win.time(); bool dragging = false; int frame = 0;
   while (win.isOpen()) {
@@ -140,6 +143,7 @@ int main(int argc, char** argv) {
     if (win.key(GLFW_KEY_A)) cam.target -= right * sp;
     double wx, wy; org.toWorld(cam.target, wx, wy);
     cam.target.y = terrain.groundHeight(wx, wy);
+    terrain.update(cam.target, dt); trees.update(terrain);
 
     int w, h; win.framebufferSize(w, h);
     rhi::setViewport(w, h);

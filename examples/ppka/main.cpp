@@ -25,7 +25,7 @@ int main(int argc, char** argv) {
     game.frame(win, dt);
     int f; if (game.wantsCapture(f) && f >= captureAt) {
       int w, h; win.framebufferSize(w, h);
-      rhi::captureFramebuffer(std::getenv("ENG_CAPTURE"), w, h); std::printf("captured\n"); break;
+      rhi::captureFramebuffer(std::getenv("ENG_CAPTURE"), w, h); std::printf("captured %s\n", game.debugCamera().c_str()); break;
     }
     win.swapBuffers();
   }

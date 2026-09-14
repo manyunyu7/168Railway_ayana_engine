@@ -19,9 +19,10 @@ void Game::drawHud(int w, int h) {
   ui_.begin(text_, fmx_, fmy_, pendingClick_, pcx_, pcy_);
 
   // top bar: clock, time scale, score, fps
-  char top[200];
-  std::snprintf(top, sizeof top, "%s   x%g%s   score %d   viol %d   pending %d   fps %.0f   draws %u   az %03d   %s",
-                clockText(st.clock).c_str(), timeScale_, paused_ ? " PAUSED" : "", st.score, st.violations, st.pending, fps_, scene_.renderer().drawCalls, compass_.azimuth(orbit_), pemula_ ? "PEMULA" : "AHLI");
+  char top[260];
+  const Terrain::Stats& ts = scene_.terrain().stats;
+  std::snprintf(top, sizeof top, "%s   x%g%s   score %d   viol %d   pending %d   fps %.0f   draws %u   tiles %d+%d/%d   az %03d   %s",
+                clockText(st.clock).c_str(), timeScale_, paused_ ? " PAUSED" : "", st.score, st.violations, st.pending, fps_, scene_.renderer().drawCalls, ts.nearTiles, ts.farTiles, ts.resident, compass_.azimuth(orbit_), pemula_ ? "PEMULA" : "AHLI");
   ui_.panel({0, 0, (float)w, lh * 2 + pad * 1.5f}, panel);
   text_.draw(top, pad, pad * 0.5f, white, 0.8f);
 

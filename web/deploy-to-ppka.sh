@@ -3,7 +3,8 @@
 # (src/tiga-ayana/duniaAyana.ts, `?renderer=ayana`):
 #   build/wasm/ayana.{js,wasm,data} + web/ktx2.js + worker + Basis transcoder -> public/ayana/
 #   build/wasm/models/*.emod (web/build-models.sh --all)                    -> public/ayana/models/   (gitignored)
-#   assets/terrain/<map>/ per-tile files (fetch_tiles --target web)         -> public/ayana/terrain/<map>/ (gitignored)
+#   assets/terrain/<map>/index.json (fetch_tiles)                           -> public/ayana/terrain/<map>/index.json (gitignored;
+#                                                                               the browser fetches the tiles themselves from the tile servers)
 #   bridge/sim-state.ts                                                      -> src/tiga-ayana/simState.ts (copy; the
 #                                                                               adapter cannot import outside its repo)
 # In production the models/ and terrain/ folders go to R2 (tools/unggah-r2.mjs in ppka-wannabe-2) under the same
@@ -21,8 +22,8 @@ cp web/ktx2.js web/ktx2-worker.js "$D/"
 cp web/vendor/basis_transcoder.js web/vendor/basis_transcoder.wasm "$D/vendor/"
 rsync -a --delete build/wasm/models/ "$D/models/" --include='*.emod' --exclude='ktx2/'
 for m in $MAPS; do
-  [ -d "assets/terrain/$m" ] || { echo "no per-tile terrain for $m (run: build/mac-release/fetch_tiles $m --target web)"; continue; }
-  mkdir -p "$D/terrain/$m"; rsync -a --delete "assets/terrain/$m/" "$D/terrain/$m/"
+  [ -f "assets/terrain/$m/index.json" ] || { echo "no terrain index for $m (run: build/mac-release/fetch_tiles $m)"; continue; }
+  rm -rf "$D/terrain/$m"; mkdir -p "$D/terrain/$m"; cp "assets/terrain/$m/index.json" "$D/terrain/$m/"
 done
 { echo "// SALINAN OTOMATIS dari ../game-engine-experiment/bridge/sim-state.ts (web/deploy-to-ppka.sh) — jangan disunting di sini."; cat bridge/sim-state.ts; } > "$PPKA/src/tiga-ayana/simState.ts"
 du -sh "$D" "$D/models" "$D/terrain"

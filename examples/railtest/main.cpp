@@ -173,6 +173,7 @@ int main(int argc, char** argv) {
     else { float x, z; if (std::sscanf(tg, "%f,%f", &x, &z) == 2) { cam.target.x = x; cam.target.z = z; } }
   }
 
+  if (haveTerrain) terrain.prime(cam.target);
   double mxPrev = 0, myPrev = 0; bool dragging = false; int frame = 0; double simAcc = 0, last = win.time();
   double fpsAcc = 0; int fpsN = 0; float fps = 0;
   while (win.isOpen()) {
@@ -193,7 +194,7 @@ int main(int argc, char** argv) {
     Frustum fr(vp);
     sky.draw(vp.inverse(), cam.position());
     renderer.beginFrame(vp, cam.position(), light);
-    if (haveTerrain) terrain.draw(renderer, &fr);
+    if (haveTerrain) { terrain.update(cam.target, (float)dt); terrain.draw(renderer, &fr); }
     rails.draw(renderer, &fr);
     if (krl.stats.parts) krl.draw(renderer, krlXf, &fr);
     signals.draw(renderer, cam.position(), &fr);

@@ -3,10 +3,12 @@
 // composed from --sat-detail sub-tiles, one coarse far layer, and z16/z17 detail layers along the track
 // and around stations) with curl, decodes with stb_image.
 //   fetch_tiles <map> [--maps DIR] [--out DIR] [--cache DIR] [--sat-detail 15] [--sat-size 512] [--target desktop|web]
-// Besides the monolithic files (read by the native app) every tile is also written on its own for streaming
-// clients: <out>/<map>/dem/<z>_<x>_<y>.bin (f32[n*n] Terrarium metres, row-major), <out>/<map>/sat/<layer>/<z>_<x>_<y>.bin
+// Besides the monolithic files (native fallback) every tile is also written on its own for the streaming
+// loader: <out>/<map>/dem/<z>_<x>_<y>.bin (f32[n*n] Terrarium metres, row-major), <out>/<map>/sat/<layer>/<z>_<x>_<y>.bin
 // (one directory per satellite layer since two layers may share a zoom; EIMG image record: RGBA8 for --target desktop, ETC2 + 128 px RGBA8 fallback for --target web) and
-// <out>/<map>/index.json (bbox, layers with zoom/tile range/size/present tiles).
+// <out>/<map>/index.json (bbox, target, layers with zoom/tile range/size/present tiles, `mean` brightness of the near
+// layer for the vegetation mask). The native app streams from the per-tile files (--target desktop); the web client
+// only needs index.json — it fetches the tiles straight from the tile servers (ppka-wannabe-2/src/tiga-ayana/ubinAyana.ts).
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_HDR
 #define STBI_NO_PSD
@@ -136,7 +138,7 @@ int main(int argc, char** argv) {
   fs::path cache(cacheDir);
   fs::path tileDir = fs::path(outDir) / map;
   fs::create_directories(tileDir / "dem"); fs::create_directories(tileDir / "sat");
-  std::string index = "{\n  \"map\": \"" + map + "\",\n  \"bbox\": [" + std::to_string(bb.x0) + ", " + std::to_string(bb.y0) + ", " + std::to_string(bb.x1) + ", " + std::to_string(bb.y1) + "],\n";
+  std::string index = "{\n  \"map\": \"" + map + "\",\n  \"target\": \"" + std::string(tex.target == texcomp::Target::Desktop ? "desktop" : "web") + "\",\n  \"bbox\": [" + std::to_string(bb.x0) + ", " + std::to_string(bb.y0) + ", " + std::to_string(bb.x1) + ", " + std::to_string(bb.y1) + "],\n";
   size_t tileBytes[2] = {0, 0};   // dem, sat
   auto layerJson = [](const TileRange& r, int px, const std::vector<uint8_t>& present, const char* dir) {
     std::string j = "    {\"dir\": \"" + std::string(dir) + "\", \"zoom\": " + std::to_string(r.z) + ", \"tx0\": " + std::to_string(r.tx0) + ", \"ty0\": " + std::to_string(r.ty0) +
@@ -210,6 +212,7 @@ int main(int argc, char** argv) {
   }
   std::ofstream sat(outDir + "/" + map + ".sat", std::ios::binary);
   sat.write("ESAT", 4); put32(sat, 2); put32(sat, (int32_t)layers.size());
+  double meanSum = 0; size_t meanN = 0;   // mean max(R,G,B) of the near layer, subsampled (vegetasi.ts terRata)
   for (size_t li = 0; li < layers.size(); ++li) {
     const LayerSpec& L = layers[li];
     const TileRange& r = L.r;
@@ -251,6 +254,7 @@ int main(int argc, char** argv) {
         if (px != srcPx) stbir_resize_uint8_srgb(img.data(), srcPx, srcPx, 0, out.data(), px, px, 0, STBIR_RGB);
         else out = img;
         sat.write((const char*)out.data(), (std::streamsize)out.size());
+        if (li == 0) for (size_t i = 0; i + 2 < out.size(); i += 3 * 16) { meanSum += std::max({out[i], out[i + 1], out[i + 2]}); ++meanN; }
         ok += any;
         // per-tile image record (RGBA8 raw, or the target's compressed chain + small fallback)
         Image im; im.width = px; im.height = px; im.channels = 4; im.wrapS = im.wrapT = 1;
@@ -267,7 +271,7 @@ int main(int argc, char** argv) {
   sat.close();
   index += "  \"sat\": [\n";
   for (size_t i = 0; i < layers.size(); ++i) index += layerJson(layers[i].r, layers[i].px, layers[i].present, ("sat/" + std::to_string(i)).c_str()) + (i + 1 < layers.size() ? ",\n" : "\n");
-  index += "  ]\n}\n";
+  index += "  ],\n  \"mean\": " + std::to_string(meanN ? meanSum / (double)meanN / 255.0 : 0.4) + "\n}\n";
   { std::ofstream idx(tileDir / "index.json"); idx << index; }
   std::printf("per-tile: %s/ dem %.1f MB, sat %.1f MB (%s)\n", tileDir.string().c_str(), tileBytes[0] / 1e6, tileBytes[1] / 1e6,
               tex.target == texcomp::Target::Desktop ? "RGBA8" : "ETC2 + fallback");

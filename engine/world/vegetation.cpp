@@ -20,6 +20,7 @@ double acak(double x, double z, double k) {
 void Vegetation::build(const Terrain& terrain, AssetCatalog& catalog, std::span<const AABB> exclude) {
   auto t0 = std::chrono::steady_clock::now();
   destroy();
+  exclude_.assign(exclude.begin(), exclude.end());
   for (const std::string& id : catalog.idsByCategory("vegetasi")) {
     GpuModel* m = catalog.model(id);
     if (!m) continue;
@@ -40,10 +41,7 @@ void Vegetation::build(const Terrain& terrain, AssetCatalog& catalog, std::span<
   const SatImage& sat = terrain.sat();
   if (sat.layers.empty()) return;
   const SatLayer& nearL = sat.layers[0];
-  const float spacing = SPACING_BASE / std::sqrt(DENSITY);
-  const int perCell = std::max(1, (int)std::lround(CELL * CELL / (spacing * spacing)));
-  const float meanV = sat.meanBrightness;
-  // cell range: the near satellite layer's extent, in scene space
+  // cell range: the near satellite layer's extent, in scene space; only cells within reach of the rails
   double sx0 = nearL.ts * nearL.tx0 - slippy::CIRCUMFERENCE / 2 - org.ox, sz0 = nearL.ts * nearL.ty0 - slippy::CIRCUMFERENCE / 2 - org.oz;
   double sx1 = sx0 + nearL.ts * nearL.nx, sz1 = sz0 + nearL.ts * nearL.ny;
   int c0x = (int)std::floor(sx0 / CELL), c1x = (int)std::floor(sx1 / CELL), c0z = (int)std::floor(sz0 / CELL), c1z = (int)std::floor(sz1 / CELL);
@@ -51,34 +49,66 @@ void Vegetation::build(const Terrain& terrain, AssetCatalog& catalog, std::span<
     for (int cx = c0x; cx <= c1x; ++cx) {
       double x0 = cx * (double)CELL, z0 = cz * (double)CELL;
       if (!terrain.railInBox(x0 + CELL / 2 + org.ox, z0 + CELL / 2 + org.oz, CELL, SCATTER_MARGIN)) continue;
-      Cell cell{{}, (uint32_t)trees_.size(), 0};
-      for (int i = 0; i < perCell; ++i) {
-        double x = x0 + acak(cx, cz, i * 3 + 1) * CELL, z = z0 + acak(cx, cz, i * 3 + 2) * CELL;
-        double wx = x + org.ox, wy = z + org.oz;
-        float rgb[3];
-        if (!terrain.satColor(wx, wy, MASK_RADIUS, rgb)) continue;
-        float sum = rgb[0] + rgb[1] + rgb[2] + 1e-6f;
-        float exg = (2 * rgb[1] - rgb[0] - rgb[2]) / sum, v = std::max({rgb[0], rgb[1], rgb[2]});
-        float green = std::clamp((exg - EXG_MIN) / EXG_RANGE, 0.f, 1.f);
-        if (green <= 0) continue;
-        float dark = std::clamp((meanV + DARK_OFFSET - v) / DARK_RANGE, 0.f, 1.f);
-        float p = green * (BASE_WEIGHT + (1 - BASE_WEIGHT) * dark);
-        if (acak(x, z, 5) >= p) continue;
-        if (terrain.railDistance((float)x, (float)z) < CLEARANCE) continue;
-        bool blocked = false;
-        for (const AABB& b : exclude) if (x >= b.min.x && x <= b.max.x && z >= b.min.z && z <= b.max.z) { blocked = true; break; }
-        if (blocked) continue;
-        float y = terrain.groundHeight(wx, wy);
-        float k = 0.72f + (float)acak(x, z, 6) * 0.75f;
-        Tree t{(float)x, y, (float)z, k, (float)(acak(x, z, 8) * 2 * M_PI), (float)acak(x, z, 10), (uint8_t)(std::floor(acak(x, z, 9) * models_.size()))};
-        t.model = (uint8_t)std::min<size_t>(t.model, models_.size() - 1);
-        cell.bounds.expand({t.x, t.y, t.z}); cell.bounds.expand({t.x, t.y + TREE_HEIGHT * k, t.z});
-        trees_.push_back(t); ++cell.count;
-      }
-      if (cell.count) { cell.bounds.expand({(float)x0, cell.bounds.min.y, (float)z0}); cell.bounds.expand({(float)(x0 + CELL), cell.bounds.max.y, (float)(z0 + CELL)}); cells_.push_back(cell); }
+      cells_.push_back({cx, cz, -2, {}, {}});
     }
-  stats.trees = trees_.size(); stats.cells = (int)cells_.size();
+  version_ = terrain.imageryVersion() - 1;   // force a full pass
+  update(terrain, 0);
   stats.buildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
+// Scatters one 192 m cell from the finest resident imagery (vegetasi.ts sebarSel); no imagery = no trees.
+void Vegetation::scatter(const Terrain& terrain, Cell& cell) {
+  const WorldOrigin& org = terrain.origin();
+  const float spacing = SPACING_BASE / std::sqrt(DENSITY);
+  const int perCell = std::max(1, (int)std::lround(CELL * CELL / (spacing * spacing)));
+  const float meanV = terrain.sat().meanBrightness;
+  const double x0 = cell.cx * (double)CELL, z0 = cell.cz * (double)CELL;
+  cell.trees.clear(); cell.bounds = {};
+  for (int i = 0; i < perCell; ++i) {
+    double x = x0 + acak(cell.cx, cell.cz, i * 3 + 1) * CELL, z = z0 + acak(cell.cx, cell.cz, i * 3 + 2) * CELL;
+    double wx = x + org.ox, wy = z + org.oz;
+    float rgb[3];
+    if (!terrain.satColor(wx, wy, MASK_RADIUS, rgb)) continue;
+    float sum = rgb[0] + rgb[1] + rgb[2] + 1e-6f;
+    float exg = (2 * rgb[1] - rgb[0] - rgb[2]) / sum, v = std::max({rgb[0], rgb[1], rgb[2]});
+    float green = std::clamp((exg - EXG_MIN) / EXG_RANGE, 0.f, 1.f);
+    if (green <= 0) continue;
+    float dark = std::clamp((meanV + DARK_OFFSET - v) / DARK_RANGE, 0.f, 1.f);
+    float p = green * (BASE_WEIGHT + (1 - BASE_WEIGHT) * dark);
+    if (acak(x, z, 5) >= p) continue;
+    if (terrain.railDistance((float)x, (float)z) < CLEARANCE) continue;
+    bool blocked = false;
+    for (const AABB& b : exclude_) if (x >= b.min.x && x <= b.max.x && z >= b.min.z && z <= b.max.z) { blocked = true; break; }
+    if (blocked) continue;
+    float y = terrain.groundHeight(wx, wy);
+    float k = 0.72f + (float)acak(x, z, 6) * 0.75f;
+    Tree t{(float)x, y, (float)z, k, (float)(acak(x, z, 8) * 2 * M_PI), (float)acak(x, z, 10), (uint8_t)(std::floor(acak(x, z, 9) * models_.size()))};
+    t.model = (uint8_t)std::min<size_t>(t.model, models_.size() - 1);
+    cell.bounds.expand({t.x, t.y, t.z}); cell.bounds.expand({t.x, t.y + TREE_HEIGHT * k, t.z});
+    cell.trees.push_back(t);
+  }
+  if (!cell.trees.empty()) { cell.bounds.expand({(float)x0, cell.bounds.min.y, (float)z0}); cell.bounds.expand({(float)(x0 + CELL), cell.bounds.max.y, (float)(z0 + CELL)}); }
+}
+
+void Vegetation::update(const Terrain& terrain, int maxCells) {
+  if (models_.empty() || cells_.empty()) return;
+  if (terrain.imageryVersion() != version_) { version_ = terrain.imageryVersion(); scan_ = 0; scanning_ = true; }
+  if (!scanning_) return;
+  const WorldOrigin& org = terrain.origin();
+  int done = 0;
+  for (; scan_ < cells_.size(); ++scan_) {
+    Cell& c = cells_[scan_];
+    int64_t key = terrain.imageryKeyAt((c.cx + 0.5) * CELL + org.ox, (c.cz + 0.5) * CELL + org.oz);
+    if (key == c.key) continue;
+    if (maxCells > 0 && done >= maxCells) break;
+    stats.trees -= c.trees.size();
+    if (key < 0) { c.trees.clear(); c.bounds = {}; } else scatter(terrain, c);
+    c.key = key;
+    stats.trees += c.trees.size();
+    ++done;
+  }
+  if (scan_ >= cells_.size()) scanning_ = false;
+  stats.cells = 0; for (const Cell& c : cells_) if (!c.trees.empty()) ++stats.cells;
 }
 
 void Vegetation::draw(ModelRenderer& r, vec3 eye, const Frustum* frustum) {
@@ -89,6 +119,7 @@ void Vegetation::draw(ModelRenderer& r, vec3 eye, const Frustum* frustum) {
   struct Near { float d; const Cell* c; };
   std::vector<Near> order;
   for (const Cell& c : cells_) {
+    if (c.trees.empty()) continue;
     float px = std::clamp(eye.x, c.bounds.min.x, c.bounds.max.x), pz = std::clamp(eye.z, c.bounds.min.z, c.bounds.max.z);
     float d = std::hypot(px - eye.x, pz - eye.z);
     if (d > VIEW_RADIUS) continue;
@@ -100,8 +131,7 @@ void Vegetation::draw(ModelRenderer& r, vec3 eye, const Frustum* frustum) {
   for (const Near& n : order) {
     float threshold = n.d <= FULL_RADIUS ? 1.f : std::max(0.05f, FULL_RADIUS * FULL_RADIUS / (n.d * n.d));   // ambangLOD
     ++stats.cellsDrawn;
-    for (uint32_t i = n.c->first; i < n.c->first + n.c->count; ++i) {
-      const Tree& t = trees_[i];
+    for (const Tree& t : n.c->trees) {
       if (t.rank >= threshold) continue;
       if (total >= (unsigned)INSTANCE_CAP) break;
       ModelSlot& m = models_[t.model];
@@ -121,7 +151,7 @@ void Vegetation::draw(ModelRenderer& r, vec3 eye, const Frustum* frustum) {
 
 void Vegetation::destroy() {
   for (ModelSlot& m : models_) rhi::destroyBuffer(m.instances);
-  models_.clear(); trees_.clear(); cells_.clear();
+  models_.clear(); cells_.clear(); exclude_.clear(); scanning_ = false; scan_ = 0;
 }
 
 } // namespace eng

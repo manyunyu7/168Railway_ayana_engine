@@ -42,6 +42,14 @@ public:
   // Sets the origin / station target / corridor width from the save (before buildStatic; also usable
   // before the terrain data exists, e.g. to know which tiles to fetch).
   void setWorld(const Json& world);
+  // Native terrain source: `<dir>/<map>/index.json` + per-tile files when present with a desktop
+  // target (tools/fetch_tiles --target desktop), else the monolithic `<dir>/<map>.dem/.sat`. The DEM is read
+  // eagerly; satellite tiles are read on request while streaming.
+  bool loadTerrain(const std::string& terrainDir, const std::string& mapSlug, std::string& error);
+  // Streaming step (every frame): terrain tiles + tree scatter follow `centre` (camera focus, scene space).
+  void updateStreaming(vec3 centre, float dt);
+  // Unthrottled fill around `centre` (native start: everything in the radii is built on return).
+  void primeStreaming(vec3 centre);
   // Static part. `world` = the save's "world" object, `mapSlug` = save name (city bake, terrain files).
   // The terrain must already hold its data (Terrain::load or the streamed tiles + finishTiles()).
   // fontPath / cityPath: "" skips the boards' text atlas / the city.
@@ -106,6 +114,7 @@ private:
   struct Placed { GpuModel* model; mat4 xf; AABB bounds; };
   std::vector<Placed> scenery_;
   Vegetation trees_;
+  std::string tileDir_;   // per-tile terrain source ("" = monolithic / streamed by the host)
   WorldSceneStats stats_;
   bool built_ = false, decor_ = false;
 };

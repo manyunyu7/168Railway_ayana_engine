@@ -102,7 +102,7 @@ for a host that owns the simulation and the UI. The `ayana` CMake target (Emscri
 
 ```bash
 cmake --preset wasm && cmake --build --preset wasm --target ayana   # build/wasm/ayana.js/.wasm/.data (font)
-build/mac-release/fetch_tiles mojokerto --target web                # per-tile terrain (assets/terrain/<map>/, index.json)
+build/mac-release/fetch_tiles mojokerto                             # per-tile terrain (assets/terrain/<map>/ + index.json; the web only uses the index)
 web/build-models.sh --all mojokerto bks                             # geometry-only .emod per catalog slot the maps need
 web/deploy-to-ppka.sh mojokerto bks                                 # -> ../ppka-wannabe-2/public/ayana + src/tiga-ayana/simState.ts
 ```
@@ -145,8 +145,10 @@ Basis Universal KTX2 twins the reference project ships (`public/model3d/ktx2/<be
 transcoded with the BinomialLLC transcoder in `tools/third_party/basisu`), otherwise the GLB's PNG encoded by
 `tools/texcomp` (own ETC1/EAC encoder, stb_dxt). `--fallback PX` adds an RGBA8 copy per texture for GPUs without
 the format (`--fallback 0` drops it). The runtime uploads the first variant `rhi::supports()` and never decodes
-anything. CC203 went from 22.3 MB (raw RGBA) to 4.8 MB desktop. `fetch_tiles --target web` also writes
-per-tile files (`assets/terrain/<map>/{dem,sat/<layer>}/<z>_<x>_<y>.bin` + `index.json`) for a streaming client.
+anything. CC203 went from 22.3 MB (raw RGBA) to 4.8 MB desktop. `fetch_tiles` also writes per-tile files
+(`assets/terrain/<map>/{dem,sat/<layer>}/<z>_<x>_<y>.bin` + `index.json`) that the native app streams by camera
+distance (`Terrain::update`, spec `ubinStream.ts` radii); the web client only takes the index and fetches
+DEM/satellite tiles straight from the tile servers, decoded by the browser (`src/tiga-ayana/ubinAyana.ts`).
 
 ## Tests
 
