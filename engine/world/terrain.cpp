@@ -398,6 +398,23 @@ void Terrain::setBrushDeltas(const Json& tanah) {
   }
 }
 
+std::vector<std::pair<double, double>> Terrain::applyBrushDeltas(const Json& tanah) {
+  std::unordered_map<int64_t, float> old = std::move(delta_);
+  setBrushDeltas(tanah);
+  std::vector<std::pair<double, double>> changed;
+  auto differs = [&](int64_t k, float v) { auto it = old.find(k); return it == old.end() ? v != 0 : std::fabs(it->second - v) > 1e-5f; };
+  for (const auto& [k, v] : delta_) if (differs(k, v)) changed.emplace_back((double)(int32_t)(k >> 32) * DELTA_GRID, (double)(int32_t)(k & 0xffffffff) * DELTA_GRID);
+  for (const auto& [k, v] : old) if (!delta_.count(k) && v != 0) changed.emplace_back((double)(int32_t)(k >> 32) * DELTA_GRID, (double)(int32_t)(k & 0xffffffff) * DELTA_GRID);
+  if (changed.empty() || sat_.layers.empty()) return changed;
+  const SatLayer& nearL = sat_.layers[0];
+  for (NearTile& t : near_) {
+    if (!t.built || t.dirty) continue;
+    for (const auto& [wx, wy] : changed)
+      if (nearL.edgeDistance(t.tx, t.ty, wx, wy) <= DELTA_GRID * 2) { t.dirty = true; t.dirtyAge = 1e9f; markFarDirty(t.tx, t.ty); break; }
+  }
+  return changed;
+}
+
 // Bilinear brush delta on the 8 m grid (medan3d.ts deltaDi).
 float Terrain::brushDelta(double wx, double wy) const {
   if (delta_.empty()) return 0;

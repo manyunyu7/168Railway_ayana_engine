@@ -20,6 +20,9 @@ engine_test(test_terrain)
 engine_test(test_walk)
 engine_test(test_bridge)
 set_tests_properties(test_bridge PROPERTIES LABELS "node")
+# Editing ABI through the real C entry points (engine/api compiled natively here; a hidden GLFW window for GL,
+# skipped without a display).
+engine_test(test_edit ../engine/api/engine_api.cpp ../engine/api/engine_api_hud.cpp ../engine/api/engine_api_edit.cpp)
 
 # Golden image (needs a window/GPU): runs the viewer with ENG_CAPTURE and compares.
 engine_test(test_golden)

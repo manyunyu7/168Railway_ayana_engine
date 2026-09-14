@@ -166,6 +166,9 @@ public:
   // Brush deltas `world.tanah` ({kisi, delta:{"gx,gz": m}}), bilinear on the 8 m grid, added to the DEM
   // before carving (§4.1). Accepts a missing/null object. Call before build().
   void setBrushDeltas(const Json& tanah);
+  // Live brush edit: replaces the delta map and re-cuts only the built tiles whose cells changed (the far
+  // tiles under them too). Returns the world positions of the changed grid nodes (empty = nothing changed).
+  std::vector<std::pair<double, double>> applyBrushDeltas(const Json& tanah);
   float brushDelta(double wx, double wy) const;
   void build();      // backdrop + streaming state (needs a GL context); tiles then come through update()/prime()
   // Streaming step: `centre` = camera focus in scene space, dt = real seconds. Issues requests (throttled),

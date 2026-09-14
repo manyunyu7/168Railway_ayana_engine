@@ -136,6 +136,43 @@ const char* eng_signal_screen(void);    // JSON [{id,name,type,x,y,visible,aspec
 const char* eng_station_screen(void);   // JSON [{id,code,name,x,y,visible,dist}] station scenery, anchor 55 m
                                         // (TINGGI_PAPAN) above the carved ground; off-camera stations are omitted
 
+// ---- editing (engine_api_edit.cpp; docs/SURVEYOR.md) — the surveyor tools of the host (Tata objek, Gambar garis,
+// Kuas tanah, Editor rel, Objek rel, Ukur) keep their DOM / keyboard / save logic in TypeScript and call these for
+// what needed three.js: raycasts, live re-placement, partial rebuilds and overlays. Coordinates: x/y css px,
+// wx/wy world (Mercator metres, y south-positive), heights in scene metres (rail head at ~0 near the origin).
+// Every call answers "" / 0 before eng_ready().
+// Picking:
+const char* eng_pick_ground(float x, float y);      // "wx,wy,h" carved ground under the pixel (heightfield march), "" = sky
+float eng_ground(double wx, double wy);             // carved ground height (scene m) at a world point (tanahTerukir)
+// "hiasan:<index>" (world.hiasan.objek index; triangle-precise, then a 16 px screen tolerance for thin targets like
+// uji3dTata.ts objDiLayar) | "garis:<index>" (hiasan.garis polyline within 16 px) | "signal:<id>" | "point:<id>"
+// | "node:<id>" (track node within 14 px, editorRel3d.ts nodeDiLayar) | "segment:<id>:<s>" (rail centreline within
+// 12 px, s in metres) | "". Earlier kinds win.
+const char* eng_pick_object(float x, float y);
+const char* eng_pick_track(float x, float y, float maxPx);   // "segId,s,side" nearest centreline within maxPx (side +1 = cursor left of the tangent), ""
+// Live edits (no full rebuild; the world save object inside the engine is updated too, so a later eng_track_edit /
+// reload sees the same data; the host mirrors every edit into its own World):
+int eng_hiasan_set(int index, double wx, double wy, float naik, float rotDeg, float skala);   // re-places one model
+int eng_hiasan_add(const char* json);       // {"model","x","y","naik","rot","skala",...} -> new index (-1 = bad json); a model
+                                            // not resident yet is requested and shows when it lands
+int eng_hiasan_remove(int index);
+const char* eng_hiasan_info(int index);     // JSON {model,x,y,naik,rot,skala,resident,size:[x,y,z]} (size = normalised model), "" = bad index
+const char* eng_model_size(const char* id); // "x,y,z" normalised size of a RESIDENT catalog model (palette cards; never requests one), "" otherwise
+int eng_garis_set(const char* json);        // {"index":i, kelas, naik, titik:[{x,y}], kunci} replaces (i < 0 appends); {"index":i,"remove":true}
+int eng_node_height(const char* nodeId, double h, int hasHeight);   // hand-written `tinggi` (raw DEM m); hasHeight 0 = follow the DEM. Takes effect at eng_rails_rebuild
+double eng_rails_rebuild(void);             // profile + rails + terrain chords + signals / points / boards / JPL re-placed; returns ms (< 1 s on Mojokerto)
+int eng_terrain_delta(const char* json);    // the whole world.tanah ({kisi:8, delta:{"gx,gz":m}}) or "null" -> only the tiles whose cells changed are re-cut; hiasan / garis re-placed
+int eng_track_edit(const char* worldJson);  // full graph rebuild for the rail editor (new save "world" object; terrain data kept; decor rebuilt from resident models)
+// Overlays (drawn after the world; gizmo / ukur depth-test-off like the compass):
+void eng_highlight(const char* id, int mode);   // "hiasan:<i>" | "garis:<i>"; mode 0 off, 1 selected (blue box), 2 locked (amber)
+// kind "rotate" (ring + needle + knob: uji3dTata cincin), "move" (ring + 4 arrows), "" hides. wx/wy world, h scene height
+// of the ring plane, yaw radians (three convention), scale = ring radius m, axisHover 0 none 1 ring 2 knob 3..6 arrows.
+void eng_gizmo(const char* kind, double wx, double wy, float h, float yaw, float scale, int axisHover);
+int eng_gizmo_hit(float x, float y);            // 0 none, 1 ring (thick 0.7..1.3 hit band), 2 knob
+float eng_gizmo_angle(float x, float y);        // cursor angle in the ring plane (rad, three convention), 1e9 = miss
+int eng_ghost(const char* modelId, double wx, double wy, float rotDeg, float skala);   // translucent blue model at the cursor (uji3dTata hantu); "" hides
+int eng_ukur_line(const char* json);            // [{x,y},...] world polyline drawn 0.4 m over the ground; "[]" / "" clears. Labels: the host projects the points (eng_project)
+
 #ifdef __cplusplus
 }
 #endif

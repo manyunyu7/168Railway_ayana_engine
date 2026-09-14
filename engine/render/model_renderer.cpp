@@ -149,7 +149,7 @@ void ModelRenderer::submit(DrawItem d) {
   } else drawItem(d);
 }
 
-void ModelRenderer::draw(const GpuModel& model, const mat4& transform, const Frustum* frustum, const std::vector<mat4>* worldOverride) {
+void ModelRenderer::draw(const GpuModel& model, const mat4& transform, const Frustum* frustum, const std::vector<mat4>* worldOverride, const Material* materialOverride) {
   static const Material DEFAULT;
   const std::vector<mat4>& world = worldOverride && worldOverride->size() == model.world.size() ? *worldOverride : model.world;
   for (size_t n = 0; n < model.nodes.size(); ++n) {
@@ -157,8 +157,8 @@ void ModelRenderer::draw(const GpuModel& model, const mat4& transform, const Fru
     mat4 w = transform * world[n];
     for (const GpuPrimitive& p : model.meshes[(size_t)mi].primitives) {
       if (frustum && !frustum->contains(p.bounds.transformed(w))) { ++culled; continue; }
-      const Material& mt = p.material >= 0 ? model.materials[(size_t)p.material] : DEFAULT;
-      submit({&p.mesh, &mt, &model.textures, {}, w, 0});
+      const Material& mt = materialOverride ? *materialOverride : p.material >= 0 ? model.materials[(size_t)p.material] : DEFAULT;
+      submit({&p.mesh, &mt, materialOverride ? nullptr : &model.textures, {}, w, 0});
     }
   }
 }

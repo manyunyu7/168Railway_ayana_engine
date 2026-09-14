@@ -2,6 +2,7 @@
 // thread), so no locking. Native builds compile this too (the GL context then has to exist already), which
 // keeps the ABI honest and lets it be unit-tested without a browser.
 #include "engine/api/engine_api.h"
+#include "engine/api/engine_api_edit.h"
 #include "engine/api/engine_api_hud.h"
 #include "engine/app/camera_rig.h"
 #include "engine/app/compass.h"
@@ -203,6 +204,15 @@ bool eng_hud_view(EngHudView& v) {
   return true;
 }
 
+// Editing bridge (engine_api_edit.cpp): the scene + the save object, edited in place.
+bool eng_edit_ctx(EngEditCtx& c) {
+  if (!g) return false;
+  c.scene = &g->scene; c.world = &g->world; c.summary = &g->summary; c.map = g->map;
+  c.viewProj = g->viewProj; c.viewValid = g->viewValid; c.eye = g->ready ? camEye() : vec3{};
+  c.w = g->w; c.h = g->h; c.dpr = g->dpr; c.ready = g->ready;
+  return true;
+}
+
 // JSON string escaping (SimProcess::escape is native-only).
 static std::string SimProcessEscapeShim(const std::string& s) {
   std::string o; o.reserve(s.size() + 2);
@@ -399,6 +409,7 @@ KEEP void eng_frame(float dt) {
   g->scene.layers.awan = awan;
   if (!g->hoverId.empty() && g->scene.objectPos(g->hoverId, g->hoverSignal, g->hoverPos)) g->scene.drawHoverRing(g->hoverPos, eye);
   { Frustum frustum(g->viewProj); g->scene.trains().draw(g->scene.renderer(), &frustum); }
+  g->scene.drawOverlays(eye, camFovY());   // editor: selection box, ghost, ukur, gizmo
   if (g->rig.mode == CamMode::Bebas) g->compass.draw(g->scene.renderer(), g->orbit);
   g->scene.renderer().flushTransparent();
   if (g->frame == 0) rhi::checkErrors("first frame");

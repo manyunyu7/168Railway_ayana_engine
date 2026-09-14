@@ -85,7 +85,7 @@ public:
   // Walk-mode collision (CameraRig WalkInput): the scenery triangles (hiasan station models: walls, floors,
   // ceilings, `peron`-named materials flagged as platforms; garis platforms/roads/decks: floors) built with the
   // decor, and the train vehicles as boxes (walls, collected per step since they move).
-  const WalkCollider& walkCollider() const { return walk_; }
+  const WalkCollider& walkCollider() const { if (walkDirty_) buildWalkCollider(); return walk_; }
   void collectWalkBoxes(std::vector<WalkBox>& out) const;
   float groundHeight(double wx, double wy) const { return terrain_.groundHeight(wx, wy); }
   float groundScene(float x, float z) const { return terrain_.groundHeight(x + origin_.ox, z + origin_.oz); }
@@ -128,6 +128,65 @@ public:
   // Debug helper (ENG_TEST_GARIS): a synthetic platform + fence + wall along the station track.
   static void injectTestGaris(Json& hiasan, const Json& summary, vec3& stationScene, const WorldOrigin& origin, Log log);
 
+  // ---- editing (engine/app/world_edit.cpp; the C ABI in engine/api/engine_api_edit.cpp, docs/SURVEYOR.md) ----
+  // Everything edits the save `world` object in place (the host serialises it back into its own World) and
+  // re-places only what changed; a full buildStatic/buildDecor is the track editor's job (trackEdit).
+  // Ray against the carved heightfield (march + bisect, Compass::groundHit); hit in scene space.
+  bool rayGround(const Ray& ray, vec3& hit) const;
+  // Nearest placed hiasan under the pixel: triangle-precise against the model's collision copy (AABB when a
+  // model kept none), then the screen-space tolerance of uji3dTata.ts objDiLayar (TOL_PILIH 16 px for thin
+  // / small targets only). Returns the index into world.hiasan.objek, -1 = none. px/py framebuffer pixels.
+  int pickHiasan(const Ray& ray, float px, float py, int w, int h, const mat4& viewProj, vec3 eye) const;
+  // Nearest rail centreline point within maxPx of the pixel: segment index, s (m) and side (+1 = the cursor is
+  // left of the tangent, -1 right). False when nothing is that close.
+  bool pickTrack(float px, float py, int w, int h, const mat4& viewProj, float maxPx, int& seg, double& s, int& side) const;
+  // Nearest hiasan.garis polyline within maxPx (segments of the spline projected): index, -1 = none.
+  int pickGaris(const Json& world, float px, float py, int w, int h, const mat4& viewProj, float maxPx) const;
+  // Screen box (css-independent: framebuffer px) of the placed hiasan `objIndex`; false when behind the camera.
+  bool hiasanScreenBox(int objIndex, const mat4& viewProj, int w, int h, float box[4]) const;
+  // Transform of one hiasan entry (yaw degrees like the save); the model is looked up in the catalog.
+  bool hiasanPlace(int objIndex, const Json& o);
+  // Live edits: replace / add / remove one hiasan entry in `world` and re-place its model; the walk collider
+  // and the meja scan are rebuilt lazily (next walkCollider() / draw). Return false when the index is bad.
+  bool hiasanSet(Json& world, int objIndex, double wx, double wy, float naik, float rotDeg, float skala);
+  int hiasanAdd(Json& world, const Json& obj);          // returns the new index
+  bool hiasanRemove(Json& world, int objIndex);
+  void hiasanRefresh(const Json& world);                  // every entry re-placed (the ground under them changed)
+  // One hiasan.garis entry: {"index": i, ...entry} replaces (i = -1 / >= size appends), {"index": i, "remove": true}
+  // deletes; the garis visuals are rebuilt (one build of every class - cheap next to the rails).
+  bool garisSet(Json& world, const Json& patch);
+  // Hand-written node height (raw DEM metres, `tinggi`): has = false clears it. Nothing is rebuilt until
+  // railsRebuild().
+  bool nodeHeight(Json& world, const std::string& nodeId, double h, bool has);
+  // Profile + rails + terrain chords + signals / points / boards / JPL / routes from the current graph and node
+  // heights; the trains and decor stay. Returns the elapsed milliseconds.
+  double railsRebuild(const Json& world, const std::string& fontPath);
+  // Brush deltas: `tanah` = the whole world.tanah object ({kisi, delta:{"gx,gz": m}}); stored in `world`, the
+  // terrain re-carves only the tiles whose cells changed, hiasan / garis / boards on them are re-placed.
+  bool terrainDelta(Json& world, const Json& tanah);
+  // Full graph rebuild for the rail editor (and the host's trackside / scenery edits): a new save object ->
+  // graph, then railsRebuild() and the hiasan / garis re-placed from it. The terrain (DEM, imagery, tiles:
+  // re-cut lazily), city, clouds and trees stay; the scene origin is kept.
+  bool trackEdit(const Json& world, const std::string& mapSlug, const std::string& fontPath, const Json* summary);
+
+  // Overlays (drawn after the world, depth-test-off like the compass): selection box, gizmo, ghost, ukur.
+  enum class HighlightMode { Off, Selected, Locked };
+  void setHighlight(const std::string& kind, int index, HighlightMode mode);   // kind "hiasan" | "garis" | ""
+  // Gizmo at a scene point: `kind` "rotate" (ring + needle + knob), "move" (ring + 4 arrows), "" hides;
+  // axisHover 1 = ring, 2 = knob highlighted. `scale` = ring radius in metres.
+  void setGizmo(const std::string& kind, vec3 pos, float yaw, float scale, int axisHover);
+  // Which gizmo part is under the pixel: 0 none, 1 ring, 2 knob (thick hit ring 0.7..1.3 like uji3dTata).
+  int gizmoHit(const Ray& ray) const;
+  // Cursor angle in the gizmo plane (three convention: rotation.y = theta maps +X to (cos, -sin)); false = miss.
+  bool gizmoAngle(const Ray& ray, float& angle) const;
+  // Ghost of a catalog model at the cursor (translucent blue, uji3dTata jadikanHantu); id "" hides.
+  void setGhost(const std::string& modelId, double wx, double wy, float rotDeg, float skala);
+  // Measurement polyline (ukur.ts): [{x, y}] world points, drawn 0.4 m over the ground; empty clears.
+  void setUkur(const std::vector<std::pair<double, double>>& pts);
+  void drawOverlays(vec3 eye, float fovY);
+  void destroyOverlays();
+  int hiasanCount() const { return (int)scenery_.size(); }
+
 private:
   WorldOrigin origin_; vec3 stationScene_; float worldW_ = 8000;
   ModelRenderer renderer_; Sky sky_; Lighting light_;
@@ -135,10 +194,23 @@ private:
   SignalVisuals signals_; PointVisuals points_; RouteVisuals routes_;
   TracksideBoards boards_; JplVisuals jpl_; CityVisuals city_; GarisVisuals garis_; CloudVisual clouds_;
   AssetCatalog catalog_; RollingStock stock_; TrainVisuals trains_;
-  struct Placed { GpuModel* model; mat4 xf; AABB bounds; };
+  struct Placed { GpuModel* model; mat4 xf; AABB bounds; int objIndex = -1; };   // objIndex: world.hiasan.objek[]
   std::vector<Placed> scenery_;
-  WalkCollider walk_;
-  void buildWalkCollider();
+  mutable WalkCollider walk_;
+  mutable bool walkDirty_ = false;   // hiasan / garis edited: rebuilt on the next walkCollider()
+  void buildWalkCollider() const;
+  void scanMeja(const Json& world);
+  // overlays
+  struct Overlay {
+    std::string hlKind; int hlIndex = -1; HighlightMode hlMode = HighlightMode::Off;
+    std::string gizmoKind; vec3 gizmoPos; float gizmoYaw = 0, gizmoScale = 1; int gizmoHover = 0;
+    std::string ghostId; vec3 ghostPos; float ghostYaw = 0, ghostScale = 1;
+    std::vector<vec3> ukur;
+    rhi::Mesh ring, thickRing, needle, knob, arrow, bar, unitBox; bool built = false;
+    rhi::Mesh ukurMesh; Material hlMat, gizmoMat, gizmoHotMat, needleMat, ghostMat, ukurMat;
+  } ov_;
+  void buildOverlayMeshes();
+  const Json* worldForEdit_ = nullptr;   // the save object given to the last buildDecor / edit (garis / ukur lookups)
   Vegetation trees_;
   MejaBoard meja_; SimState state_;
   std::string tileDir_;   // per-tile terrain source ("" = monolithic / streamed by the host)

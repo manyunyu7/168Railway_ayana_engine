@@ -118,16 +118,8 @@ bool WorldScene::buildStatic(const Json& world, const std::string& mapSlug, cons
 void WorldScene::buildDecor(const Json& world, bool testGaris, const Json* summary) {
   auto t0 = std::chrono::steady_clock::now();
   scenery_.clear();
-  for (const Json& o : world["hiasan"]["objek"].arr) {
-    GpuModel* m = catalog_.model(o["model"].stringOr(""));
-    if (!m) continue;   // missing / not streamed yet
-    double wx = o["x"].numberOr(0), wy = o["y"].numberOr(0);
-    vec3 p = origin_.toScene(wx, wy, terrain_.groundHeight(wx, wy) + (float)o["naik"].numberOr(0));
-    float yaw = radians((float)o["rot"].numberOr(0)), sc = (float)o["skala"].numberOr(1);
-    mat4 norm = RollingStock::normalizeTransform(*m, true);
-    mat4 xf = mat4::translation(p) * mat4::rotationY(yaw) * mat4::scale({sc, sc, sc}) * norm;
-    scenery_.push_back({m, xf, m->bounds.transformed(xf)});
-  }
+  worldForEdit_ = &world;
+  { const Json& objs = world["hiasan"]["objek"]; for (size_t i = 0; i < objs.size(); ++i) hiasanPlace((int)i, objs[i]); }   // missing / not streamed yet = skipped
   auto ground = [this](double wx, double wy) { return terrain_.groundHeight(wx, wy); };
   {
     Json hiasan = world["hiasan"];
@@ -136,12 +128,7 @@ void WorldScene::buildDecor(const Json& world, bool testGaris, const Json* summa
     garis_.build(hiasan, catalog_, origin_, ground);
   }
   buildWalkCollider();
-  {   // in-world meja boards inside the placed station models
-    std::vector<MejaBoard::Placed> placed; std::vector<MejaBoard::Station> stations;
-    for (const Placed& p : scenery_) placed.push_back({p.model, p.xf});
-    for (const Json& s : world["scenery"].arr) if (s["kind"].stringOr("") == "station") stations.push_back({s["code"].stringOr(""), s["pos"]["x"].numberOr(0), s["pos"]["y"].numberOr(0)});
-    meja_.scan(placed, stations, origin_);
-  }
+  scanMeja(world);
   std::vector<AABB> footprints;
   for (const Placed& p : scenery_) footprints.push_back(p.bounds);
   trees_.build(terrain_, catalog_, footprints);
@@ -205,7 +192,8 @@ void WorldScene::draw(const mat4& viewProj, const mat4& view, vec3 eye, float fo
 void WorldScene::destroy() {
   trains_.shutdown(); trees_.destroy(); garis_.destroy(); clouds_.destroy(); boards_.destroy(); jpl_.destroy(); city_.destroy();
   meja_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy(); routes_.destroy();
-  scenery_.clear(); walk_.clear();
+  scenery_.clear(); walk_.clear(); walkDirty_ = false;
+  destroyOverlays();
   renderer_.shutdown(); sky_.shutdown();
   built_ = decor_ = false;
 }
@@ -214,7 +202,16 @@ void WorldScene::destroy() {
 // primitive whose material is named after a platform — "peron", "platform" — is flagged so its 1 m edge is a
 // kerb), and the garis tiles as floors only (uji3dSpline.ts rabaKelas: peron/jalan/jembatan/tanggul/sawah/rel;
 // spline fences stay passable by design). Vehicles are not here (boxes, per step).
-void WorldScene::buildWalkCollider() {
+// In-world meja boards inside the placed station models.
+void WorldScene::scanMeja(const Json& world) {
+  std::vector<MejaBoard::Placed> placed; std::vector<MejaBoard::Station> stations;
+  for (const Placed& p : scenery_) placed.push_back({p.model, p.xf});
+  for (const Json& s : world["scenery"].arr) if (s["kind"].stringOr("") == "station") stations.push_back({s["code"].stringOr(""), s["pos"]["x"].numberOr(0), s["pos"]["y"].numberOr(0)});
+  meja_.scan(placed, stations, origin_);
+}
+
+void WorldScene::buildWalkCollider() const {
+  walkDirty_ = false;
   walk_.clear();
   auto peronName = [](std::string n) {
     for (char& c : n) c = (char)std::tolower((unsigned char)c);

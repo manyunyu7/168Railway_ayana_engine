@@ -143,26 +143,28 @@ web-specific:
 | Models without a prebuilt `.emod` (`web/build-models.sh` not run for the map's fleet) | three loads the GLB from `asetUrl()` | present (`eng_model_begin_glb`: the plain GLB from `asetUrl('model3d/<berkas>')` parsed by the engine's `loadGlb`; textures still from the KTX2 twin, white placeholder without one; Draco GLBs in `ktx2/` are not parsable) | adapter `layaniModel` | — | `gombong-wns` opens without `public/ayana/models` (smoke `playtest/_cek-ayana-setelan.mjs`) |
 | Paused sim | JPL arms/cloud drift keep animating in the engine while the game is paused | present (`eng_set_paused`) | adapter always passes real `dt`; `session.paused` not forwarded | S | pass `dt = 0` when paused |
 
-## 5. Editor / surveyor tools — ➖ deliberately not ported
+## 5. Editor / surveyor tools — being ported (docs/SURVEYOR.md)
 
-Stay in the web client's three.js path (`ref src/ui/laciSurveyor.ts:43-45`: OBJEK/TANAH drawers are `butuh3D`). The adapter
-stubs warn once (`duniaAyana.ts:74-79`).
+Owner decision 2026-09-14: the tools move to the Ayana renderer on top of the editing ABI (`engine_api.h` "editing"
+block: picking, live hiasan / garis / node-height / brush edits, `eng_track_edit`, gizmo / highlight / ghost / ukur
+overlays). Phase 1 ported **Tata objek** (`tiga-ayana/tataAyana.ts`, pure logic shared through `tiga/tataInti.ts`);
+the rest is phase 2 (effort table in SURVEYOR.md §3). The OBJEK drawer opens on Ayana; its "Gambar garis" button is
+disabled until phase 2; the TANAH drawer body is still three-only.
 
 | Tool | ref | Adapter method | Status |
 |---|---|---|---|
-| Tata objek (hiasan placement: palette, ghost, rotate gizmo, snap-to-rail, lock, delete) | `uji3dTata.ts`, `dunia3d.ts:3410-3439` | `setAlatGame`, `lepasAlat3D`, `keluarHias`, `sentuhObjek`, `segarkanObjek3d` | ➖ |
-| Gambar garis (spline fences/walls/platforms/LAA; Enter/Backspace/I/X/Q/A/L, dblclick) | `uji3dSpline.ts`, `dunia3d.ts:3415-3448` | same | ➖ |
-| Kuas tanah (Naik/Turun/Rata/Halus, 8–200 m) → `world.tanah` | `dunia3d.ts:3422-3436,3816,3929` | `gantiSumberTanah`, `sentuhRel` | ➖ |
-| Kuas pohon (hapus/tanam → `world.vegMask`) | `dunia3d.ts:3905` | — | ➖ |
-| Editor rel 3D (node drag, Alt height, chain draw, B/I/X/T) | `editorRel3d.ts` | `tandaiRelKotor` (present: rebuild on next open), `infoTinggiNode`, `sentuhRel` | ➖ |
-| Objek rel / scenery markers (place, drag, delete; selection → `pilih3D`) | `uji3dObjekRel.ts` | `pilih3D` not forwarded | ➖ |
-| Surveyor overlays (node handles, ghost track, brush ring, object name labels) | `editorRel3d.ts`, `dunia3d.ts:1319-1326,4035-4054` | — | ➖ |
-| Sky time forced to noon in Surveyor | `dunia3d.ts:2410-2420` | — | ➖ |
+| Tata objek (hiasan placement: palette, ghost, rotate gizmo, snap-to-rail, lock, delete) | `uji3dTata.ts`, `dunia3d.ts:3410-3439` | `setAlatGame`, `lepasAlat3D`, `keluarHias`, `sentuhObjek`, `segarkanObjek3d` | ✅ (no card thumbnails, papan-nama text not drawn) |
+| Gambar garis (spline fences/walls/platforms/LAA; Enter/Backspace/I/X/Q/A/L, dblclick) | `uji3dSpline.ts`, `dunia3d.ts:3415-3448` | same | ➖ phase 2 (`eng_garis_set`, `eng_pick_object("garis:")` ready) |
+| Kuas tanah (Naik/Turun/Rata/Halus, 8–200 m) → `world.tanah` | `dunia3d.ts:3422-3436,3816,3929` | `gantiSumberTanah`, `sentuhRel` | ➖ phase 2 (`eng_terrain_delta` ready) |
+| Kuas pohon (hapus/tanam → `world.vegMask`) | `dunia3d.ts:3905` | — | ➖ phase 2 (needs `eng_veg_mask`) |
+| Editor rel 3D (node drag, Alt height, chain draw, B/I/X/T) | `editorRel3d.ts` | `tandaiRelKotor` (in-place `eng_track_edit` while open), `infoTinggiNode` (stub), `sentuhRel` (→ `eng_track_edit`) | ➖ phase 2 (`eng_node_height` + `eng_rails_rebuild`, `node:` / `segment:` picks ready) |
+| Objek rel / scenery markers (place, drag, delete; selection → `pilih3D`) | `uji3dObjekRel.ts` | `pilih3D` not forwarded | ➖ phase 2 (needs `eng_markers`) |
+| Surveyor overlays (node handles, ghost track, brush ring, object name labels) | `editorRel3d.ts`, `dunia3d.ts:1319-1326,4035-4054` | — | partial (gizmo / highlight / ukur overlays exist; per-node handles need `eng_markers`) |
+| Sky time forced to noon in Surveyor | `dunia3d.ts:2410-2420` | — | ✅ (`eng_set_sky_time`) |
 
-Note: edits made in 2D while the Ayana view is closed are picked up only through `tandaiRelKotor()` (full reload on
-the next `tampil(true)`); `sentuhObjek()` / `segarkanObjek3d()` are stubs, so a signal/board property edited in the 2D
-props panel while 3D is open is not redrawn until the view is reopened (S: call `eng_load_world` again, or add
-`eng_reload_objects`).
+Note: a signal / board / rel property edited in the 2D props panel while 3D is open is now redrawn through a debounced
+`eng_track_edit` (the fresh save is sent; rails / signals / boards / JPL / hiasan rebuilt in place, terrain kept);
+edits made while the view is closed still reload on the next `tampil(true)` (`tandaiRelKotor`).
 
 ## 6. Events / callbacks the adapter does not forward
 

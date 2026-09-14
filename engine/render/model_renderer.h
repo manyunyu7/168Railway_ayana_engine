@@ -55,8 +55,9 @@ public:
   void beginFrame(const mat4& viewProj, vec3 eye, const Lighting& light);
   // frustum: optional per-primitive culling (world-space bounds computed on the fly).
   // worldOverride: per-node matrices replacing model.world (animated poses from computeWorld); same size.
+  // materialOverride: one material for every primitive, textures ignored (editor ghosts).
   void draw(const GpuModel& model, const mat4& transform = mat4::identity(), const Frustum* frustum = nullptr,
-            const std::vector<mat4>* worldOverride = nullptr);
+            const std::vector<mat4>* worldOverride = nullptr, const Material* materialOverride = nullptr);
   // Procedural geometry: one mesh, one material, optional single base-color texture.
   void drawMesh(const rhi::Mesh& mesh, const Material& mat, rhi::Texture baseTex, const mat4& transform);
   // Instanced: every primitive of the model must have had an instance buffer attached
