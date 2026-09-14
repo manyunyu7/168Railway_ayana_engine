@@ -45,9 +45,11 @@ inline void applySun(double clockSec, double lonDeg, double latDeg, Lighting& li
   light.sunColor = mixc(a.sunColor, b.sunColor) * (1.8f * sunI / 3.2f) * 1.6f;
   light.skyColor = mixc(a.hemiSky, b.hemiSky) * (2.0f * amb / 1.6f) * 0.55f;
   light.groundColor = mixc(a.hemiGround, b.hemiGround) * (2.0f * amb / 1.6f) * 0.55f;
-  light.fogColor = mixc(a.fog, b.fog);
+  // theme tint (TEMA.kabut): a fifth of the way towards the theme's fog colour — the clock stays in charge
+  vec3 fog = lerp(mixc(a.fog, b.fog), rgb(sky.darkTheme ? 0x121821u : 0xcadcedu), 0.2f);
+  light.fogColor = fog;
   sky.zenith = mixc(a.zenith, b.zenith); sky.horizon = mixc(a.horizon, b.horizon);
-  sky.ground = mixc(a.fog, b.fog) * 0.8f; sky.sunDir = dir; sky.cloudTint = mixc(a.cloud, b.cloud);
+  sky.ground = fog * 0.8f; sky.sunDir = dir; sky.cloudTint = mixc(a.cloud, b.cloud);
 }
 
 // Inverse Mercator (spec §2.1), world y is south-positive.

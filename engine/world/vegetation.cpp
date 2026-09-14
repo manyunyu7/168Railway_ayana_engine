@@ -59,11 +59,12 @@ void Vegetation::build(const Terrain& terrain, AssetCatalog& catalog, std::span<
 // Scatters one 192 m cell from the finest resident imagery (vegetasi.ts sebarSel); no imagery = no trees.
 void Vegetation::scatter(const Terrain& terrain, Cell& cell) {
   const WorldOrigin& org = terrain.origin();
-  const float spacing = SPACING_BASE / std::sqrt(DENSITY);
+  cell.trees.clear(); cell.bounds = {};
+  if (density <= 0) return;
+  const float spacing = SPACING_BASE / std::sqrt(density);
   const int perCell = std::max(1, (int)std::lround(CELL * CELL / (spacing * spacing)));
   const float meanV = terrain.sat().meanBrightness;
   const double x0 = cell.cx * (double)CELL, z0 = cell.cz * (double)CELL;
-  cell.trees.clear(); cell.bounds = {};
   for (int i = 0; i < perCell; ++i) {
     double x = x0 + acak(cell.cx, cell.cz, i * 3 + 1) * CELL, z = z0 + acak(cell.cx, cell.cz, i * 3 + 2) * CELL;
     double wx = x + org.ox, wy = z + org.oz;
@@ -88,6 +89,12 @@ void Vegetation::scatter(const Terrain& terrain, Cell& cell) {
     cell.trees.push_back(t);
   }
   if (!cell.trees.empty()) { cell.bounds.expand({(float)x0, cell.bounds.min.y, (float)z0}); cell.bounds.expand({(float)(x0 + CELL), cell.bounds.max.y, (float)(z0 + CELL)}); }
+}
+
+void Vegetation::setDensity(float k) {
+  density = std::max(0.f, k);
+  for (Cell& c : cells_) c.key = -2;   // every cell re-scattered on the next update() passes
+  scan_ = 0; scanning_ = true;
 }
 
 void Vegetation::update(const Terrain& terrain, int maxCells) {
@@ -122,7 +129,7 @@ void Vegetation::draw(ModelRenderer& r, vec3 eye, const Frustum* frustum) {
     if (c.trees.empty()) continue;
     float px = std::clamp(eye.x, c.bounds.min.x, c.bounds.max.x), pz = std::clamp(eye.z, c.bounds.min.z, c.bounds.max.z);
     float d = std::hypot(px - eye.x, pz - eye.z);
-    if (d > VIEW_RADIUS) continue;
+    if (d > viewRadius) continue;
     if (frustum && !frustum->contains(c.bounds)) continue;
     order.push_back({d, &c});
   }

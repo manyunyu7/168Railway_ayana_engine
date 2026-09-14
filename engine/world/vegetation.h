@@ -43,6 +43,11 @@ public:
   void draw(ModelRenderer& r, vec3 eye, const Frustum* frustum = nullptr);
   void destroy();
   Stats stats;
+  // Host knobs (dunia3d.ts laci KAMERA): draw radius per quality tier (TINGKAT_MUTU rVeg / JARAK_SENTUH), and
+  // the density multiplier (`Kerapatan pohon` 0..16, RAPAT_BAKU 2). setDensity() re-scatters every cell.
+  float viewRadius = vegetation::VIEW_RADIUS;
+  float density = vegetation::DENSITY;
+  void setDensity(float k);
 
 private:
   struct Tree { float x, y, z, scale, rot, rank; uint8_t model; };

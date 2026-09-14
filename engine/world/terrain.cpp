@@ -887,6 +887,25 @@ void Terrain::draw(ModelRenderer& r, const Frustum* frustum) {
   }
 }
 
+void Terrain::dropImagery() {
+  for (size_t li = 0; li < sat_.layers.size(); ++li) {
+    SatLayer& L = sat_.layers[li];
+    for (int j = 0; j < L.ny; ++j)
+      for (int i = 0; i < L.nx; ++i) {
+        size_t t = (size_t)j * L.nx + i;
+        if (L.state[t] == SatLayer::Resident) evict((int)li, L.tx0 + i, L.ty0 + j);
+        else if (L.state[t] == SatLayer::Failed) L.state[t] = SatLayer::Absent;
+      }
+  }
+  meanSum_ = 0; meanN_ = 0;
+  checkTimer_ = 0; firstCheck_ = true;
+}
+
+void Terrain::setGroundColors(vec3 backdrop, vec3 untextured) {
+  backdropMat_.baseColor = {backdrop.x, backdrop.y, backdrop.z, 1};
+  loadingMat_.baseColor = {untextured.x, untextured.y, untextured.z, 1};
+}
+
 void Terrain::destroy() {
   for (NearTile& t : near_) freeNear(t);
   for (FarTile& f : far_) { rhi::destroyMesh(f.mesh); f = {}; }

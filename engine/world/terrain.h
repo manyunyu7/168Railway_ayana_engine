@@ -200,6 +200,12 @@ public:
   // the imagery there changes (vegetation re-scatter key).
   int64_t imageryKeyAt(double wx, double wy) const;
   unsigned imageryVersion() const { return imageryVersion_; }   // bumped on every arrival / eviction
+  // Drops every resident / failed imagery tile so streaming asks for all of it again (the host switched its
+  // imagery source: dunia3dKonst.ts SUMBER_TANAH). Geometry stays; tiles paint the untextured colour meanwhile.
+  void dropImagery();
+  // Ground colours (dunia3dKonst.ts TEMA): `backdrop` = the plane under everything (hampar); `untextured` =
+  // tiles without imagery (WARNA_UBIN_MUAT 0x1a2027 while loading, or hampar in the plain "polos" mode).
+  void setGroundColors(vec3 backdrop, vec3 untextured);
   const Dem& dem() const { return dem_; }
   const SatImage& sat() const { return sat_; }
   const WorldOrigin& origin() const { return origin_; }
