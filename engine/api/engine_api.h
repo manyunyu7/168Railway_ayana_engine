@@ -40,14 +40,44 @@ int eng_terrain_tile_rgba(const char* dir, int z, int x, int y, int w, int h, co
 void eng_terrain_tile_fail(const char* dir, int z, int x, int y);
 int eng_city_json(const uint8_t* bytes, int len);
 int eng_set_state(const char* stepJson);
+// Schematic control table (bridge `panel` JSON, sim-state.ts panelLayoutJson): the in-world meja boards on the station
+// GLB `mejalayan` quads (engine/world/meja_board). Static per world; send once after eng_load_world. "" / "{}" clears.
+int eng_set_panel(const char* panelJson);
+// Corridor atlas (catalog `tekstur.rel1067`, pilot-rel-1067.jpg): RGBA8 rows bottom-up (three's flipY), clamp S / repeat T,
+// sRGB, mipmapped; replaces the procedural painter (same UV layout). Any time after eng_init.
+int eng_rail_atlas_rgba(int w, int h, const uint8_t* rgba);
 void eng_frame(float dt);
 int eng_ready(void);                 // 1 once the static world is built
 void eng_set_paused(int paused);     // game paused: JPL arms / cloud drift freeze (the camera still moves)
 // Visibility layers (dunia3dKonst.ts TAMPIL_BAKU): "pita" route/occupancy ribbons, "wesel" point arrows (hidden = not
-// pickable either), "pohon" trees, "awan" clouds, "kota" city. "label" / "papan" / "tepi" / "pelat" / "benang" are the
-// host's DOM overlays: accepted (returns 1) but nothing changes in the engine. Unknown name = 0. All on by default.
+// pickable either), "pohon" trees, "awan" clouds, "kota" city, "benang" iconic rail line forced at every distance (else
+// only when far). "label" / "papan" / "tepi" / "pelat" are the host's DOM overlays: accepted (returns 1) but nothing
+// changes in the engine. Unknown name = 0. All on by default (benang off).
 int eng_set_layer(const char* name, int on);
 const char* eng_stats(void);         // JSON: fps, drawCalls, buildMs, summary, pending assets, terrain {near, far, patches, resident, requested, pendingJobs, trees}
+
+// ---- quality / world look (dunia3d.ts laci KAMERA; the host persists the choices) ----
+// Quality tier (dunia3dKonst.ts TINGKAT_MUTU): 0 penuh .. 4 minimum -> tree draw radius 3200/2600/2000/1400/900 m and
+// clouds off from tier 2 (the dpr cap is the host's: eng_resize). Returns the tier in effect.
+int eng_set_quality(int tier);
+void eng_set_tree_radius(float metres);   // overrides the tier's radius (touch screens: JARAK_SENTUH rVeg)
+void eng_set_tree_density(float k);       // `Kerapatan pohon` 0..16 (RAPAT_BAKU 2): every cell re-scattered
+// Sky time: seconds since 00:00 to pin the sun (the `Siang tetap` choice = 12 h at 58 deg elevation is what the host
+// sends), < 0 = follow the sim clock again (eng_set_state).
+void eng_set_sky_time(double sec);
+void eng_set_theme(int dark);             // UI theme (TEMA): fog / dome-ground tint, backdrop plane colour
+// The host changed its ground imagery source (SUMBER_TANAH): every resident imagery tile is dropped and requested
+// again through onAssetRequest. `flat` = the plain "polos" mode: the host fails every request and the tiles are
+// painted in the theme's ground colour (hampar) instead of the loading colour.
+void eng_reset_imagery(int flat);
+
+// ---- compass / rig settings ----
+void eng_compass_settings(int rotation, float speed, int show);   // kompas3d.ts SetelanKompas (rotation vs panning, 0.5..2x, reticle)
+void eng_side_flip(void);                                         // `Pindah sisi`: mirror the samping camera
+// Per-mode framing parameter (dunia3d.ts profilKam `atur`): jalan fov 45..95, kabin fov 40..95, samping distance 8..160,
+// atas height 40..2000, ekor distance 10..200. The value is clamped; bebas has none (get returns 0, set is ignored).
+void eng_set_rig_param(float value);
+float eng_get_rig_param(void);
 
 // camera (modes as engine/app/camera_rig.h CamMode: 0 bebas 1 jalan 2 kabin 3 samping 4 atas 5 ekor)
 int eng_camera_mode(int mode);       // returns the mode in effect (a train mode without a train stays put)
@@ -61,7 +91,7 @@ void eng_compass_glide(float x, float y, int on);    // right button held: glide
 void eng_follow_train(const char* id);              // "" = nearest to the camera
 void eng_cycle_subject(int dir);
 void eng_telescope(int held);
-void eng_key(const char* code, int down);           // walk mode: KeyW/A/S/D, ShiftLeft, Arrow*
+void eng_key(const char* code, int down);           // walk mode: KeyW/A/S/D, ShiftLeft, Space (jump), Arrow*; kabin: Q/E/R
 void eng_pointer(float x, float y, int button, int phase);   // css px; phase 0 down 1 move 2 up; button 0 left 1 right
 const char* eng_camera_json(void);                   // {mode, eye:[x,y,z], look:[...], distance, yaw, pitch, fov, azimuth, subject}
                                                      // subject = followed train id ("" in bebas without an explicit follow)
@@ -78,6 +108,8 @@ const char* eng_train_screen(void);                  // JSON [{id,no,name,state,
 void* eng_alloc(int bytes);
 void eng_free(void* p);
 int eng_model_begin(const char* slot, const uint8_t* bytes, int len);   // geometry-only EMOD
+int eng_model_begin_glb(const char* slot, const uint8_t* bytes, int len);   // plain GLB (no Draco/meshopt) when no .emod was
+                                                                        // prebuilt: images dropped, textures stream as usual
 void eng_model_fail(const char* slot);
 int eng_supports(int format);        // eng::TexFormat: 0 RGBA8 1 ETC2_RGB 2 ETC2_RGBA 3 BC1 4 BC3 5 BC7
 int eng_image_count(const char* slot);

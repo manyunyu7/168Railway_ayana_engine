@@ -8,6 +8,7 @@
 #include "engine/app/world_scene.h"
 #include "engine/core/orbit_camera.h"
 #include "engine/sim/sim_state.h"
+#include "engine/world/sun.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -41,12 +42,15 @@ struct Api {
   WorldScene scene;
   Json world, summary, catalogJson; std::string map;
   SimState state; double timeScale = 1; bool paused = false;
+  // look settings
+  int quality = 0; bool qualityClouds = true; double skyTime = -1; bool dark = false, flatGround = false;
   // camera
   OrbitCamera orbit; CameraRig rig; Compass compass; std::string subjectId;
   mat4 viewProj; bool viewValid = false;
   // input
   double mx = 0, my = 0, mxPrev = 0, myPrev = 0; bool left = false, right = false, ctrl = false;
-  bool keyW = false, keyA = false, keyS = false, keyD = false, keyQ = false, keyE = false, shift = false, up = false, down = false, kl = false, kr = false;
+  bool keyW = false, keyA = false, keyS = false, keyD = false, keyQ = false, keyE = false, shift = false, up = false, down = false, kl = false, kr = false, space = false;
+  PanelLayout panel;   // eng_set_panel: the in-world meja boards
   int compassClickFrames = 0; float compassX = 0, compassY = 0; bool compassGlide = false;
   // hover
   std::string hoverId; bool hoverSignal = false; vec3 hoverPos;
@@ -111,7 +115,10 @@ void updateCamera(float dt) {
     in.side = (g->keyD || g->kr ? 1.f : 0.f) - (g->keyA || g->kl ? 1.f : 0.f);
     in.up = (g->keyE ? 1.f : 0.f) - (g->keyQ ? 1.f : 0.f);
     in.run = g->shift;
+    in.jump = g->rig.mode == CamMode::Jalan && g->space;
   }
+  std::vector<WalkBox> boxes;
+  if (g->rig.mode == CamMode::Jalan) { g->scene.collectWalkBoxes(boxes); in.boxes = &boxes; }
   TrainPath tp; bool has = subjectPath(tp);
   if (has) { tp.timeScale = g->paused ? 0 : g->timeScale; }
   if (!g->rig.step(dt, has ? &tp : nullptr, ground, in)) eng_camera_mode(0);
@@ -263,6 +270,7 @@ KEEP int eng_load_world(const char* worldJson, const char* summaryJson, const ch
   g->map = mapSlug ? mapSlug : "";
   g->ready = g->decorDone = g->terrainDone = false; g->decorPending.clear(); g->tilesPending = 0;
   g->scene.setWorld(g->world);
+  g->panel = PanelLayout{}; g->scene.setPanelLayout(nullptr);
   if (!g->scene.catalog().loadFromText(catalogJson ? catalogJson : "{}", [](const std::string& id, const std::string&) { ++g->modelsPending; request("model", id); }))
     setError("catalog: " + g->scene.catalog().error());
   std::remove("/ayana-city.json");
@@ -328,6 +336,24 @@ KEEP int eng_city_json(const uint8_t* bytes, int len) {
   return 1;
 }
 
+KEEP int eng_set_panel(const char* panelJson) {
+  if (!g) return 0;
+  std::string err;
+  Json j = Json::parse(panelJson ? panelJson : "{}", &err);
+  if (!err.empty()) { std::fprintf(stderr, "[ayana] panel: %s\n", err.c_str()); return 0; }
+  g->panel = parsePanelLayout(j);
+  g->scene.setPanelLayout(g->panel.ok ? &g->panel : nullptr);
+  return g->panel.ok;
+}
+
+KEEP int eng_rail_atlas_rgba(int w, int h, const uint8_t* rgba) {
+  if (!g || !g->gl || w < 1 || h < 1 || !rgba) return 0;
+  rhi::Texture t = rhi::createTexture(w, h, rhi::Format::RGBA8, std::as_bytes(std::span(rgba, (size_t)w * h * 4)), true, true, rhi::Wrap::Clamp, rhi::Wrap::Repeat);
+  if (!t.id) return 0;
+  g->scene.rails().setAtlas(t);
+  return 1;
+}
+
 KEEP int eng_set_state(const char* stepJson) {
   if (!g) return 0;
   std::string err;
@@ -359,12 +385,17 @@ KEEP void eng_frame(float dt) {
     g->compass.update(g->orbit, cx, cy, w, h, rmb, g->ctrl, g->kl, g->kr, g->up, g->down, dt, g->viewProj.inverse());
   }
   updateCamera(dt);
+  // LOD context (profilKam acuan): iconic rail line, wesel scale, glow detail; kabin hides the ribbons
+  g->scene.refDistance = g->rig.acuan(g->orbit.distance);
+  g->scene.cabView = g->rig.mode == CamMode::Kabin;
   g->scene.updateStreaming(g->rig.mode != CamMode::Bebas ? g->rig.look() : g->orbit.target, dt);
   float aspect = (float)w / (float)h;
   mat4 view = camView(), proj = camProj(aspect);
   vec3 eye = camEye();
   g->viewProj = proj * view; g->viewValid = true;
-  g->scene.draw(g->viewProj, view, eye, camFovY(), h, g->state.clock, g->paused ? 0.f : dt, g->timeScale, g->rig.fogDensity(g->scene.worldWidth()), false);
+  bool awan = g->scene.layers.awan; g->scene.layers.awan = awan && g->qualityClouds;
+  g->scene.draw(g->viewProj, view, eye, camFovY(), h, g->skyTime >= 0 ? g->skyTime : g->state.clock, g->paused ? 0.f : dt, g->timeScale, g->rig.fogDensity(g->scene.worldWidth()), false);
+  g->scene.layers.awan = awan;
   if (!g->hoverId.empty() && g->scene.objectPos(g->hoverId, g->hoverSignal, g->hoverPos)) g->scene.drawHoverRing(g->hoverPos, eye);
   { Frustum frustum(g->viewProj); g->scene.trains().draw(g->scene.renderer(), &frustum); }
   if (g->rig.mode == CamMode::Bebas) g->compass.draw(g->scene.renderer(), g->orbit);
@@ -380,10 +411,35 @@ KEEP int eng_set_layer(const char* name, int on) {
   std::string n = name; bool v = on != 0; SceneLayers& L = g->scene.layers;
   if (n == "pita") L.pita = v; else if (n == "wesel") L.wesel = v; else if (n == "pohon") L.pohon = v;
   else if (n == "awan") L.awan = v; else if (n == "kota") L.kota = v;
-  else if (n == "label" || n == "papan" || n == "tepi" || n == "pelat" || n == "benang") return 1;   // DOM-side layers
+  else if (n == "benang") g->scene.benangAlways = v;   // iconic rail line forced at every distance
+  else if (n == "label" || n == "papan" || n == "tepi" || n == "pelat") return 1;   // DOM-side layers
   else return 0;
   if (!L.wesel && !g->hoverSignal && !g->hoverId.empty()) g->hoverId.clear();   // a hidden arrow keeps no hover ring
   return 1;
+}
+
+// ---- quality / look ----
+static void applyGroundColors() {
+  // TEMA.hampar (backdrop plane) per theme; untextured tiles: WARNA_UBIN_MUAT while loading, hampar in the plain mode
+  vec3 hampar = rgb(g->dark ? 0x151c24u : 0x9db089u);
+  g->scene.terrain().setGroundColors(hampar, g->flatGround ? hampar : rgb(0x1a2027u));
+}
+static const float kTreeRadius[] = {3200, 2600, 2000, 1400, 900};   // TINGKAT_MUTU rVeg
+KEEP int eng_set_quality(int tier) {
+  if (!g) return 0;
+  g->quality = std::clamp(tier, 0, 4);
+  g->scene.trees().viewRadius = kTreeRadius[g->quality];
+  g->qualityClouds = g->quality < 2;   // TINGKAT_MUTU awan
+  return g->quality;
+}
+KEEP void eng_set_tree_radius(float metres) { if (g && metres > 0) g->scene.trees().viewRadius = metres; }
+KEEP void eng_set_tree_density(float k) { if (g) g->scene.trees().setDensity(k); }
+KEEP void eng_set_sky_time(double sec) { if (g) g->skyTime = sec; }
+KEEP void eng_set_theme(int dark) { if (!g) return; g->dark = dark != 0; g->scene.sky().darkTheme = g->dark; applyGroundColors(); }
+KEEP void eng_reset_imagery(int flat) {
+  if (!g) return;
+  g->flatGround = flat != 0; applyGroundColors();
+  if (g->ready) g->scene.terrain().dropImagery();
 }
 
 KEEP const char* eng_stats(void) {
@@ -442,6 +498,24 @@ KEEP void eng_cycle_subject(int dir) {
   int i = -1; for (size_t k = 0; k < g->state.trains.size(); ++k) if (g->state.trains[k].id == cur) i = (int)k;
   g->subjectId = g->state.trains[(size_t)((i + dir + (int)g->state.trains.size()) % (int)g->state.trains.size())].id;
 }
+KEEP void eng_compass_settings(int rotation, float speed, int show) {
+  if (!g) return;
+  g->compass.settings.rotation = rotation != 0; g->compass.settings.speed = speed > 0 ? speed : 1; g->compass.settings.show = show != 0;
+}
+KEEP void eng_side_flip(void) { if (g) g->rig.sisiSamping = -g->rig.sisiSamping; }
+// profilKam().atur per mode: {min, max} and the rig field
+static float* rigParam(float& lo, float& hi) {
+  switch (g->rig.mode) {
+    case CamMode::Jalan: lo = 45; hi = 95; return &g->rig.fovJalan;
+    case CamMode::Kabin: lo = 40; hi = 95; return &g->rig.fovKabin;
+    case CamMode::Samping: lo = 8; hi = 160; return &g->rig.jarakSamping;
+    case CamMode::Atas: lo = 40; hi = 2000; return &g->rig.tinggiAtas;
+    case CamMode::Ekor: lo = 10; hi = 200; return &g->rig.jarakEkor;
+    default: return nullptr;
+  }
+}
+KEEP void eng_set_rig_param(float value) { if (!g) return; float lo, hi; if (float* p = rigParam(lo, hi)) *p = std::clamp(value, lo, hi); }
+KEEP float eng_get_rig_param(void) { if (!g) return 0; float lo, hi; float* p = rigParam(lo, hi); return p ? *p : 0.f; }
 KEEP void eng_telescope(int held) { if (g) g->rig.teropongTahan = held != 0; }
 KEEP void eng_key(const char* code, int down) {
   if (!g || !code) return;
@@ -452,6 +526,7 @@ KEEP void eng_key(const char* code, int down) {
   else if (c == "ShiftLeft" || c == "ShiftRight") g->shift = d;
   else if (c == "ArrowUp") g->up = d; else if (c == "ArrowDown") g->down = d; else if (c == "ArrowLeft") g->kl = d; else if (c == "ArrowRight") g->kr = d;
   else if (c == "ControlLeft" || c == "ControlRight" || c == "MetaLeft") g->ctrl = d;
+  else if (c == "Space") g->space = d;
 }
 KEEP void eng_pointer(float x, float y, int button, int phase) {
   if (!g) return;
@@ -540,6 +615,14 @@ KEEP int eng_model_begin(const char* slot, const uint8_t* bytes, int len) {
   std::string err;
   bool ok = g->scene.catalog().provide(slot, std::span<const uint8_t>(bytes, (size_t)std::max(0, len)), err);
   if (!ok) std::fprintf(stderr, "[ayana] model %s: %s\n", slot, err.c_str());
+  afterModel(slot);
+  return ok;
+}
+KEEP int eng_model_begin_glb(const char* slot, const uint8_t* bytes, int len) {
+  if (!g || !slot) return 0;
+  std::string err;
+  bool ok = g->scene.catalog().provideGlb(slot, std::span<const uint8_t>(bytes, (size_t)std::max(0, len)), err);
+  if (!ok) std::fprintf(stderr, "[ayana] model %s (glb): %s\n", slot, err.c_str());
   afterModel(slot);
   return ok;
 }
