@@ -228,8 +228,9 @@ void RailBuilder::paintTexture() {
 
 void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const HeightSource* ground, float demBase) {
   auto t0 = std::chrono::steady_clock::now();
+  rhi::Texture keep = texture; texture = {};   // an atlas set before build() (web: eng_rail_atlas_rgba) survives
   destroy();
-  paintTexture();
+  if (keep.id) texture = keep; else paintTexture();
   ballastMat = {}; ballastMat.name = "ballast"; ballastMat.metallic = 0; ballastMat.roughness = 1;
   railMat = {}; railMat.name = "rail"; railMat.metallic = 0.3f; railMat.roughness = 0.42f;
   concreteMat = {}; concreteMat.name = "concrete"; concreteMat.baseColor = {0x9a / 255.f, 0xa0 / 255.f, 0xa6 / 255.f, 1}; concreteMat.roughness = 0.92f; concreteMat.metallic = 0.02f;
