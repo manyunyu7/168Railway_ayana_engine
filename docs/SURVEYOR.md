@@ -98,6 +98,15 @@ gizmoHit, gizmoAngle, setGhost, setUkur, drawOverlays}`, `Placed::objIndex` (sce
 lazy `walkCollider()`, `Terrain::applyBrushDeltas`, `ModelRenderer::draw(..., materialOverride)`. Web exports:
 `engine/api/CMakeLists.txt` `AYANA_EXPORTS`.
 
+Markers (`engine_api_markers.cpp` → `engine/app/markers.*`; drawn after the world overlays, depth-test-off by default)
+- `eng_markers(json)` — replaces the whole batch: `[{id, kind: sphere|disc|cube|diamond|cone|polyline, x, y, naik, hm (0 ground /
+  1 rail head), h (absolute), color "#rrggbb", alpha, size (m), px (screen radius for point kinds), depth, yaw, label, pts:[{x,y,naik,hm,h}]}]`;
+  `"[]"` clears. `eng_markers_pick(x, y, maxPx) → id` (point kinds count their projected radius, lines measure to the projected
+  polyline, ties to the camera-nearest), `eng_markers_screen() → [{id, x, y, d, v}]` for the `label` markers (DOM name plates),
+  `eng_markers_count()`. The host side shares one batch between tools through `tiga-ayana/markerAyana.ts` (`KumpulanMarker`:
+  per-tool layers, ids prefixed `<layer>/`). Used by `garisAyana.ts` (handles / rings / end spheres / rubber band),
+  `objekRelAyana.ts` (diamond / cone / cube / stalk / foot ring / selection ring, names) and `ukurAyana.ts` (finished measurements).
+
 ## 3. Phase 2 — remaining tools and effort
 
 | Tool | Work | Effort |
