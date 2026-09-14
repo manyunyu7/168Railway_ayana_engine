@@ -1,4 +1,5 @@
 #include "engine/world/signal_visual.h"
+#include "engine/world/pixel_canvas.h"
 #include <chrono>
 #include <cmath>
 #include <regex>
@@ -109,10 +110,12 @@ void headPlate(MeshBuilder& b, float height, float yBase) {
   vec3 cen{0, yBase + height / 2, 0};
   for (int side = 0; side < 2; ++side) {
     float x = side ? PLATE_T / 2 : -PLATE_T / 2; vec3 nrm{side ? 1.f : -1.f, 0, 0};
-    uint32_t ci = b.vertex({x, cen.y, cen.z}, nrm, {0.5f, 0.5f});
+    // UV 0..1 across the face (u left->right seen from -X, v 0 at the top) for the plate texture
+    auto uv = [&](vec3 p) { return vec2{(p.z + w) / PLATE_W, 1 - (p.y - yBase) / height}; };
+    uint32_t ci = b.vertex({x, cen.y, cen.z}, nrm, uv(cen));
     for (size_t i = 0; i < n; ++i) {
       vec3 p0 = prof[i], p1 = prof[(i + 1) % n]; p0.x = p1.x = x;
-      uint32_t v0 = b.vertex(p0, nrm, {}), v1 = b.vertex(p1, nrm, {});
+      uint32_t v0 = b.vertex(p0, nrm, uv(p0)), v1 = b.vertex(p1, nrm, uv(p1));
       if (side) b.triangle(ci, v1, v0); else b.triangle(ci, v0, v1);
     }
   }
@@ -147,8 +150,7 @@ void octagonPrism(MeshBuilder& b, vec3 c, float w, float h, float depth) {
 
 // Everything black on a colour-light head: plate, board, cage, shunting unit, mast clamp, number plate.
 void headDark(MeshBuilder& d, int lamps, bool board, bool cage, bool shunting) {
-  float plateH = PLATE_H - (float)(3 - lamps) * LAMP_PITCH;
-  headPlate(d, plateH, PLATE_BOTTOM);
+  float plateH = PLATE_H - (float)(3 - lamps) * LAMP_PITCH;   // the plate itself is a textured mesh (headPlate)
   if (board) {
     float yb = PLATE_BOTTOM + plateH + BOARD_UP;
     diamond(d, {BOARD_BACK, yb, 0});
@@ -181,6 +183,116 @@ void headShell(MeshBuilder& s, int lamps) {
     cylinder(s, {x0 + LENS_FWD - HOOD_L / 2, y, 0}, RING_D / 2 + 0.013f, HOOD_L, 0, 10, false, 0, PI, true);
     cylinder(s, {x0 + LENS_FWD - HOOD_L, y, 0}, RING_D / 2 + 0.020f, 0.012f, 0, 10, false, 0, PI, true);
   }
+}
+
+// Quad facing -X centred at the origin, `w` across Z, `h` along Y, UV 0..1 (u left->right seen from -X, v 0 top).
+void faceQuad(MeshBuilder& b, float w, float h) {
+  vec3 n{-1, 0, 0};
+  uint32_t a = b.vertex({0, -h / 2, -w / 2}, n, {0, 1}), c = b.vertex({0, -h / 2, w / 2}, n, {1, 1});
+  uint32_t d = b.vertex({0, h / 2, w / 2}, n, {1, 0}), e = b.vertex({0, h / 2, -w / 2}, n, {0, 0});
+  b.triangle(a, c, d); b.triangle(a, d, e);
+}
+rhi::Texture upload(const PixelCanvas& c) { return rhi::createTexture(c.w, c.h, rhi::Format::RGBA8, std::as_bytes(std::span(c.px)), true, true, rhi::Wrap::Clamp, rhi::Wrap::Clamp); }
+
+// texPelatBuat: paint #20242a, platform grime rising from the bottom third, bolt rows (edges, eight around
+// every lens, five along the top arc). `ratio` = plate height / width.
+rhi::Texture makePlateTexture(float ratio, int lamps) {
+  const int W = 256, H = (int)std::lround(256 * ratio);
+  PixelCanvas c(W, H);
+  c.fill(HITAM);
+  c.gradientV((float)H, H * 0.6f, 0x0b0d10, 0.55f, 0);
+  const float m = W * 0.03f, rb = W * 0.016f;
+  auto bolt = [&](float x, float y) { c.circle(x, y, rb, 0x9ba4ae); };
+  for (float x : {m, W - m}) { bolt(x, H - m); bolt(x, H * 0.30f); }
+  for (int i = 0; i < lamps; ++i) {
+    float yL = H * (1 - (LAMP_FROM_BOTTOM + (float)i * LAMP_PITCH) / (PLATE_W * ratio));
+    float rB = W * ((RING_D / 2 + 0.008f) / PLATE_W);
+    for (int k = 0; k < 8; ++k) { float a = (float)k / 8 * 2 * PI + 0.39f; bolt(W / 2.f + std::cos(a) * rB, yL + std::sin(a) * rB); }
+  }
+  for (float a = 0.15f; a <= PI - 0.15f + 1e-4f; a += (PI - 0.3f) / 4) bolt(W / 2.f + std::cos(a) * (W / 2.f - m), H * 0.22f - std::sin(a) * (W / 2.f - m));
+  return upload(c);
+}
+
+// ANGKA (uji3dSinyal.ts): the digit as polylines in the panel's unit square; strips of lamps are laid across
+// the smoothed (Catmull-Rom) stroke every `gap` px (stripAngka).
+const std::vector<std::vector<vec2>>* angkaStrokes(char d) {
+  static const std::map<char, std::vector<std::vector<vec2>>> ANGKA = {
+    {'3', {{{0.16f, 0.13f}, {0.62f, 0.11f}, {0.84f, 0.24f}, {0.80f, 0.42f}, {0.50f, 0.50f}, {0.80f, 0.58f}, {0.84f, 0.76f}, {0.62f, 0.89f}, {0.16f, 0.87f}}}},
+    {'2', {{{0.14f, 0.26f}, {0.34f, 0.11f}, {0.68f, 0.12f}, {0.84f, 0.28f}, {0.74f, 0.48f}, {0.16f, 0.88f}, {0.86f, 0.88f}}}},
+    {'4', {{{0.70f, 0.10f}, {0.14f, 0.66f}, {0.88f, 0.66f}}, {{0.70f, 0.38f}, {0.70f, 0.92f}}}},
+    {'5', {{{0.82f, 0.12f}, {0.24f, 0.12f}, {0.20f, 0.44f}, {0.60f, 0.40f}, {0.82f, 0.56f}, {0.78f, 0.78f}, {0.56f, 0.90f}, {0.20f, 0.86f}}}},
+    {'6', {{{0.76f, 0.12f}, {0.40f, 0.16f}, {0.18f, 0.44f}, {0.18f, 0.70f}, {0.36f, 0.89f}, {0.62f, 0.89f}, {0.80f, 0.72f}, {0.72f, 0.54f}, {0.42f, 0.50f}, {0.22f, 0.62f}}}},
+    {'8', {{{0.50f, 0.50f}, {0.24f, 0.40f}, {0.26f, 0.20f}, {0.50f, 0.11f}, {0.74f, 0.20f}, {0.76f, 0.40f}, {0.50f, 0.50f}, {0.24f, 0.62f}, {0.26f, 0.80f}, {0.50f, 0.90f}, {0.74f, 0.80f}, {0.76f, 0.62f}, {0.50f, 0.50f}}}},
+  };
+  auto it = ANGKA.find(d); return it == ANGKA.end() ? nullptr : &it->second;
+}
+std::vector<vec2> haluskan(const std::vector<vec2>& p, int bagi = 8) {
+  if (p.size() < 3) return p;
+  auto at = [&](int i) { return p[(size_t)std::max(0, std::min((int)p.size() - 1, i))]; };
+  std::vector<vec2> out;
+  for (int i = 0; i + 1 < (int)p.size(); ++i) {
+    vec2 p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+    for (int k = 0; k < bagi; ++k) {
+      float t = (float)k / bagi, t2 = t * t, t3 = t2 * t;
+      out.push_back({0.5f * (2 * p1.x + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
+                     0.5f * (2 * p1.y + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3)});
+    }
+  }
+  out.push_back(p.back());
+  return out;
+}
+void gambarAngka(PixelCanvas& c, char digit, uint32_t colour, float alpha, float grow = 0) {
+  const std::vector<std::vector<vec2>>* strokes = angkaStrokes(digit);
+  if (!strokes) return;
+  const float W = (float)c.w, H = (float)c.h, x0 = W * 0.20f, y0 = H * 0.15f, w = W * 0.60f, h = H * 0.70f;
+  const float panjang = W * 0.088f + grow, tebal = W * 0.046f + grow, jarak = W * 0.125f;
+  for (const std::vector<vec2>& raw : *strokes) {
+    std::vector<vec2> p; for (vec2 q : haluskan(raw)) p.push_back({x0 + q.x * w, y0 + q.y * h});
+    float d = 0, next = 0;
+    for (size_t i = 0; i + 1 < p.size(); ++i) {
+      float dx = p[i + 1].x - p[i].x, dy = p[i + 1].y - p[i].y, L = std::hypot(dx, dy);
+      if (L < 1e-6f) continue;
+      float ux = dx / L, uy = dy / L;
+      while (next <= d + L) {
+        float t = next - d;
+        c.capsule(p[i].x + ux * t, p[i].y + uy * t, std::atan2(uy, ux) + PI / 2, panjang, tebal, colour, alpha);
+        next += jarak;
+      }
+      d += L;
+    }
+  }
+}
+// texAngkaBuat: dark panel, thin frame, six bright bolts, the digit's strips unlit (#2b333c).
+rhi::Texture makeAngkaTexture(char digit) {
+  const int W = 256, H = (int)std::lround(256 * (PANEL_H / PANEL_W));
+  PixelCanvas c(W, H);
+  c.fill(0x101418);
+  c.strokeRect(1.5f, 1.5f, W - 3.f, H - 3.f, 3, 0x39414a);
+  const float pts[6][2] = {{0.06f, 0.04f}, {0.94f, 0.04f}, {0.06f, 0.96f}, {0.94f, 0.96f}, {0.06f, 0.5f}, {0.94f, 0.5f}};
+  for (const float* q : pts) c.circle(q[0] * W, q[1] * H, W * 0.013f, 0xe6ecf2);
+  gambarAngka(c, digit, 0x2b333c, 1);
+  return upload(c);
+}
+// texAngkaNyalaBuat: white strips with a soft halo on a transparent panel (blended over the dark one).
+rhi::Texture makeAngkaLitTexture(char digit) {
+  const int W = 256, H = (int)std::lround(256 * (PANEL_H / PANEL_W));
+  PixelCanvas c(W, H);
+  gambarAngka(c, digit, 0xffffff, 0.35f, W * 0.02f * 2);   // halo (shadowBlur ~ 5 px)
+  gambarAngka(c, digit, 0xffffff, 1);
+  return upload(c);
+}
+// texPlatBuat: white text on a #15181c plate, a rivet above and below; names >= 5 chars break at the space.
+rhi::Texture makeNameTexture(const BitmapFont& font, const std::string& teks) {
+  const int W = 256, H = (int)std::lround(256 * (PLATE_NO_H / PLATE_NO_W));
+  PixelCanvas c(W, H);
+  c.fill(0x15181c);
+  c.circle(W / 2.f, H * 0.13f, W * 0.012f, 0xeef0f2); c.circle(W / 2.f, H * 0.87f, W * 0.012f, 0xeef0f2);
+  size_t cut = teks.size() >= 5 ? teks.find(' ') : std::string::npos;
+  if (cut != std::string::npos && cut > 0) {
+    c.text(font, teks.substr(0, cut), W / 2.f, H * 0.34f, std::round(H * 0.34f), 0xeef0f2);
+    c.text(font, teks.substr(cut + 1, 7), W / 2.f, H * 0.68f, std::round(H * 0.34f), 0xeef0f2);
+  } else c.text(font, teks.substr(0, 7), W / 2.f, H * 0.52f, std::round(H * 0.46f), 0xeef0f2);
+  return upload(c);
 }
 
 // texLensaBuat: LED dot matrix on a dark disc (white dots; the material colour multiplies it).
@@ -310,10 +422,11 @@ void SignalVisuals::buildSemaphoreMeshes() {
 int SignalVisuals::headFor(int flags) {
   for (size_t i = 0; i < heads_.size(); ++i) if (heads_[i].flags == flags) return (int)i;
   int lamps = (flags & 1) ? 3 : 2;
-  MeshBuilder d, s;
+  MeshBuilder d, s, pl;
   headDark(d, lamps, flags & 2, flags & 4, flags & 8);
   headShell(s, lamps);
-  HeadMesh h; h.flags = flags; h.dark = d.upload(); h.shell = s.upload(); h.bounds = d.bounds; h.bounds.expand(s.bounds);
+  headPlate(pl, PLATE_H - (float)(3 - lamps) * LAMP_PITCH, PLATE_BOTTOM);
+  HeadMesh h; h.flags = flags; h.dark = d.upload(); h.shell = s.upload(); h.plate = pl.upload(); h.bounds = d.bounds; h.bounds.expand(s.bounds); h.bounds.expand(pl.bounds);
   h.bounds.expand({0, MAST_BOTTOM, 0});
   heads_.push_back(h);
   return (int)heads_.size() - 1;
@@ -356,6 +469,9 @@ void SignalVisuals::buildMeshes() {
   disc(lens, {0, 0, 0}, LENS_D / 2, 14);
   sphere(sph, 0.75f, 8);
   bb.quad({-0.5f, -0.5f, 0}, {0.5f, -0.5f, 0}, {0.5f, 0.5f, 0}, {-0.5f, 0.5f, 0});
+  { MeshBuilder q; faceQuad(q, PANEL_W, PANEL_H); panel_ = q.upload(); }
+  { MeshBuilder q; faceQuad(q, PLATE_NO_W, PLATE_NO_H); plateNo_ = q.upload(); }
+  for (int lamps = 2; lamps <= 3; ++lamps) plateTex_[lamps - 2] = makePlateTexture((PLATE_H - (float)(3 - lamps) * LAMP_PITCH) / PLATE_W, lamps);
   buildPengulang();
   buildSemaphoreMeshes();
   mastYellow_ = yellow.upload(); mastDark_ = dark.upload(); lens_ = lens.upload(); sphere_ = sph.upload(); billboard_ = bb.upload();
@@ -363,6 +479,9 @@ void SignalVisuals::buildMeshes() {
 
   yellowMat_ = {}; yellowMat_.baseColor = rgb(0xf2a516); yellowMat_.metallic = 0; yellowMat_.roughness = 0.7f;
   darkMat_ = {}; darkMat_.baseColor = rgb(HITAM); darkMat_.metallic = 0.2f; darkMat_.roughness = 0.75f; darkMat_.emissive = rgb(0x0b0d11).xyz();
+  plateMat_ = darkMat_; plateMat_.baseColor = {1, 1, 1, 1};   // the texture carries the paint colour
+  angkaMat_ = plateMat_; angkaMat_.emissive = {};
+  angkaLitMat_ = {}; angkaLitMat_.baseColor = {1, 1, 1, 1}; angkaLitMat_.unlit = true; angkaLitMat_.alphaMode = AlphaMode::Blend;
   shellMat_ = {}; shellMat_.baseColor = rgb(0x2e343d); shellMat_.metallic = 0.2f; shellMat_.roughness = 0.7f; shellMat_.emissive = rgb(0x0b0d11).xyz(); shellMat_.doubleSided = true;
   unlitMat_ = {}; unlitMat_.baseColor = rgbLin(0x2a2a2a); unlitMat_.unlit = true;
   whiteMat_ = {}; whiteMat_.baseColor = {1, 1, 1, 1}; whiteMat_.unlit = true;
@@ -422,9 +541,10 @@ void SignalVisuals::drawSemaphore(ModelRenderer& r, const SignalInstance& s) con
   }
 }
 
-void SignalVisuals::build(const TrackGraph& g, const RailProfile& profile, const Json& trackside) {
+void SignalVisuals::build(const TrackGraph& g, const RailProfile& profile, const Json& trackside, const std::string& fontPath) {
   destroy();
   buildMeshes();
+  BitmapFont font; if (!fontPath.empty()) font.load(fontPath);
   const WorldOrigin& o = g.origin();
   for (const Json& t : trackside.arr) {
     if (t["kind"].stringOr("") != "signal") continue;
@@ -446,6 +566,11 @@ void SignalVisuals::build(const TrackGraph& g, const RailProfile& profile, const
       si.cage = utama;                                     // kandang
       si.shunting = si.signalType == "interlocking";       // langsir
       si.board = si.signalType == "interlocking" && t["papanAngka"].intOr(3) != 0;   // papanAngkaSinyal
+      si.angka = (char)('0' + std::abs(t["papanAngka"].intOr(3)) % 10);
+      if (si.board && !angkaTex_.count(si.angka)) { angkaTex_[si.angka] = makeAngkaTexture(si.angka); angkaLitTex_[si.angka] = makeAngkaLitTexture(si.angka); }
+      auto it = nameTex_.find(si.name);
+      if (it == nameTex_.end()) it = nameTex_.emplace(si.name, makeNameTexture(font, si.name)).first;
+      si.nameTex = it->second;
     }
     // Lamps present, bottom -> top (reverse of trackside.ts daftarLampu).
     if (si.signalType == "muka") { si.lamps = 2; si.lensAspect[0] = Aspect::Yellow; si.lensAspect[1] = Aspect::Green; }
@@ -510,7 +635,17 @@ void SignalVisuals::drawHead(ModelRenderer& r, const SignalInstance& s, int lit)
   r.drawMesh(mastYellow_, yellowMat_, {}, s.world);
   r.drawMesh(mastDark_, darkMat_, {}, s.world);
   r.drawMesh(h.dark, darkMat_, {}, s.world);
+  r.drawMesh(h.plate, plateMat_, plateTex_[s.lamps - 2], s.world);
   r.drawMesh(h.shell, shellMat_, {}, s.world);
+  r.drawMesh(plateNo_, plateMat_, s.nameTex, s.world * mat4::translation({-0.045f - 0.026f, Y_PLATE_NO, 0}));
+  if (s.board) {
+    float yb = PLATE_BOTTOM + PLATE_H - (float)(3 - s.lamps) * LAMP_PITCH + BOARD_UP;
+    auto at = angkaTex_.find(s.angka);
+    if (at != angkaTex_.end()) {
+      r.drawMesh(panel_, angkaMat_, at->second, s.world * mat4::translation({BOARD_BACK - 0.012f - 0.004f, yb, 0}));
+      if (s.angkaLit) if (auto lt = angkaLitTex_.find(s.angka); lt != angkaLitTex_.end()) r.drawMesh(panel_, angkaLitMat_, lt->second, s.world * mat4::translation({BOARD_BACK - 0.016f - 0.004f, yb, 0}));
+    }
+  }
   for (int i = 0; i < s.lamps; ++i) {
     mat4 m = s.world * mat4::translation({LENS_X, Y_RED + LAMP_PITCH * (float)i, 0});
     r.drawMesh(lens_, i == lit ? litMat_[(int)s.lensAspect[i]] : unlitMat_, lensTex_, m);
@@ -589,8 +724,12 @@ std::vector<ScreenPoint> SignalVisuals::screenPositions(const mat4& viewProj, in
 
 void SignalVisuals::destroy() {
   signals_.clear();
-  for (HeadMesh& h : heads_) { rhi::destroyMesh(h.dark); rhi::destroyMesh(h.shell); }
+  for (HeadMesh& h : heads_) { rhi::destroyMesh(h.dark); rhi::destroyMesh(h.shell); rhi::destroyMesh(h.plate); }
   heads_.clear();
+  rhi::destroyMesh(panel_); rhi::destroyMesh(plateNo_);
+  for (rhi::Texture& t : plateTex_) if (t.id) { rhi::destroyTexture(t); t = {}; }
+  for (auto& [k, t] : angkaTex_) rhi::destroyTexture(t); for (auto& [k, t] : angkaLitTex_) rhi::destroyTexture(t); for (auto& [k, t] : nameTex_) rhi::destroyTexture(t);
+  angkaTex_.clear(); angkaLitTex_.clear(); nameTex_.clear();
   rhi::destroyMesh(mastYellow_); rhi::destroyMesh(mastDark_); rhi::destroyMesh(lens_); rhi::destroyMesh(sphere_); rhi::destroyMesh(billboard_);
   rhi::destroyMesh(pengDark_); rhi::destroyMesh(pengShell_); rhi::destroyMesh(pengLed_);
   if (lensTex_.id) { rhi::destroyTexture(lensTex_); lensTex_ = {}; }

@@ -56,7 +56,7 @@ private:
   GameOptions opt_;
   WorldScene scene_;                // the drawn world (engine/app/world_scene.h); origin/station target live there
   TextRenderer text_;
-  OrbitCamera orbit_; FlyCamera fly_; bool useFly_ = false;
+  OrbitCamera orbit_; FlyCamera fly_; bool useFly_ = false; float targetUp_ = 0;
   // camera modes (§9.1): bebas = orbit_/fly_, others = rig_. Subject = selected train, else subjectId_, else nearest.
   CameraRig rig_; std::string subjectId_;
   void setCamMode(CamMode m);

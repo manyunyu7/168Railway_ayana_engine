@@ -6,6 +6,10 @@
 // Semaphores (§6.3, trackside `bentuk:'mekanik'`): lattice mast, 1-2 arms pivoting at 7.0 m (masuk
 // `… M…`) / 5.5 (keluar) / 5.0 (muka), spectacle glasses; arm angles follow the aspect with a
 // damped spring (k 150, c 15) stepped by animate().
+// Plate textures (uji3dSinyal.ts canvas textures, rasterised with engine/world/pixel_canvas.h): head plate
+// with bolt rows and the platform grime, number plate text (font.efnt), the diamond's number panel with the
+// digit as strips of lamps, and its lit overlay — shown while a route from the signal diverges
+// (ruteMasukBelok; setAngkaLit from the sim routes).
 // Local frame: -X = face (trains approach from -X), +Y up, +Z right of travel; origin = mast foot.
 #pragma once
 #include "engine/asset/model.h"
@@ -14,6 +18,7 @@
 #include "engine/render/model_renderer.h"
 #include "engine/world/height_source.h"
 #include "engine/world/track_graph.h"
+#include <map>
 #include <string>
 #include <vector>
 
@@ -37,6 +42,9 @@ struct SignalInstance {
   // shunting unit inside the cage; pengulang = 9C disc instead of the head
   bool board = false, cage = false, shunting = false, pengulang = false;
   int headVariant = -1;          // index into SignalVisuals' head mesh table
+  char angka = '3';              // number panel digit (papanAngka)
+  bool angkaLit = false;         // lit overlay (route from this signal diverges)
+  rhi::Texture nameTex{};        // number plate text (owned by SignalVisuals::nameTex_)
   // semaphore
   bool mechanical = false;
   int arms = 1;                  // 1 or 2 (index 0 = top arm)
@@ -51,7 +59,9 @@ class SignalVisuals {
 public:
   static constexpr float LOD_DISTANCE = 900;
   // trackside: the save's world.trackside array (kind 'signal' entries are used).
-  void build(const TrackGraph& g, const RailProfile& profile, const Json& trackside);
+  // fontPath: assets/font.efnt for the number plates ("" = blank plates).
+  void build(const TrackGraph& g, const RailProfile& profile, const Json& trackside, const std::string& fontPath = "");
+  void setAngkaLit(const std::string& id, bool lit) { int i = indexOf(id); if (i >= 0) signals_[(size_t)i].angkaLit = lit; }
   void setAspect(const std::string& id, const std::string& aspect) { setAspect(id, aspectFromString(aspect)); }
   void setAspect(const std::string& id, Aspect a);
   // Steps the semaphore arm springs; `dt` < 0 = measure real time since the previous call.
@@ -67,7 +77,7 @@ public:
   int indexOf(const std::string& id) const;
 
 private:
-  struct HeadMesh { int flags; rhi::Mesh dark, shell; AABB bounds; };   // flags: bit0 3 lamps, 1 board, 2 cage, 3 shunting
+  struct HeadMesh { int flags; rhi::Mesh dark, shell, plate; AABB bounds; };   // flags: bit0 3 lamps, 1 board, 2 cage, 3 shunting
   void buildMeshes();
   void buildSemaphoreMeshes();
   int headFor(int flags);
@@ -83,6 +93,11 @@ private:
   rhi::Mesh pengDark_, pengShell_, pengLed_;
   std::vector<vec3> pengLedPos_; std::vector<int> pengLedLine_;   // line: 0 red/horizontal, 1 yellow/diagonal, 2 green/vertical, 3 centre
   rhi::Texture lensTex_{}, coronaTex_{};
+  rhi::Mesh panel_, plateNo_;                       // textured quads: number panel (PANEL_W x PANEL_H), number plate
+  rhi::Texture plateTex_[2]{};                      // head plate, 2 / 3 lamps
+  std::map<char, rhi::Texture> angkaTex_, angkaLitTex_;
+  std::map<std::string, rhi::Texture> nameTex_;
+  Material plateMat_, angkaMat_, angkaLitMat_;
   Material yellowMat_, darkMat_, shellMat_, unlitMat_, litMat_[3], whiteMat_, sphereMat_[3];
   Material coronaMat_;
   mutable std::vector<Material> coronaPool_;   // per-frame corona materials (see drawCorona)

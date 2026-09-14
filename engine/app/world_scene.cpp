@@ -91,7 +91,7 @@ bool WorldScene::buildStatic(const Json& world, const std::string& mapSlug, cons
   terrain_.setRails(rails_.samples());
   terrain_.build();
   { const double* bb = terrain_.dem().bbox; clouds_.build((float)(bb[0] - origin_.ox), (float)(bb[1] - origin_.oz), (float)(bb[2] - origin_.ox), (float)(bb[3] - origin_.oz)); }
-  signals_.build(graph_, profile_, world["trackside"]);
+  signals_.build(graph_, profile_, world["trackside"], fontPath);
   points_.build(graph_, profile_);
   routes_.init(&graph_, &profile_);
   auto ground = [this](double wx, double wy) { return terrain_.groundHeight(wx, wy); };
@@ -147,6 +147,19 @@ void WorldScene::buildDecor(const Json& world, bool testGaris, const Json* summa
 void WorldScene::applyState(const SimState& st, double timeScale) {
   for (const SimSignal& s : st.signals) signals_.setAspect(s.id, s.aspect);
   for (const SimPoint& p : st.points) points_.setState(p.id, p.setting, !p.lockedBy.empty());
+  // lit number panel while a route from the signal takes a diverging leg (keretaVisual3d.ts ruteMasukBelok)
+  for (const SignalInstance& sg : signals_.signals()) {
+    bool belok = false;
+    for (const SimRoute& r : st.routes) {
+      if (r.entry != sg.id) continue;
+      for (const auto& [nodeId, legSeg] : r.junctions) {
+        int ni = graph_.nodeIndex(nodeId); if (ni < 0) continue;
+        const TrackNode& n = graph_.nodes[(size_t)ni];
+        if (n.isPoint() && n.legs[1] >= 0 && graph_.segments[(size_t)n.legs[1]].id == legSeg) belok = true;
+      }
+    }
+    signals_.setAngkaLit(sg.id, belok);
+  }
   signals_.animate();
   routes_.update(st);
   trains_.update(st, origin_, &profile_, timeScale);

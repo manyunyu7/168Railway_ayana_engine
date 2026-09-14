@@ -145,6 +145,7 @@ export class SimStateBuilder {
     const routes = [...ixl.routes.values()].map((r: any) => ({
       id: r.id, entry: r.def.entrySignal, exit: r.def.exitSignal, exitLabel: r.def.exitLabel,
       segs: r.def.segs, released: [...r.released],
+      junctions: (r.def.junctions ?? []).map((j: any) => [j.nodeId, j.legSeg]),   // point node + the leg the route takes
       sepurSalah: !!r.def.sepurSalah, izinTerisi: !!r.def.izinTerisi,
     }));
     // shunting plans (engine/putarLok.ts overlay): the yellow dashed ribbons; `legs` = segment ids per leg

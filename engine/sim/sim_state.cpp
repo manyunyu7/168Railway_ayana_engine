@@ -42,6 +42,7 @@ SimState parseSimState(const Json& j) {
     rt.id = r["id"].stringOr(""); rt.entry = r["entry"].stringOr(""); rt.exit = r["exit"].stringOr(""); rt.exitLabel = r["exitLabel"].stringOr("");
     for (const Json& sg : r["segs"].arr) rt.segs.push_back(sg.stringOr(""));
     for (const Json& sg : r["released"].arr) rt.released.push_back(sg.stringOr(""));
+    for (const Json& jn : r["junctions"].arr) if (jn.size() >= 2) rt.junctions.emplace_back(jn[0].stringOr(""), jn[1].stringOr(""));
     st.routes.push_back(std::move(rt));
   }
   for (const Json& o : j["occupancy"].arr) {

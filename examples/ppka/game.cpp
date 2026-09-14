@@ -25,7 +25,7 @@ bool Game::init(Window& win, const GameOptions& opt) {
 
   scene_.setWorld(sim_.world());
   vec3 station = scene_.stationScene();
-  if (const char* t = std::getenv("ENG_TARGET")) { double wx, wy; if (std::sscanf(t, "%lf,%lf", &wx, &wy) == 2) station = scene_.origin().toScene(wx, wy, 0); }   // debug: aim at a world point
+  if (const char* t = std::getenv("ENG_TARGET")) { double wx, wy; float up = 0; if (std::sscanf(t, "%lf,%lf,%f", &wx, &wy, &up) >= 2) { station = scene_.origin().toScene(wx, wy, 0); targetUp_ = up; } }   // debug: aim at a world point (+ metres above ground)
   scene_.setStationScene(station);
   orbit_.target = station; orbit_.distance = 160; orbit_.pitch = radians(18); orbit_.yaw = radians(35);
   orbit_.near = 1; orbit_.far = 40000; orbit_.fovY = radians(52);
@@ -69,13 +69,13 @@ bool Game::buildWorld() {
   std::printf("%s\n", scene_.stats().summary.c_str());
   for (const Json& o : sim_.world()["hiasan"]["objek"].arr) if (!scene_.catalog().model(o["model"].stringOr(""))) pushMessage("missing model: " + o["model"].stringOr(""));
   // the station target was lifted to the carved ground (and maybe moved by ENG_TEST_GARIS)
-  vec3 st = scene_.stationScene(); st.y = scene_.groundScene(st.x, st.z); scene_.setStationScene(st);
+  vec3 st = scene_.stationScene(); st.y = scene_.groundScene(st.x, st.z) + targetUp_; scene_.setStationScene(st);
   orbit_.target = st; fly_.position.y = st.y + 30;
   scene_.primeStreaming(st);   // the neighbourhood of the station before the first frame; the rest streams
   { const Terrain::Stats& ts = scene_.terrain().stats; char t[200];
     std::snprintf(t, sizeof t, "terrain streaming: %d near + %d far tiles, %d patches, %d textures resident, %zu trees around the station", ts.nearTiles, ts.farTiles, ts.patches, ts.resident, scene_.trees().stats.trees);
     pushMessage(t); }
-  compass_.init([this](float x, float z) { return scene_.groundScene(x, z); });
+  compass_.init([this](float x, float z) { return scene_.groundScene(x, z) + targetUp_; });   // the orbit target rides the ground (+ ENG_TARGET height)
   if (std::getenv("ENG_TERRAIN_DEBUG")) {
     double wx, wy; scene_.origin().toWorld(st, wx, wy);
     const Terrain& terrain = scene_.terrain();

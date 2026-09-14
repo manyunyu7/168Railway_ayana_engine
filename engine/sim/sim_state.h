@@ -29,7 +29,10 @@ struct SimTrain {
 struct SimPoint { std::string id, lockedBy; int setting = 0; };
 struct SimSignal { std::string id, aspect; };
 struct SimLogLine { double time = 0; std::string kind, text; };
-struct SimRoute { std::string id, entry, exit, exitLabel; std::vector<std::string> segs, released; };
+struct SimRoute {
+  std::string id, entry, exit, exitLabel; std::vector<std::string> segs, released;
+  std::vector<std::pair<std::string, std::string>> junctions;   // (point node id, leg segment the route takes)
+};
 // Shunting plan (putarLok overlay): the legs a detached loco will run; `kendali` "auto" (legIdx = the active leg) or "manual".
 struct SimLangsir { std::string lok, kendali; int legIdx = 0; std::vector<std::vector<std::string>> legs; };
 struct SimJpl { std::string id; bool closed = false; };   // level crossing barrier state (World.jplClosed)
