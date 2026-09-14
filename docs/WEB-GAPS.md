@@ -101,7 +101,7 @@ else in the drawer is gone.
 | `#kabin-keluar` `↩ Keluar kabin` button (bottom-right, kabin only) | | present | ref `dunia3d.ts:874-881,1838-1842`, `style.css:3607-3618` | S | |
 | Cab extras: arrows/Shift+arrows move the eye in the cab, `Home` reset, `H` hold = horn (audio) | | missing | ref `dunia3d.ts:1287-1302,1655` | S–M | horn is `klakson` in TS (no engine work); eye offsets need `eng_cab_offset` |
 | Cab shake (`goyangKabin`) | | missing | ref `uji3dGoyang.ts`; PARITY "not ported" | M | |
-| Walk mode: collision (`RabaTiga`), jump (Space), head bob | | partial (bob only) | ref `dunia3d.ts:1900-1937`; PARITY | M | |
+| Walk mode: collision (`RabaTiga`), jump (Space), head bob | | engine done, adapter not wired | eng `camera_rig` (AABB walls/floors, jump); the adapter must pass `WalkInput.boxes` from `WorldScene::collectWalkBoxes` and a Space key | S | |
 | Orbit limits | `maxPolarAngle = π/2 − 0.03`, damping 0.08, no min/max distance, no target clamp | present (engine's own limits) | ref `dunia3d.ts:941-945`; eng `orbit_camera.h` | — | verify pitch floor matches (three allows ~1.7° above horizon) |
 | Initial view | corridor overview: target = bbox centre, `d = clamp(0.75 × max(bbox), 600, 22000)`, camera `(0.35d, 0.62d, 0.72d)`, mode bebas | partial | ref `dunia3d.ts:2252-2258`, `IKHTISAR_MAKS` `dunia3dKonst.ts:270`; eng `buildStaticWorld()` starts 160 m from the station at 18°/35° | S | `eng_set_view` + `eng_look_at` exist; choose one behaviour |
 | Right-click compass: tap = fly (0.55 s, ≤ 4× distance), hold = glide, Ctrl+arrows slide, arrows yaw/pitch | | present | adapter pointer button 1 + `eng_key` Control/Arrows; eng `compass.cpp` | — | |
@@ -121,11 +121,14 @@ web-specific:
 |---|---|---|---|---|---|
 | Clouds / city / boards / JPL / garis / trees | | present | `world_scene.cpp:163-176`; adapter serves `city` + `model` requests | — | roads not drawn in either |
 | Ground imagery default | three defaults to the **plain CARTO map** (`petaPolos`), satellite is opt-in | different | ref `dunia3dKonst.ts:904` | — | see §2 Citra tanah |
-| Signal plate textures (bolts, number text, "3" strips), lit `angka` overlay when the route diverges | | missing | ref `uji3dSinyal.ts`, `dunia3d.ts:4019-4021`; PARITY ❌ | M | |
+| Signal plate textures (bolts, number text, "3" strips), lit `angka` overlay when the route diverges | | present | eng `signal_visual.cpp`; the lit overlay needs `routes[].junctions` in the state the adapter builds (`bridge/sim-state.ts` copy) | — | |
 | Far LOD signal dot `v.titik` | | present | PARITY "LOD sphere" | — | |
-| Wesel `skalaWesel = max(1, d/240)` distance scaling, `tirai` curtain within `KABUT_JARAK` | | partial | ref `bangun3d.ts:786-832`; PARITY | S | |
+| Wesel `skalaWesel = max(1, d/240)` distance scaling, `tirai` curtain within `KABUT_JARAK` | | engine done, adapter not wired | eng `point_visual`; the adapter must set `WorldScene::refDistance` (= `CameraRig::acuan(orbit distance)`) and `cabView` every frame — one small ABI call (`engine_api_polish.cpp` candidate) | S | |
 | Semaphore arm `clunk` sound | | missing | ref `dunia3d.ts:3982-3990` | S | adapter can play `suara.clunk()` on aspect change from the state it already builds |
-| Rail iconic yellow line when far | | missing | ref `bangun3d.ts:494-505`; PARITY ❌ | M | |
+| Rail iconic yellow line when far | | engine done, adapter not wired | eng `rail_builder` (needs `refDistance` as above; `benangAlways` = the "Benang selalu" toggle) | S | |
+| Reference corridor atlas `tekstur.rel1067` | three swaps the picture into the rail materials | engine done, adapter not wired | eng `RailBuilder::setAtlas(rhi::Texture)`: the adapter decodes `pilot-rel-1067.jpg` in the browser (flipY, clamp S / repeat T) and hands the RGBA over | S | |
+| Shunting-plan ribbons (`perbaruiPitaLangsir`) | | present | state `langsir[]` (`bridge/sim-state.ts`, copy to `tiga-ayana/simState.ts`) | — | |
+| In-world meja board (`mejaLayan3d.ts`) | station GLB `mejalayan` quad shows the live panel | engine done, adapter not wired | eng `MejaBoard`; needs the `PanelLayout` (`engine/panel.ts`) handed to `WorldScene::setPanelLayout` — an `eng_set_panel(json)` reusing `sim_process.cpp`'s parser | S–M | |
 | Cab interior meshes only in kabin, single-sided skin + translucent glass | | unverified | ref `keretaVisual3d.ts:380-395` | S | check `train_visual` when in kabin (near plane 0.15 m) |
 | Train cull tiers by distance/fog (`cullKA.ts`) | | partial | frustum cull only | S | |
 | Lights dimmer by day, tunnel switch | | partial | PARITY | S | |
@@ -197,5 +200,5 @@ props panel while 3D is open is not redrawn until the view is reopened (S: call 
 10. **Mobile touch**: MOVE/ROTATE buttons, pinch zoom, walk joystick (M).
 11. **Compass settings ABI + drawer, Pindah sisi, per-mode slider** (S each, engine fields exist).
 12. **Ground imagery source select + sky time select + theme tint** (S–M, mostly adapter-side).
-13. **Langsir ribbons, signal plate textures/angka, iconic far line, wesel distance scale, semaphore clunk** (M, engine-wide polish).
-14. In-world meja board, cab shake, walk collision (L/M, low impact).
+13. **Langsir ribbons, signal plate textures/angka, iconic far line, wesel distance scale** — engine side done (see §4; the adapter still has to feed `refDistance`/`cabView`, the `langsir`/`junctions` state fields and the rail atlas); semaphore clunk still missing (adapter-side audio).
+14. In-world meja board and walk collision — engine side done (§3/§4; adapter wiring: panel layout, walk boxes + Space); cab shake done earlier.
