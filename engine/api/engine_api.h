@@ -75,6 +75,17 @@ int eng_texture_begin(const char* slot, int image, int width, int height, int fo
 int eng_texture_mip(int level, const uint8_t* data, int bytes);
 int eng_texture_end(void);
 
+// ---- HUD projection (engine_api_hud.cpp) — screen anchors for the host's DOM overlays -------------------
+// Signal name plates, station bubbles and their tethers are DOM; these answer "where on the canvas" for the
+// last drawn frame. css px, y down. `visible` = inside the viewport and in front of the camera.
+int eng_project(double wx, double wy, int heightMode, float* out);   // world XY -> out[4] {x, y, visible, dist m};
+                                                                     // heightMode 0 carved ground, 1 rail head at the
+                                                                     // nearest track point; returns 1 when in front of the camera
+const char* eng_signal_screen(void);    // JSON [{id,name,type,x,y,visible,aspect,dist}] every signal, top lens / LOD dot
+                                        // (SignalVisuals::screenPositions); aspect "red"|"yellow"|"green"
+const char* eng_station_screen(void);   // JSON [{id,code,name,x,y,visible,dist}] station scenery, anchor 55 m
+                                        // (TINGGI_PAPAN) above the carved ground; off-camera stations are omitted
+
 #ifdef __cplusplus
 }
 #endif
