@@ -147,6 +147,11 @@ int main() {
   eng_rails_rebuild();
   CHECK_NEAR(scene.profile().railHeight(seg0, sAt), before, 1e-3);
   { Json ni2 = Json::parse(eng_node_info(nodeId.c_str()), &err); CHECK(!ni2["tulis"].boolOr(true)); CHECK_NEAR(ni2["h"].numberOr(-1), before, 1e-3); }
+  {   // pick_node: the handle projected through eng_project(mode 1) is found under its own pixel, whatever covers it
+    float sc[4]; eng_project(g.nodes[(size_t)ni].wx, g.nodes[(size_t)ni].wy, 1, sc);
+    if (sc[2] > 0.5f) { std::string p = eng_pick_node(sc[0], sc[1], 14); CHECK_MSG(p == nodeId, "pick_node -> " + p); }
+    CHECK(eng_pick_node(1, 1, 2)[0] == '\0');
+  }
   // editor overlays: node handles, node / segment highlight, ghost polylines draw without GL errors
   eng_node_handles(1, 0);
   eng_highlight(("node:" + nodeId).c_str(), 1);

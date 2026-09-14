@@ -149,6 +149,7 @@ float eng_ground(double wx, double wy);             // carved ground height (sce
 // | "node:<id>" (track node within 14 px, editorRel3d.ts nodeDiLayar) | "segment:<id>:<s>" (rail centreline within
 // 12 px, s in metres) | "". Earlier kinds win.
 const char* eng_pick_object(float x, float y);
+const char* eng_pick_node(float x, float y, float maxPx);    // "<nodeId>" of the node handle within maxPx (0 = 14 px) regardless of what covers it, ""
 const char* eng_pick_track(float x, float y, float maxPx);   // "segId,s,side" nearest centreline within maxPx (side +1 = cursor left of the tangent), ""
 // Live edits (no full rebuild; the world save object inside the engine is updated too, so a later eng_track_edit /
 // reload sees the same data; the host mirrors every edit into its own World):

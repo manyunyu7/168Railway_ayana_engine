@@ -43,6 +43,21 @@ bool live(EngEditCtx& c) { return eng_edit_ctx(c) && c.ready && c.scene && c.wor
 Ray pixelRay(const EngEditCtx& c, float x, float y) { return screenRay(x / (float)c.w, y / (float)c.h, c.viewProj.inverse()); }
 constexpr float NODE_PX = 14, SEG_PX = 12, GARIS_PX = 16;   // editorRel3d.ts nodeDiLayar / pilihRelDi / uji3dSpline garisDi
 
+// Track node handle (rail head + 0.6, posNode3D) nearest to the framebuffer pixel within maxPx; "" = none.
+std::string pickNode(const EngEditCtx& c, float px, float py, int fw, int fh, float maxPx) {
+  const TrackGraph& g = c.scene->graph(); float best = maxPx; std::string id;
+  for (size_t ni = 0; ni < g.nodes.size(); ++ni) {
+    const TrackNode& n = g.nodes[ni];
+    if (n.segs.empty()) continue;   // orphans have no handle (segarkanTitikRel skips them)
+    vec3 p; if (!c.scene->nodeHandlePos((int)ni, p)) continue;
+    vec4 cl = c.viewProj * vec4(p, 1);
+    if (cl.w <= 0) continue;
+    float sx = (cl.x / cl.w * 0.5f + 0.5f) * fw, sy = (1 - (cl.y / cl.w * 0.5f + 0.5f)) * fh;
+    float d = std::hypot(sx - px, sy - py); if (d < best) { best = d; id = n.id; }
+  }
+  return id;
+}
+
 } // namespace
 
 extern "C" {
@@ -73,24 +88,18 @@ KEEP const char* eng_pick_object(float x, float y) {
   c.scene->pickAt(px, py, fw, fh, c.viewProj, c.eye, sig, pt);
   if (!sig.empty()) return editRet("signal:" + sig);
   if (!pt.empty()) return editRet("point:" + pt);
-  {   // track node within NODE_PX (rail head + 0.6 like posNode3D)
-    const TrackGraph& g = c.scene->graph(); float best = NODE_PX * c.dpr; std::string id;
-    for (size_t ni = 0; ni < g.nodes.size(); ++ni) {
-      const TrackNode& n = g.nodes[ni];
-      float h = 0; if (!n.segs.empty()) { const TrackSegment& s = g.segments[(size_t)n.segs[0]]; h = c.scene->profile().railHeight(n.segs[0], s.a == (int)ni ? 0.0 : s.length); }
-      vec4 cl = c.viewProj * vec4(c.scene->origin().toScene(n.wx, n.wy, h + 0.6f), 1);
-      if (cl.w <= 0) continue;
-      float sx = (cl.x / cl.w * 0.5f + 0.5f) * fw, sy = (1 - (cl.y / cl.w * 0.5f + 0.5f)) * fh;
-      float d = std::hypot(sx - px, sy - py); if (d < best) { best = d; id = n.id; }
-    }
-    if (!id.empty()) return editRet("node:" + id);
-  }
+  { std::string id = pickNode(c, px, py, fw, fh, NODE_PX * c.dpr); if (!id.empty()) return editRet("node:" + id); }
   int seg; double s; int side;
   if (c.scene->pickTrack(px, py, fw, fh, c.viewProj, SEG_PX * c.dpr, seg, s, side)) {
     char b[160]; std::snprintf(b, sizeof b, "segment:%s:%.2f", c.scene->graph().segments[(size_t)seg].id.c_str(), s);
     return editRet(b);
   }
   return "";
+}
+
+KEEP const char* eng_pick_node(float x, float y, float maxPx) {
+  EngEditCtx c; if (!view(c)) return "";
+  return editRet(pickNode(c, x * c.dpr, y * c.dpr, (int)(c.w * c.dpr), (int)(c.h * c.dpr), (maxPx > 0 ? maxPx : NODE_PX) * c.dpr));
 }
 
 KEEP const char* eng_pick_track(float x, float y, float maxPx) {
