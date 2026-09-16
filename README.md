@@ -40,12 +40,12 @@ swapped for a native library later without touching the renderer.
 | Area | Status |
 |---|---|
 | Math, JSON parser, GLB parser, own binary model format (`.emod`) | own code, no dependencies |
-| Renderer | OpenGL 4.1 / GLES 3 behind a thin RHI, metallic-roughness PBR, `KHR_materials_unlit`, alpha mask/blend, fog, frustum culling, instancing |
+| Renderer | OpenGL 4.1 / GLES 3 behind a thin RHI, metallic-roughness PBR with normal map (tangent frame from screen derivatives, no vertex tangents) and baked occlusion, `KHR_materials_unlit`, alpha mask/blend, fog, frustum culling, instancing; byte-identical atlases across models share one GPU texture (`engine/render/texture_cache.h`) |
 | Terrain | Terrarium DEM (z13/z10) + satellite imagery (z14 → z17 near stations), rail corridor carving (embankments/cuttings), per-texture ground patches |
 | Track | cubic-Bézier segments from the map save, arc-length LUT, 1-D vertical profile, ballast + rails (gauge 1.068 m), bridges, tunnels |
 | Signals & points | colour-light and semaphore signals with live aspects, point arrows with set/locked colours, screen-space picking, hover tooltips, route ribbons |
 | Trains | consists from the timetable, body/bogie/coupling GLBs with the simulator's normalisation rules, box fallback |
-| Scenery | station buildings from the save's `hiasan`, instanced trees from the satellite green mask |
+| Scenery | station buildings and kit houses from the save's `hiasan` — repeated models drawn instanced, `_kit.lod1`/`lod2` versions picked by projected screen height (`WorldScene::lodPixels`) — instanced trees from the satellite green mask |
 | Sky & light | gradient sky and light ladder driven by the simulated clock |
 | Camera | orbit, free-fly, Trainz-style compass (right-click focus, glide, Ctrl+arrows) |
 | HUD | clock, score, time scale, train list, projected train labels, message log |
