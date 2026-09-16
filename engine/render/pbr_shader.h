@@ -52,10 +52,10 @@ uniform vec3 uEye, uSunDir, uSunColor, uSkyColor, uGroundColor;
 uniform vec4 uBaseColor;
 uniform vec3 uEmissive;
 uniform float uMetallic, uRoughness, uAlphaCutoff;
-uniform int uHasBaseTex, uHasMRTex, uHasEmissiveTex, uAlphaMode, uUnlit; // 0 opaque 1 mask 2 blend
+uniform int uHasBaseTex, uHasMRTex, uHasEmissiveTex, uHasNormalTex, uHasOcclusionTex, uAlphaMode, uUnlit; // 0 opaque 1 mask 2 blend
 uniform vec3 uFogColor;
 uniform float uFogDensity;   // 0 = off
-uniform sampler2D uBaseTex, uMRTex, uEmissiveTex;
+uniform sampler2D uBaseTex, uMRTex, uEmissiveTex, uNormalTex, uOcclusionTex;
 out vec4 oColor;
 
 const float PI = 3.14159265;
@@ -66,6 +66,21 @@ float G_Smith(float NoV, float NoL, float a) {
   return (NoV/(NoV*(1.0-k)+k)) * (NoL/(NoL*(1.0-k)+k));
 }
 vec3 F_Schlick(float VoH, vec3 f0) { return f0 + (1.0-f0)*pow(1.0-VoH, 5.0); }
+
+// Tangent-space normal map without vertex tangents: the tangent (direction of increasing u) comes from the
+// screen-space derivatives of position and UV, the bitangent from cross(n, t) as the Khronos sample viewer
+// does — that matches the glTF convention (+X right, +Y up in the map) for non-mirrored UVs.
+vec3 perturbNormal(vec3 n, vec3 p, vec2 uv) {
+  vec3 dpx = dFdx(p), dpy = dFdy(p);
+  vec2 duvx = dFdx(uv), duvy = dFdy(uv);
+  float det = duvx.x * duvy.y - duvy.x * duvx.y;
+  if (abs(det) < 1e-12) return n;                      // degenerate UVs (or a flat-coloured quad)
+  vec3 t = (duvy.y * dpx - duvx.y * dpy) / det;
+  t = normalize(t - n * dot(n, t));
+  vec3 b = cross(n, t);
+  vec3 tn = texture(uNormalTex, uv).xyz * 2.0 - 1.0;
+  return normalize(mat3(t, b, n) * tn);
+}
 
 void main() {
   vec4 base = uBaseColor;
@@ -79,6 +94,7 @@ void main() {
 
   vec3 n = normalize(vNormal);
   if (!gl_FrontFacing) n = -n;
+  if (uHasNormalTex == 1) n = perturbNormal(n, vWorldPos, vUV);
   vec3 v = normalize(uEye - vWorldPos);
   vec3 l = normalize(uSunDir);
   vec3 h = normalize(l + v);
@@ -94,6 +110,7 @@ void main() {
   // hemisphere ambient (sky above, ground below) — placeholder until IBL
   float up = n.y * 0.5 + 0.5;
   vec3 ambient = mix(uGroundColor, uSkyColor, up) * (diffuseColor + f0 * 0.3);
+  if (uHasOcclusionTex == 1) ambient *= texture(uOcclusionTex, vUV).r;   // baked AO darkens indirect light only (glTF)
 
   vec3 emissive = uEmissive;
   if (uHasEmissiveTex == 1) emissive *= texture(uEmissiveTex, vUV).rgb;

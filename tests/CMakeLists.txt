@@ -30,3 +30,7 @@ engine_test(test_edit ../engine/api/engine_api.cpp ../engine/api/engine_api_hud.
 engine_test(test_golden)
 set_tests_properties(test_golden PROPERTIES LABELS "gpu" DEPENDS viewer)
 target_compile_definitions(test_golden PRIVATE ENG_BINARY_DIR="${CMAKE_BINARY_DIR}")
+# Normal map + occlusion golden (synthetic cube built by the test).
+engine_test(test_normalmap)
+set_tests_properties(test_normalmap PROPERTIES LABELS "gpu" DEPENDS viewer)
+target_compile_definitions(test_normalmap PRIVATE ENG_BINARY_DIR="${CMAKE_BINARY_DIR}")

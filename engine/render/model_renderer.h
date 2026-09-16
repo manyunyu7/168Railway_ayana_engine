@@ -82,7 +82,7 @@ private:
   void drawItem(const DrawItem& d);
   void submit(DrawItem d);
   struct Uniforms { int viewProj, model, eye, sunDir, sunColor, skyColor, groundColor, baseColor, emissive, metallic, roughness,
-                    alphaCutoff, hasBase, hasMR, hasEmissive, alphaMode, fogColor, fogDensity, unlit, instanced, joints; };
+                    alphaCutoff, hasBase, hasMR, hasEmissive, hasNormal, hasOcclusion, alphaMode, fogColor, fogDensity, unlit, instanced, joints; };
   void initProgram(rhi::Program& prog, Uniforms& u, bool skinned);
   void setFrameUniforms(rhi::Program prog, const Uniforms& u, const mat4& viewProj, vec3 eye, const Lighting& l);
   rhi::Program prog_, progSkin_;   // the same PBR shader, with and without SKINNING_DEFINE

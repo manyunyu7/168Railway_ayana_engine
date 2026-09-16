@@ -85,10 +85,11 @@ void ModelRenderer::initProgram(rhi::Program& prog, Uniforms& u, bool skinned) {
   auto L = [&](const char* n) { return rhi::uniformLocation(prog, n); };
   u = {L("uViewProj"), L("uModel"), L("uEye"), L("uSunDir"), L("uSunColor"), L("uSkyColor"), L("uGroundColor"),
        L("uBaseColor"), L("uEmissive"), L("uMetallic"), L("uRoughness"), L("uAlphaCutoff"),
-       L("uHasBaseTex"), L("uHasMRTex"), L("uHasEmissiveTex"), L("uAlphaMode"), L("uFogColor"), L("uFogDensity"), L("uUnlit"), L("uInstanced"),
+       L("uHasBaseTex"), L("uHasMRTex"), L("uHasEmissiveTex"), L("uHasNormalTex"), L("uHasOcclusionTex"), L("uAlphaMode"), L("uFogColor"), L("uFogDensity"), L("uUnlit"), L("uInstanced"),
        skinned ? L("uJoints") : -1};
   rhi::useProgram(prog);
   rhi::setUniform(L("uBaseTex"), 0); rhi::setUniform(L("uMRTex"), 1); rhi::setUniform(L("uEmissiveTex"), 2);
+  rhi::setUniform(L("uNormalTex"), 3); rhi::setUniform(L("uOcclusionTex"), 4);
 }
 
 void ModelRenderer::init() {
@@ -161,11 +162,14 @@ void ModelRenderer::drawItem(const DrawItem& d) {
   };
   if (d.textures) {
     bind(0, mt.baseColorTex, u.hasBase); bind(1, mt.metalRoughTex, u.hasMR); bind(2, mt.emissiveTex, u.hasEmissive);
+    bind(3, mt.normalTex, u.hasNormal); bind(4, mt.occlusionTex, u.hasOcclusion);
   } else {
     bool has = d.baseTex.id != 0;
     rhi::setUniform(u.hasBase, has ? 1 : 0); rhi::bindTexture(0, has ? d.baseTex : white_);
     rhi::setUniform(u.hasMR, 0); rhi::bindTexture(1, white_);
     rhi::setUniform(u.hasEmissive, 0); rhi::bindTexture(2, white_);
+    rhi::setUniform(u.hasNormal, 0); rhi::bindTexture(3, white_);
+    rhi::setUniform(u.hasOcclusion, 0); rhi::bindTexture(4, white_);
   }
   rhi::setCullFace(!mt.doubleSided);
   // mirrored transforms (negative determinant) reverse the triangle winding
