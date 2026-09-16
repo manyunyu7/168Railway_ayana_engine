@@ -2,8 +2,9 @@
 // driven by the engine's walker plus the remote figures the host relays at ~15 Hz. State: one file-local
 // eng::AvatarSet reached through eng_edit_ctx() for the scene / view, exactly like the marker overlay.
 //
-// The renderer is a PLACEHOLDER (coloured boxes, engine/world/avatar_visual.h) until the skinned models of §6
-// exist; swapping it changes nothing here — the ABI never mentions how a body is drawn.
+// The bodies are the skinned models of §6 (engine/world/avatar_visual.h), loaded through the scene's
+// AssetCatalog as `avatar:<id>` and falling back to the placeholder boxes while they stream; the ABI never
+// mentions how a body is drawn.
 #include "engine/api/engine_api.h"
 #include "engine/api/engine_api_avatar.h"
 #include "engine/api/engine_api_edit.h"
@@ -11,8 +12,10 @@
 #include "engine/app/world_scene.h"
 #include "engine/world/avatar.h"
 #include "engine/world/avatar_visual.h"
+#include <algorithm>
 #include <cmath>
 #include <string>
+#include <vector>
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #define KEEP EMSCRIPTEN_KEEPALIVE
@@ -43,6 +46,7 @@ void eng_avatar_update(CameraRig& rig, const WorldOrigin& origin, float dt, int 
 void eng_avatar_draw(ModelRenderer& r) {
   if (!g_localAda && g_set.remote.empty()) return;
   if (!g_vis.built()) g_vis.build();
+  if (!g_vis.catalog()) { EngEditCtx c; if (eng_edit_ctx(c) && c.scene) g_vis.setCatalog(&c.scene->catalog()); }
   if (g_localAda) g_vis.drawAvatar(r, g_set.local, g_anim);
   for (const auto& [id, a] : g_set.remote) { (void)id; g_vis.drawAvatar(r, a, g_anim); }
 }
@@ -97,6 +101,23 @@ KEEP int eng_avatar_screen(int id, float* out) {
   out[0] = (clip.x / clip.w * 0.5f + 0.5f) * (float)c.w;
   out[1] = (1 - (clip.y / clip.w * 0.5f + 0.5f)) * (float)c.h;
   return 1;
+}
+
+// Every catalog slot the skinned figures need right now: the shared rig plus the pieces of every outfit in
+// the set. The host can prefetch these; nothing breaks if it does not.
+KEEP const char* eng_avatar_assets_json(void) {
+  std::vector<std::string> ids{AvatarVisuals::slotId(AvatarVisuals::RIG)};
+  auto add = [&](const Avatar& a) {
+    for (const AvatarVisuals::Piece& p : AvatarVisuals::pieces(a.state.pakaian)) {
+      std::string s = AvatarVisuals::slotId(p.id);
+      if (std::find(ids.begin(), ids.end(), s) == ids.end()) ids.push_back(s);
+    }
+  };
+  add(g_set.local);
+  for (const auto& [id, a] : g_set.remote) { (void)id; add(a); }
+  std::string out = "[";
+  for (size_t i = 0; i < ids.size(); ++i) out += (i ? ",\"" : "\"") + ids[i] + "\"";
+  return ret(out + "]");
 }
 
 } // extern "C"

@@ -177,8 +177,11 @@ public:
   // Base clip that replaces locomotion while it runs (`loop` = until stopBase()).
   void play(int clip, bool loop, float fade = 0.2f) {
     if (clip < 0 || !clips_ || clip >= (int)clips_->size()) return;
-    base_ = clip; baseLoop_ = loop; baseTime_ = 0; baseFade_ = std::fmax(fade, 1e-3f); baseW_ = 0; baseOut_ = false;
+    base_ = clip; baseLoop_ = loop; baseHold_ = false; baseTime_ = 0; baseFade_ = std::fmax(fade, 1e-3f); baseW_ = 0; baseOut_ = false;
   }
+  // Base clip that plays once and then HOLDS its last frame until stopBase() (the sit-down transition:
+  // the clip ends in the pose, staying in it is the engine's job, not the animator's).
+  void playHold(int clip, float fade = 0.2f) { play(clip, false, fade); baseHold_ = true; }
   void stopBase() { baseOut_ = true; }
   bool baseActive() const { return base_ >= 0; }
 
@@ -198,7 +201,8 @@ public:
     if (base_ >= 0) {
       const Animation& a = (*clips_)[(size_t)base_];
       baseTime_ += dt;
-      bool done = !baseLoop_ && baseTime_ >= a.duration - baseFade_;
+      bool done = !baseLoop_ && !baseHold_ && baseTime_ >= a.duration - baseFade_;
+      if (baseHold_) baseTime_ = std::fmin(baseTime_, a.duration);
       baseW_ = std::fmin(1.f, std::fmax(0.f, baseW_ + dt / baseFade_ * ((baseOut_ || done) ? -1.f : 1.f)));
       samplePose(*nodes_, a, baseTime_, baseLoop_, tmp_);
       blendPose(pose_, tmp_, baseW_, pose_);
@@ -265,7 +269,7 @@ private:
   int base_ = -1, gest_ = -1;
   float baseTime_ = 0, baseW_ = 0, baseFade_ = 0.2f;
   float gestTime_ = 0, gestW_ = 0, gestFade_ = 0.25f;
-  bool baseLoop_ = false, baseOut_ = false, gestOut_ = false;
+  bool baseLoop_ = false, baseOut_ = false, baseHold_ = false, gestOut_ = false;
 };
 
 } // namespace eng

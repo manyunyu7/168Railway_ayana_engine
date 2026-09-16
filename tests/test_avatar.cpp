@@ -1,10 +1,20 @@
 // Avatars (docs/AVATAR.md, ppka-wannabe-2/docs/multiplayer.md §4/§5): AvatarState JSON round-trip, the world <->
-// scene conversion, the remote smoothing buffer (100 ms behind, extrapolation capped), the gesture clock, and the
+// scene conversion, the outfit -> pieces resolution and the gesture joint mask, the remote smoothing buffer (100 ms behind, extrapolation capped), the gesture clock, and the
 // third-person camera following the local avatar.
 #include "engine/app/camera_rig.h"
+#include "engine/asset/gltf.h"
+#include "engine/render/animator.h"
 #include "engine/world/avatar.h"
+#include "engine/world/avatar_visual.h"
 #include "tests/check.h"
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <string>
+
+#ifndef ENG_SOURCE_DIR
+#define ENG_SOURCE_DIR "."
+#endif
 
 using namespace eng;
 
@@ -120,4 +130,89 @@ TEST_MAIN({
   for (int i = 0; i < 120; ++i) rig.step(1.f / 60, nullptr, flat, in);
   target = rig.walkerPos() + vec3{0, 1.8f, 0};
   CHECK(length(rig.eye() - target) < rig.jarakOrang - 0.2f);
+
+  // ---- outfit resolution: pakaian -> the pieces that get drawn ----
+  {
+    using AV = AvatarVisuals;
+    Pakaian p;                                     // PPKA defaults
+    std::vector<AV::Piece> ps = AV::pieces(p);
+    CHECK_EQ((int)ps.size(), 6);                   // tubuh, baju, celana, sepatu, topi, tongkat
+    const char* order[] = {"tubuh", "baju", "celana", "sepatu", "topi", "atribut"};
+    for (size_t i = 0; i < ps.size(); ++i) CHECK(ps[i].slot == order[i]);
+    CHECK(ps[0].id == "tubuh-baku" && ps[4].id == "topi-ppka-merah" && ps[5].id == "atribut-tongkat-s40");
+    CHECK(AV::slotId(ps[0].id) == "avatar:tubuh-baku");
+    vec3 kulit = AV::skinColor(p.kulit);           // the body piece is painted neutral: it takes the skin tone
+    CHECK_NEAR(ps[0].tint.x, kulit.x, 1e-5); CHECK_NEAR(ps[0].tint.z, kulit.z, 1e-5);
+    CHECK(ps.size() <= 8);                         // <= 8 draw calls per avatar (one primitive per piece)
+
+    p.topi = "";                                   // bare-headed: the slot disappears, nothing else moves
+    ps = AV::pieces(p);
+    CHECK_EQ((int)ps.size(), 5);
+    for (const AV::Piece& q : ps) CHECK(q.slot != "topi");
+
+    p.topi = "topi-kaos"; p.baju = "baju-kaos"; p.warnaBaju = 0xff0000; p.atribut = {"atribut-ht", "atribut-tongkat-s40"};
+    ps = AV::pieces(p);
+    CHECK_EQ((int)ps.size(), 7);
+    CHECK(ps[5].id == "atribut-ht" && ps[6].id == "atribut-tongkat-s40");
+    CHECK_NEAR(ps[1].tint.x, 1.0, 1e-5); CHECK_NEAR(ps[1].tint.y, 0.0, 1e-5);   // tinted shirt takes warnaBaju
+    CHECK_NEAR(ps[4].tint.x, 1.0, 1e-5);                                        // ... and so does the tinted cap
+    // gestures map onto the clip names of the rig
+    CHECK(std::string(AV::gestureClip(AvatarGesture::S40)) == "s40");
+    CHECK(std::string(AV::gestureClip(AvatarGesture::None)).empty());
+    CHECK_NEAR(AV::animSpeed(AvatarAnim::Jalan), 1.4, 1e-5);
+    CHECK_NEAR(AV::animSpeed(AvatarAnim::Lari), 4.5, 1e-5);
+    CHECK_NEAR(AV::animSpeed(AvatarAnim::Diam), 0, 1e-5);
+  }
+
+  // ---- the real rig: clips, gesture mask, and every piece sharing the skeleton ----
+  {
+    const char* env = std::getenv("PPKA_ROOT");
+    std::string dir = (env && *env ? std::string(env) : std::string(ENG_SOURCE_DIR) + "/../ppka-wannabe-2") + "/public/model3d/";
+    Model rig; std::string err;
+    if (loadGlbFile(dir + "nry-avatar-rangka.glb", rig, err)) {
+      CHECK(!rig.skins.empty() && rig.skins[0].joints.size() == 22);
+      for (const char* c : {"diam", "jalan", "lari", "lompat", "duduk", "s40", "s3", "s1", "hormat", "lambai", "tunjuk"}) {
+        auto it = std::find_if(rig.animations.begin(), rig.animations.end(), [&](const Animation& a) { return a.name == c; });
+        CHECK(it != rig.animations.end());
+      }
+      // every gesture's clip is as long as the ABI promises (docs/multiplayer.md §6)
+      for (int g = 1; g <= 6; ++g) {
+        AvatarGesture ge = (AvatarGesture)g;
+        auto it = std::find_if(rig.animations.begin(), rig.animations.end(),
+                               [&](const Animation& a) { return a.name == AvatarVisuals::gestureClip(ge); });
+        CHECK(it != rig.animations.end());
+        CHECK_NEAR(it->duration, avatarGestureDuration(ge), 0.02);
+      }
+      // the gesture layer claims the right arm (with its sub-tree, i.e. the baton anchor) and the head — nothing else
+      std::vector<int> mask = jointMask(rig.nodes, AvatarVisuals::gestureJoints());
+      auto masked = [&](const char* n) {
+        for (int i : mask) if (rig.nodes[(size_t)i].name == n) return true;
+        return false;
+      };
+      for (const char* n : {"Shoulder.R", "UpperArm.R", "LowerArm.R", "Hand.R", "Prop.R", "Head"}) CHECK(masked(n));
+      for (const char* n : {"Shoulder.L", "UpperArm.L", "Hand.L", "Hips", "Spine", "Chest", "UpperLeg.R", "Foot.R"}) CHECK(!masked(n));
+
+      // every outfit piece is rigged to the SAME skeleton: same joint names in the same order, same bind pose.
+      // That is what lets one palette per frame drive all of them (docs/SKINNING.md §5).
+      auto names = [](const Model& m) {
+        std::vector<std::string> out;
+        for (int j : m.skins[0].joints) out.push_back(m.nodes[(size_t)j].name);
+        return out;
+      };
+      std::vector<std::string> rigNames = names(rig);
+      for (const char* berkas : {"nry-avatar-tubuh-baku.glb", "nry-avatar-baju-ppka-putih.glb", "nry-avatar-celana-hitam.glb",
+                                 "nry-avatar-sepatu-hitam.glb", "nry-avatar-topi-ppka-merah.glb", "nry-avatar-atribut-tongkat-s40.glb"}) {
+        Model m;
+        if (!loadGlbFile(dir + berkas, m, err)) { CHECK(false); continue; }
+        CHECK(!m.skins.empty());
+        CHECK(names(m) == rigNames);
+        CHECK_EQ((int)m.skins[0].inverseBind.size(), (int)rig.skins[0].inverseBind.size());
+        for (size_t j = 0; j < m.skins[0].inverseBind.size(); ++j)
+          for (int c = 0; c < 4; ++c)
+            for (int r = 0; r < 4; ++r) CHECK_NEAR(m.skins[0].inverseBind[j].m[c][r], rig.skins[0].inverseBind[j].m[c][r], 1e-4);
+      }
+    } else {
+      std::printf("[test_avatar] skipping the asset checks: %s\n", err.c_str());
+    }
+  }
 })

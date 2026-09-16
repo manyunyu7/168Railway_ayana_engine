@@ -6,7 +6,8 @@ and camera mode "orang"), §6 (the asset set). This document is the engine side 
 Files
 - `engine/world/avatar.h/.cpp` — `Pakaian`, `AvatarState` (JSON), `Avatar` (one figure + its smoothing buffer),
   `AvatarSet` (local id 0 + remotes by user id). Headless, no GL.
-- `engine/world/avatar_visual.h/.cpp` — `AvatarVisuals`, the **placeholder** body (coloured boxes).
+- `engine/world/avatar_visual.h/.cpp` — `AvatarVisuals`: the **skinned** body (§ *Skinned bodies* below), with the
+  coloured-box placeholder kept as the fallback while the models stream in.
 - `engine/app/camera_rig.*` — `CamMode::Orang` (index 6, name `"orang"`).
 - `engine/api/engine_api_avatar.cpp` — the C ABI + the per-frame hooks called from `engine_api.cpp`.
 - `tests/test_avatar.cpp`, `examples/avatartest/` (`ENG_CAPTURE=/tmp/x.ppm ./build/<dir>/avatartest`).
@@ -64,19 +65,59 @@ Remote smoothing happens inside the engine: every `eng_avatar_upsert` pushes a t
 pose is what the avatar was `Avatar::LAG` = 100 ms ago, interpolated between the last two samples, extrapolated
 for at most `Avatar::EKSTRA` = 200 ms past the newest one and then frozen. Yaw takes the short way round.
 
-## Replacing the placeholder with skinned models
+## Skinned bodies
 
-Everything a figure draws goes through ONE function:
+Everything a figure draws still goes through ONE function:
 
 ```cpp
-void AvatarVisuals::drawAvatar(ModelRenderer& r, const Avatar& a, float t);
+void AvatarVisuals::drawAvatar(ModelRenderer& r, const Avatar& a, float t);   // t = a monotone seconds clock
 ```
 
-A skinned implementation resolves `a.state.pakaian` against the catalog (`model.json` `avatar[]`), poses the
-shared skeleton from `a.anim` (locomotion blend by speed) and `a.state.gesture` / `gestureT` (additive layer on
-the arm + head, fade 0.25 s) and draws the pieces with `ModelRenderer::drawSkinned` + `AnimationPlayer`
-(`engine/render/animator.h`, `docs/SKINNING.md`). Nothing else changes: not the ABI, not `AvatarSet`, not
-`CameraRig` — none of them knows how a body is drawn. The only two hints the placeholder leaves behind are the
-tint rules (`AvatarVisuals::skinColor / shirtColor / trouserColor`), which a skinned version keeps as per-slot
-uniform tints, and the figure's local axes (above), which the loaded models must match (glTF faces −Z: the model
-transform gets the extra yaw).
+`t` is not a phase any more: its delta is the animation `dt`, so a caller that already ticks a clock needs to
+pass nothing else. Per avatar id the class keeps one `AnimationPlayer`; figures nobody drew for 5 s are dropped.
+
+**Assets.** `ppka-wannabe-2/public/model3d/nry-avatar-*.glb` (11 files, ±222 kB, in git — they are the project's
+own, see `ppka-wannabe-2/docs/avatar-aset.md`), catalogued in `model.json` `avatar[] {id, slot, berkas, tint, tri}`.
+`AssetCatalog` registers each one under the synthetic id **`avatar:<id>`**, so both loading paths already work:
+
+* native — `AssetCatalog::model("avatar:rangka")` converts the GLB with `tools/convert` and caches the `.emod`;
+* web — the catalog reports the slot once, the host fetches the file and answers with
+  `eng_model_begin_glb("avatar:rangka", …)` (`src/tiga-ayana/avatarAyana.ts` + `duniaAyana.ts`).
+
+`avatar:rangka` carries the 22-joint skeleton and all 11 clips; the outfit pieces are meshes rigged to the same
+skeleton (`tests/test_avatar` checks that the joint names, their order and the inverse bind matrices are
+identical, which is what lets ONE palette per frame drive every piece — otherwise the palette is rebuilt per
+piece by matching joint names, `AvatarVisuals::Bind`).
+
+**Pose.** `AvatarVisuals::pieces(pakaian)` resolves the outfit to the draw list (tubuh, baju, celana, sepatu,
+topi, atribut[]) — pure and tested. The player runs the locomotion set `{diam 0, jalan 1.4, lari 4.5}` against a
+speed eased from `Avatar::anim`; `lompat` is a one-shot base clip and `duduk` a held one (`AnimationPlayer::playHold`);
+a gesture plays its clip as a layer masked to `jointMask(nodes, {"Shoulder.R", "Head"})` — the right arm with its
+whole sub-tree (so `Prop.R`, the baton anchor, comes along) plus the head — fading in over 0.25 s and ending by
+itself with the clip.
+
+**Tint.** The models carry vertex colours (`COLOR_0`) that the runtime does not read and a white baseColorFactor,
+so the colour of a piece is decided here: `kulit` (the six-tone table) for the body, `warnaBaju` for the pieces
+the catalog marks `tint: true`, and the dominant colour of its own mesh for everything else. It is written into
+the model's materials for the duration of the call — every avatar piece is opaque, so `submit()` draws it
+immediately and no other figure sees the borrowed colour.
+
+**Budget.** One draw call per piece, ≤ 8 per avatar (the default PPKA outfit is 6). No per-frame allocation: the
+pose / world / palette vectors are members that are reused.
+
+**Orientation.** The figure's local axes are the ones above (+X = facing); the glTF models face −Z, so they are
+drawn with the extra yaw `AvatarVisuals::YAW_MODEL = −π/2`.
+
+**Fallback.** No catalog, the rig not resident yet, or no piece resolved → the placeholder boxes draw instead,
+with the same pose information. A player is never invisible.
+
+## Host wiring (web)
+
+```c
+const char* eng_avatar_assets_json(void);   // ["avatar:rangka","avatar:tubuh-baku",...] for the outfits in play
+```
+
+The engine requests every slot it draws by itself, so this is only for prefetching. `src/tiga-ayana/avatarAyana.ts`
+(`siapkanAvatarAyana(api)`, `pakaianBaku()`, `slotPakaian()`, `berkasAvatar()`) does that from `duniaAyana`'s
+`pramuatModel()`; `duniaAyana.berkasTwin()` resolves `avatar:<id>` to its GLB and `layaniModel()` skips the `.emod`
+attempt for avatar slots (they are never baked).

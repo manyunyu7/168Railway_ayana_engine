@@ -21,6 +21,16 @@ struct CatalogEntry {
   bool sarana = false;   // rolling-stock slot (model.json `sarana`): no collision geometry kept for it
   std::vector<std::string> lod;   // coarser versions, nearest first (model.json `_kit.lod1`, `_kit.lod2` or `lod: [...]`);
                                   // each is its own catalog entry `<id>:lod<n>` (same file/stream path as any model)
+  bool avatar = false;   // avatar outfit piece (model.json `avatar[]`), reachable as `avatar:<id>`
+};
+
+// `avatar[]` (ppka-wannabe-2/docs/multiplayer.md §6): one skinned GLB per outfit piece, all rigged to the
+// same 22-joint skeleton. The rig itself (`slot == "rangka"`) carries the animation clips. The models are
+// reachable through model() under the synthetic id `avatar:<id>`.
+struct AvatarPiece {
+  std::string id, slot, berkas;
+  bool tint = false;      // painted neutral: the engine multiplies a per-slot colour on top
+  int tri = 0;
 };
 
 // `garis[]` class (spec §3.5): a body tile repeated every `langkah` metres along a spline, optional posts
@@ -71,6 +81,8 @@ public:
   // are streamed later through imageHints/streamedModel (KTX2 twin), or stay the 1x1 white placeholder.
   bool provideGlb(const std::string& id, std::span<const uint8_t> glbBytes, std::string& error);
   const GarisEntry* findGaris(const std::string& id) const;
+  const std::vector<AvatarPiece>& avatarPieces() const { return avatar_; }
+  const AvatarPiece* findAvatar(const std::string& id) const;   // by catalog id ("tubuh-baku"), not the slot id
   const std::vector<GarisEntry>& garis() const { return garis_; }
   std::vector<std::string> idsByCategory(const std::string& kategori) const;   // sorted by id
   // Path to a ready `.emod` for the id ("" if unavailable). Downloads/converts as needed.
@@ -86,6 +98,7 @@ private:
   std::string err_;
   std::map<std::string, CatalogEntry> entries_;
   std::vector<GarisEntry> garis_;
+  std::vector<AvatarPiece> avatar_;
   std::map<std::string, std::unique_ptr<GpuModel>> models_;   // nullptr = known missing
   bool parseCatalog(const std::string& text);
   bool keepGeometry(const std::string& id) const;

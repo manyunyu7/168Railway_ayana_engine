@@ -122,7 +122,8 @@ class AnimationPlayer {
   proportionally faster instead of sliding). The PPKA avatar passes
   `{{diam, 0, 0}, {jalan, 1.4f, 1.4f}, {lari, 4.5f, 4.5f}}` — the numbers live in the caller.
 * **Base clip** (`play`): replaces locomotion while it runs, fading in and back out; a non-looping clip
-  releases itself `fade` seconds before its end.
+  releases itself `fade` seconds before its end. `playHold` instead freezes on the last frame until
+  `stopBase()` — the sit-down transition ends *in* the pose, and staying there is the caller's decision.
 * **Gesture** (`gesture`): plays once on the masked joints, fading in over `fade` and out again at the
   end of the clip — the 0.25 s of the spec is the default.
 * `update(dt)` does locomotion → base → gesture in that order into a single `Pose`.

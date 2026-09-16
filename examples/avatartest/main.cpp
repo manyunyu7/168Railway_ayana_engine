@@ -2,12 +2,17 @@
 // walker of CamMode::Orang (WASD relative to the camera, Shift = run, Space = jump, drag = orbit, scroll = boom)
 // and two REMOTE avatars fed through AvatarSet::upsert at 15 Hz so the interpolation is exercised.
 // Keys: G cycles the local gesture (s40, s3, s1, hormat, lambai, tunjuk).
-// Env: ENG_CAPTURE=file.ppm (frame 30, exit), ENG_GESTURE=<nama> starts the local gesture, ENG_WALK=1 walks forward.
+// Env: ENG_CAPTURE=file.ppm (frame 30, exit), ENG_GESTURE=<nama> starts the local gesture, ENG_WALK=1 walks forward,
+//      ENG_BOXES=1 forces the placeholder body (no catalog).
+// The figures are the skinned models of ppka-wannabe-2/public/model3d/nry-avatar-*.glb, resolved through the
+// AssetCatalog (`avatar:<id>`); without them the placeholder boxes draw. In CAPTURE mode the scene is a fixed
+// line-up instead of the walking circles — idle, mid-stride and semboyan 40 — with a fixed 1/60 s step.
 #include "engine/app/camera_rig.h"
 #include "engine/core/window.h"
 #include "engine/render/mesh_builder.h"
 #include "engine/render/model_renderer.h"
 #include "engine/render/sky.h"
+#include "engine/world/asset_catalog.h"
 #include "engine/world/avatar.h"
 #include "engine/world/avatar_visual.h"
 #include "engine/world/coords.h"
@@ -39,6 +44,21 @@ AvatarState remoteState(double t, int i) {
 }
 } // namespace
 
+namespace {
+// Capture line-up: the local avatar (idle) flanked by a walking figure and one giving semboyan 40, all facing
+// the camera, which is dragged round to the front. The local figure's yaw is +y (walker default), so is theirs.
+AvatarState poseState(double t, int i) {
+  AvatarState s;
+  const float sp = std::getenv("ENG_DEKAT") ? 1.3f : 2.4f;
+  s.x = i == 0 ? -sp : sp; s.y = 0; s.z = 0;
+  s.yaw = (float)(-PI / 2);   // scene yaw = -world yaw: this matches the local walker's 1.57
+  s.anim = i == 0 ? AvatarAnim::Jalan : AvatarAnim::Diam;
+  if (i == 1) { s.gesture = AvatarGesture::S40; s.gestureT = (float)std::fmin(t, 1.9); }
+  s.pakaian.kulit = i == 0 ? 4 : 1;
+  return s;
+}
+} // namespace
+
 int main() {
   Window win;
   if (!win.open(1280, 800, "engine — avatartest")) return 1;
@@ -58,6 +78,11 @@ int main() {
   Lighting light; light.fogDensity = 1.f / 900;
   sky.sunDir = light.sunDir;
   AvatarVisuals vis; vis.build();
+  AssetCatalog cat;
+  if (!std::getenv("ENG_BOXES")) {
+    if (cat.load()) vis.setCatalog(&cat);
+    else std::printf("[avatartest] no catalog (%s) — placeholder bodies\n", cat.error().c_str());
+  }
   AvatarSet set;
   WorldOrigin origin;   // scene == world in this example
 
@@ -71,7 +96,8 @@ int main() {
   if (const char* gs = std::getenv("ENG_GESTURE")) {
     AvatarGesture g; if (parseAvatarGesture(gs, g)) set.startGesture(g);
   }
-  if (std::getenv("ENG_CAPTURE")) { rig.jarakOrang = 9; rig.drag(-120, 48); }   // wider framing for the screenshot
+  const bool capture = std::getenv("ENG_CAPTURE") != nullptr;
+  if (capture) { rig.jarakOrang = std::getenv("ENG_DEKAT") ? 3.f : 7.f; rig.drag(628, std::getenv("ENG_DEKAT") ? 8.f : 20.f); }   // orbit to the front (628 px = 180 deg)   // wider framing for the screenshot
   const bool autoWalk = std::getenv("ENG_WALK") != nullptr;
 
   double last = win.time(), t = 0, netAcc = 0;
@@ -81,6 +107,7 @@ int main() {
     win.pollEvents();
     double now = win.time(), dt = now - last; last = now;
     if (dt > 0.1) dt = 0.1;
+    if (capture) dt = 1.0 / 60;   // deterministic poses
     t += dt;
 
     double mx, my; win.mousePos(mx, my);
@@ -105,7 +132,8 @@ int main() {
     netAcc += dt;
     while (netAcc >= 1.0 / 15) {   // the host's 15 Hz avatar relay
       netAcc -= 1.0 / 15;
-      for (int i = 0; i < 2; ++i) set.upsert(100 + i, remoteState(t, i), origin, t);
+      if (capture) for (int i = 0; i < 2; ++i) set.upsert(100 + i, poseState(t, i), origin, t);
+      else for (int i = 0; i < 2; ++i) set.upsert(100 + i, remoteState(t, i), origin, t);
     }
     set.tick((float)dt, t);
 
@@ -131,7 +159,7 @@ int main() {
     }
     win.swapBuffers();
   }
-  vis.destroy(); rhi::destroyMesh(ground); rhi::destroyMesh(wall);
+  vis.destroy(); cat.destroy(); rhi::destroyMesh(ground); rhi::destroyMesh(wall);
   renderer.shutdown(); sky.shutdown(); win.close();
   return 0;
 }

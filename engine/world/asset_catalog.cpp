@@ -85,6 +85,16 @@ bool AssetCatalog::parseCatalog(const std::string& text) {
     }
     entries_[id] = e;
   }
+  avatar_.clear();
+  for (const Json& j : doc["avatar"].arr) {
+    AvatarPiece a;
+    a.id = j["id"].stringOr(""); if (a.id.empty()) continue;
+    a.slot = j["slot"].stringOr(""); a.berkas = j["berkas"].stringOr("");
+    a.tint = j["tint"].boolOr(false); a.tri = j["tri"].intOr(0);
+    CatalogEntry e; e.id = "avatar:" + a.id; e.berkas = a.berkas; e.nama = a.id; e.kategori = "avatar"; e.avatar = true;
+    entries_[e.id] = e;
+    avatar_.push_back(std::move(a));
+  }
   garis_.clear();
   for (const Json& j : doc["garis"].arr) {
     GarisEntry g;
@@ -121,6 +131,11 @@ const CatalogEntry* AssetCatalog::find(const std::string& id) const {
   auto it = entries_.find(id);
   if (it == entries_.end()) if (const char* alias = saranaSlot(id)) it = entries_.find(alias);
   return it == entries_.end() ? nullptr : &it->second;
+}
+
+const AvatarPiece* AssetCatalog::findAvatar(const std::string& id) const {
+  for (const AvatarPiece& a : avatar_) if (a.id == id) return &a;
+  return nullptr;
 }
 
 const GarisEntry* AssetCatalog::findGaris(const std::string& id) const {
@@ -231,7 +246,7 @@ bool AssetCatalog::provideGlb(const std::string& id, std::span<const uint8_t> gl
 // (walked around as boxes) does not.
 bool AssetCatalog::keepGeometry(const std::string& id) const {
   const CatalogEntry* e = find(id);
-  return e && !e->sarana;
+  return e && !e->sarana && !e->avatar;
 }
 
 const std::vector<AssetCatalog::ImageHint>* AssetCatalog::imageHints(const std::string& id) const {
