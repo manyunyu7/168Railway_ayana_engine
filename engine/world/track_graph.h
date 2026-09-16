@@ -12,6 +12,7 @@ namespace eng {
 
 enum class RailKind : uint8_t { Ground, Bridge, Tunnel };
 enum class BridgeShape : uint8_t { Auto, Deck, Truss, Viaduct };
+constexpr double VIADUCT_CLEARANCE_DEFAULT = 12;   // m, rail head over the ground under a "layang" segment
 
 struct TrackNode {
   std::string id;
@@ -33,6 +34,10 @@ struct TrackSegment {
   bool straight = false;
   RailKind kind = RailKind::Ground;
   BridgeShape bridge = BridgeShape::Auto;
+  // Viaduct ("layang", save field `layang`: metres): a bridge whose rail FOLLOWS the ground at this clearance
+  // instead of chording between its abutments — a high-speed line over a plain, an elevated urban line. 0 = a plain
+  // bridge. The profile adds it to the DEM samples (they are not blind), the builder defaults the shape to Viaduct.
+  float clearance = 0;
   double cp1x = 0, cp1y = 0, cp2x = 0, cp2y = 0;
   double length = 0;
   struct Lut { double px, py, tx, ty, s; };

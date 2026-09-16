@@ -34,9 +34,15 @@ bool TrackGraph::fromJson(const Json& in, std::string* error) {
     if (s.a < 0 || s.b < 0) { if (error) *error = "track graph: segment " + s.id + " references a missing node"; return false; }
     s.straight = sd["straight"].boolOr(false);
     std::string jr = sd["jenisRel"].stringOr("");
-    s.kind = jr == "jembatan" ? RailKind::Bridge : jr == "terowongan" ? RailKind::Tunnel : RailKind::Ground;
+    s.kind = (jr == "jembatan" || jr == "layang") ? RailKind::Bridge : jr == "terowongan" ? RailKind::Tunnel : RailKind::Ground;
     std::string jj = sd["jenisJembatan"].stringOr("");
     s.bridge = jj == "dek" ? BridgeShape::Deck : jj == "rangka" ? BridgeShape::Truss : jj == "viaduk" ? BridgeShape::Viaduct : BridgeShape::Auto;
+    // `layang` (m above ground) marks a viaduct; jenisRel "layang" without a number is accepted as the 12 m default.
+    if (s.kind == RailKind::Bridge) {
+      double lay = sd["layang"].isNumber() ? sd["layang"].num : (jr == "layang" ? VIADUCT_CLEARANCE_DEFAULT : 0);
+      s.clearance = lay > 0 ? (float)lay : 0.f;
+      if (s.clearance > 0 && s.bridge == BridgeShape::Auto) s.bridge = BridgeShape::Viaduct;
+    }
     int idx = (int)segments.size();
     segIdx_[s.id] = idx;
     nodes[(size_t)s.a].segs.push_back(idx);

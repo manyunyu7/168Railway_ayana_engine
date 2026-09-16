@@ -105,9 +105,10 @@ bool WorldScene::buildStatic(const Json& world, const std::string& mapSlug, cons
   stationScene_.y = terrain_.groundHeight(stationScene_.x + origin_.ox, stationScene_.z + origin_.oz);
   built_ = true;
   stats_.buildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-  char m[400];
-  std::snprintf(m, sizeof m, "world built in %.0f ms: %.1f km track, %d points, %zu signals, rails %u tris, terrain %zu tris, %zu boards, %zu jpl, city %zu bldg/%u tris/%d meshes (%.0f ms); map %s",
-                stats_.buildMs, graph_.totalLength() / 1000, graph_.pointCount(), signals_.signals().size(), rails_.stats().tris, terrain_.stats.triangles, boards_.stats.boards, jpl_.crossings().size(), city_.stats.buildings, city_.stats.tris, city_.stats.meshes, city_.stats.buildMs, mapSlug.c_str());
+  char m[500];
+  const RailBuilder::Stats& rs = rails_.stats();
+  std::snprintf(m, sizeof m, "world built in %.0f ms: %.1f km track, %d points, %zu signals, rails %u tris (%d bridge segs: %d viaduct/%d truss, %d piers, %d tunnel segs), terrain %zu tris, %zu boards, %zu jpl, city %zu bldg/%u tris/%d meshes (%.0f ms); map %s",
+                stats_.buildMs, graph_.totalLength() / 1000, graph_.pointCount(), signals_.signals().size(), rs.tris, rs.bridgeSegs, rs.viaductSegs, rs.trussSegs, rs.piers, rs.tunnelSegs, terrain_.stats.triangles, boards_.stats.boards, jpl_.crossings().size(), city_.stats.buildings, city_.stats.tris, city_.stats.meshes, city_.stats.buildMs, mapSlug.c_str());
   stats_.summary = m;
   if (log) log(m);
   return true;

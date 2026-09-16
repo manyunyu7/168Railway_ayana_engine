@@ -388,8 +388,11 @@ void VerticalProfile::build(const TrackGraph& g, const HeightSource& dem, const 
       int seg; double sl; localAt(d.chain, sc, seg, sl);
       TrackSample p = g.sampleAt(seg, sl);
       d.s.push_back(sc); d.px.push_back(p.wx); d.py.push_back(p.wy);
-      d.h.push_back(dem.rawHeight(p.wx, p.wy));
-      if (g.segments[(size_t)seg].kind != RailKind::Ground) d.blind[(size_t)i] = 1;
+      const TrackSegment& sg = g.segments[(size_t)seg];
+      // A viaduct rides the ground at its clearance: the sample stays LIVE (smoothed, gradient-clamped like open
+      // track, so the ramps onto it grow out of the neighbouring ground samples); bridges and tunnels are blind.
+      d.h.push_back(dem.rawHeight(p.wx, p.wy) + (sg.clearance > 0 ? sg.clearance : 0.f));
+      if (sg.kind != RailKind::Ground && sg.clearance <= 0) d.blind[(size_t)i] = 1;
     }
     samples_ += d.s.size();
     data.push_back(std::move(d));

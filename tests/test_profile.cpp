@@ -160,4 +160,27 @@ TEST_MAIN({
   for (const TrackSegment& s : g.segments) { CHECK_NEAR(pf.railHeight(s.id.c_str(), s.length / 2), 0, 1e-6); }
   CHECK(pf.sampleCount() < prof.sampleCount());
   CHECK_NEAR(pf.gmax(), 0.005, 1e-12);   // floor
+
+  // ---- viaduct ("layang"): the rail rides the ground at its clearance, ramps grow out of the open track ----
+  {
+    // n1 -- n2 == n3 == n4 -- n5 in a line: 1500 m approaches, two 1000 m layang segments (12 m), flat ground.
+    std::string wj = R"({"graph":{"nodes":[{"id":"n1","x":0,"y":0},{"id":"n2","x":1500,"y":0},{"id":"n3","x":2500,"y":0},{"id":"n4","x":3500,"y":0},{"id":"n5","x":5000,"y":0}],
+      "segments":[{"id":"s1","a":"n1","b":"n2","straight":true},{"id":"s2","a":"n2","b":"n3","straight":true,"jenisRel":"jembatan","layang":12},
+                  {"id":"s3","a":"n3","b":"n4","straight":true,"jenisRel":"layang"},{"id":"s4","a":"n4","b":"n5","straight":true}]}})";
+    Json wv = Json::parse(wj, &err); CHECK_MSG(err.empty(), err);
+    TrackGraph gv; CHECK_MSG(gv.fromJson(wv, &err), err);
+    CHECK(gv.segments[1].kind == RailKind::Bridge && gv.segments[1].clearance == 12 && gv.segments[1].bridge == BridgeShape::Viaduct);
+    CHECK(gv.segments[2].kind == RailKind::Bridge && gv.segments[2].clearance == (float)VIADUCT_CLEARANCE_DEFAULT);   // "layang" alias
+    CHECK(gv.segments[3].kind == RailKind::Ground && gv.segments[3].clearance == 0);
+    FlatHeight flat(100);
+    VerticalProfile pv; pv.build(gv, flat, {}, 100);
+    CHECK_NEAR(pv.rawHeight(1, 1000), 112, 1.5);    // the viaduct joint: ground + clearance (DP tolerance 1.2 m)
+    CHECK_NEAR(pv.rawHeight(0, 0), 100, 0.5);       // far ends of the open track: ground
+    CHECK_NEAR(pv.rawHeight(3, 1500), 100, 0.5);
+    CHECK(pv.rawHeight(0, 1300) > 100.5 && pv.rawHeight(0, 1300) < 111.9);   // the ramp lies on the approach
+    CHECK(pv.rawHeight(3, 200) > 100.5 && pv.rawHeight(3, 200) < 111.9);
+    double gmaxObs = 0;
+    for (int si = 0; si < 4; ++si) for (double sv = 0; sv + 20 <= gv.segments[(size_t)si].length; sv += 20) gmaxObs = std::max(gmaxObs, std::fabs(pv.rawHeight(si, sv + 20) - pv.rawHeight(si, sv)) / 20);
+    CHECK_MSG(gmaxObs <= pv.gmax() + 0.002, "viaduct ramp gradient " + std::to_string(gmaxObs));
+  }
 })
