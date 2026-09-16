@@ -54,13 +54,13 @@ Two facts shape most rows:
 | Point tooltip | none in three (hover ring only for signals) | present (extra) | adapter :456-458 | — | engine path shows more than the reference |
 | Station bubbles | `.st-papan` code + label + `N KA`, 700 m–40 km, fade/shrink, tether; **click = fly-to** (`terbangKeScenery`, 780 m / 430 m, 1.1 s smoothstep, toast `Menuju CODE — label`); layer `papan` (default on); hidden in kabin | missing | ref `hud3d.ts:480-573`, `dunia3d.ts:4318-4343` | M | needs projection of scenery positions (new ABI or `eng_project`); fly-to = `eng_look_at(wx, wy)` (**wired but off**, animated by the compass jump) |
 | Route/occupancy ribbons | green locked route, red occupied section; layer `pita` (default **off**), hidden in kabin | present (toggle `eng_set_layer("pita")`, default off) | eng `route_visual.cpp`; three default off | S | add the toggle (see §2) |
-| Langsir plan ribbons | yellow dashed ribbons per leg of `session.putarLok.overlay()`, active leg bright | missing | ref `hud3d.ts:615-633` | M | needs a new state field + ribbon style in `route_visual` |
+| Langsir plan ribbons | yellow dashed ribbons per leg of `session.putarLok.overlay()`, active leg bright | present | eng `route_visual.cpp` (langsir ribbons from `simState.langsir`) | — | |
 | Floating meja layan (`MejaApung3D`) | `🗺 Meja M` button / pil (code + aspect lamps + `N tugas`) / window (station select, S/M/L, dock, opacity, zoom; **click signal/wesel = route/toggle**); `M` key; persisted `ppka-meja-apung`; hidden ≤ 560 px short side | missing (stub; `laciBody` filled with a different body) | ref `mejaApung3d.ts`, `dunia3d.ts:1269-1273,1452-1462` | M | pure DOM/2D canvas; needs `ctx3.stasiunPemain/tugasJml/klikSinyal/klikWesel` (all in the context) and the camera focus for "nearest station" (`eng_camera_json` has it) |
 | In-world meja layan board (`mejaLayan3d.ts`) + `⤴ Angkat meja` | schematic drawn on the station GLB desk, clickable within 8 m | present (board; `⤴ Angkat meja` / click-on-board not ported) | eng `meja_board`, `eng_set_panel` | — | |
 | Status toasts | `3D siap — klik label KA…`, `Belum ada KA di lintas`, mode hints on `setModeKam`, `Subjek kamera: KA n`, wheel readout in locked modes | present (except the wheel readout) | ref `dunia3d.ts:1229,1620,1848,1881-1886,2260`; adapter :196,:493 | S | |
 | Loading progress + per-file drawer | stage texts + `Mengunduh model sarana n/N — X MB` | present | adapter `muat()` uses `progres`/`berkas` | — | texts differ; fine |
-| Compass readout `#kompas-koord` | `fokus X Z · arah NNN°` bottom-left in bebas | missing | ref `kompas3d.ts:239-243,528-529` | S | `eng_camera_json.azimuth` + `look` already give the data |
-| Engine debug HUD `Ayana · fps · draw · mode · ubin` | (three shows the load in the drawer `#d3-fps`, not on canvas) | present (extra) | adapter :125-128,:356-361 | S | move it into the drawer / hide by default |
+| Compass readout `#kompas-koord` | `fokus X Z · arah NNN°` bottom-left in bebas | present | adapter `gambarKoord()` (`#kompas-koord`, mode bebas) | — | `eng_camera_json.look` + `azimuth` |
+| Engine debug HUD `Ayana · fps · draw · mode · ubin` | (three shows the load in the drawer `#d3-fps`, not on canvas) | hidden by default | adapter `hudDebug` (`localStorage pk-ayana-hud = 1`) | — | the numbers live in the drawer (`segarkanUkur`) |
 
 ## 2. Settings & toggles
 
@@ -105,8 +105,8 @@ else in the drawer is gone.
 | Follow the selected train | label click → subject → `samping`; card `✕` releases | present | eng `eng_follow_train`; adapter never calls it, engine follows the nearest train | S | |
 | Telescope `Z` hold | fov/4 ≥ 8° | present | adapter :416-417 | — | lock chip: §2 |
 | `#kabin-keluar` `↩ Keluar kabin` button (bottom-right, kabin only) | | present | ref `dunia3d.ts:874-881,1838-1842`, `style.css:3607-3618` | S | |
-| Cab extras: arrows/Shift+arrows move the eye in the cab, `Home` reset, `H` hold = horn (audio) | | missing | ref `dunia3d.ts:1287-1302,1655` | S–M | horn is `klakson` in TS (no engine work); eye offsets need `eng_cab_offset` |
-| Cab shake (`goyangKabin`) | | missing | ref `uji3dGoyang.ts`; PARITY "not ported" | M | |
+| Cab extras: arrows/Shift+arrows move the eye in the cab, `Home` reset, `H` hold = horn (audio) | | present (horn = TS) | eng `camera_rig` (arrows / W S / Q E move the eye), `Home` = `R` reset in `eng_key` | — | H horn stays `klakson` in TS |
+| Cab shake (`goyangKabin`) | | present | eng `camera_rig` sway (`goyangSkala`, `engine/world/sway.h`) | — | |
 | Walk mode: collision (`RabaTiga`), jump (Space), head bob | | present | eng `camera_rig` + `engine/world/walk_collision` (scenery triangle mesh: walls/floors/ceilings, platform kerb 1.1 m; vehicles AABB), `engine_api` passes `WalkInput.mesh` + `boxes` and Space | S | |
 | Orbit limits | `maxPolarAngle = π/2 − 0.03`, damping 0.08, no min/max distance, no target clamp | present (engine's own limits) | ref `dunia3d.ts:941-945`; eng `orbit_camera.h` | — | verify pitch floor matches (three allows ~1.7° above horizon) |
 | Initial view | corridor overview: target = bbox centre, `d = clamp(0.75 × max(bbox), 600, 22000)`, camera `(0.35d, 0.62d, 0.72d)`, mode bebas | partial | ref `dunia3d.ts:2252-2258`, `IKHTISAR_MAKS` `dunia3dKonst.ts:270`; eng `buildStaticWorld()` starts 160 m from the station at 18°/35° | S | `eng_set_view` + `eng_look_at` exist; choose one behaviour |
@@ -130,7 +130,7 @@ web-specific:
 | Signal plate textures (bolts, number text, "3" strips), lit `angka` overlay when the route diverges | | present | eng `signal_visual.cpp`; the lit overlay needs `routes[].junctions` in the state the adapter builds (`bridge/sim-state.ts` copy) | — | |
 | Far LOD signal dot `v.titik` | | present | PARITY "LOD sphere" | — | |
 | Wesel `skalaWesel = max(1, d/240)` distance scaling, `tirai` curtain within `KABUT_JARAK` | | engine done, adapter not wired | eng `point_visual`; the adapter must set `WorldScene::refDistance` (= `CameraRig::acuan(orbit distance)`) and `cabView` every frame — one small ABI call (`engine_api_polish.cpp` candidate) | S | |
-| Semaphore arm `clunk` sound | | missing | ref `dunia3d.ts:3982-3990` | S | adapter can play `suara.clunk()` on aspect change from the state it already builds |
+| Semaphore arm `clunk` sound | | present | adapter `clunkSemafor()` | — | `suara.clunk()` when a mechanical signal's arm TARGET (`lenganTarget`) changes, like `langkahLengan` |
 | Rail iconic yellow line when far | | present (`refDistance` from `CameraRig::acuan` per frame in `eng_frame`; `benangAlways` = the "Benang selalu" toggle) | | — | |
 | Reference corridor atlas `tekstur.rel1067` | three swaps the picture into the rail materials | present (`eng_rail_atlas_rgba`; adapter `muatAtlasRel` decodes `pilot-rel-1067.jpg` with `createImageBitmap({imageOrientation:'flipY'})`) | | — | |
 | Shunting-plan ribbons (`perbaruiPitaLangsir`) | | present | state `langsir[]` (`bridge/sim-state.ts`, copy to `tiga-ayana/simState.ts`) | — | |
@@ -139,7 +139,7 @@ web-specific:
 | Train cull tiers by distance/fog (`cullKA.ts`) | | partial | frustum cull only | S | |
 | Lights dimmer by day, tunnel switch | | partial | PARITY | S | |
 | Shadows, post-processing, weather, stars, night building lights, people, road vehicles, water | none in three either | — | | — | not gaps |
-| Profile step 3 (parallel roadbed pairing), `vegMask` brush | | missing | PARITY | M | engine-wide |
+| Profile step 3 (parallel roadbed pairing), `vegMask` brush | | present | eng `rail_profile.cpp` pairRoadbeds; `eng_veg_mask` | — | test_profile: parallel spread 1.20 → 0.15 m |
 | Models without a prebuilt `.emod` (`web/build-models.sh` not run for the map's fleet) | three loads the GLB from `asetUrl()` | present (`eng_model_begin_glb`: the plain GLB from `asetUrl('model3d/<berkas>')` parsed by the engine's `loadGlb`; textures still from the KTX2 twin, white placeholder without one; Draco GLBs in `ktx2/` are not parsable) | adapter `layaniModel` | — | `gombong-wns` opens without `public/ayana/models` (smoke `playtest/_cek-ayana-setelan.mjs`) |
 | Paused sim | JPL arms/cloud drift keep animating in the engine while the game is paused | present (`eng_set_paused`) | adapter always passes real `dt`; `session.paused` not forwarded | S | pass `dt = 0` when paused |
 

@@ -122,6 +122,29 @@ TEST_MAIN({
     CHECK_MSG(spread(full) <= 1.5, "station zone not flat: spread " + std::to_string(spread(full)));
   }
 
+  // 4b. parallel tracks share one roadbed height (jodohkanBadan port): every 20 m sample with a parallel sample of
+  //     another segment within 14 m (|cos| ≥ 0.985) must sit within 0.35 m of it. Measured before the pairing: max
+  //     spread 1.20 m (mean 0.21) on the synthetic hill DEM; after: 0.15 m (mean 0.04).
+  {
+    struct S { int seg; double s, wx, wy, tx, ty, h; };
+    std::vector<S> all;
+    for (const TrackSegment& sg : g.segments) {
+      int si = g.segIndex(sg.id);
+      for (double a = 10; a + 10 <= sg.length; a += 20) { TrackSample p = g.sampleAt(si, a); all.push_back({si, a, p.wx, p.wy, p.tx, p.ty, prof.rawHeight(si, a)}); }
+    }
+    double worst = 0, sum = 0; int pairs = 0; std::string where;
+    for (const S& a : all) for (const S& b : all) {
+      if (a.seg >= b.seg) continue;
+      double d = std::hypot(a.wx - b.wx, a.wy - b.wy);
+      if (d < 3 || d > 14 || std::fabs(a.tx * b.tx + a.ty * b.ty) < 0.985) continue;
+      double dh = std::fabs(a.h - b.h); sum += dh; ++pairs;
+      if (dh > worst) { worst = dh; where = g.segments[(size_t)a.seg].id + " / " + g.segments[(size_t)b.seg].id; }
+    }
+    std::printf("parallel tracks: %d sample pairs within 14 m, mean |dh| %.3f m, max %.3f m at %s\n", pairs, pairs ? sum / pairs : 0, worst, where.c_str());
+    CHECK(pairs > 50);
+    CHECK_MSG(worst <= 0.35, "parallel tracks disagree by " + std::to_string(worst) + " m at " + where);
+  }
+
   // 5. the profile follows the terrain: mean |rail - DEM| over ground segments stays small (no runaway smoothing)
   double sum = 0; int cnt = 0;
   for (const TrackSegment& s : g.segments) {

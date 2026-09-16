@@ -3,7 +3,8 @@
 // bridge/tunnel runs are straightened, the result is Gaussian-smoothed, flattened at stations,
 // pinned at chain ends (so all segments at a point agree), simplified (Douglas–Peucker),
 // gradient-clamped and rounded with parabolic vertical curves.
-// Simplification vs the TS original: parallel-roadbed pairing (step 3) is not implemented.
+// Parallel chains within one roadbed width are paired (jodohkanBadan): followers copy the leader's height, blind
+// runs are shared, and point nodes take their datum from the roadbed chains.
 #pragma once
 #include "engine/world/height_source.h"
 #include "engine/world/track_graph.h"

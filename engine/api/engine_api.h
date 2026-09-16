@@ -93,7 +93,7 @@ void eng_compass_glide(float x, float y, int on);    // right button held: glide
 void eng_follow_train(const char* id);              // "" = nearest to the camera
 void eng_cycle_subject(int dir);
 void eng_telescope(int held);
-void eng_key(const char* code, int down);           // walk mode: KeyW/A/S/D, ShiftLeft, Space (jump), Arrow*; kabin: Q/E/R
+void eng_key(const char* code, int down);           // walk mode: KeyW/A/S/D, ShiftLeft, Space (jump), Arrow*; kabin: Q/E/R, Home = R
 void eng_pointer(float x, float y, int button, int phase);   // css px; phase 0 down 1 move 2 up; button 0 left 1 right
 const char* eng_camera_json(void);                   // {mode, eye:[x,y,z], look:[...], distance, yaw, pitch, fov, azimuth, subject}
                                                      // subject = followed train id ("" in bebas without an explicit follow)

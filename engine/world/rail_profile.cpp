@@ -159,6 +159,214 @@ struct Curve {
   }
 };
 
+// ---------------------------------------------------------------------------------------------
+// Roadbed pairing (uji3dProfil.ts jodohkanBadan, step 3 of the original): parallel chains within
+// LAT_BADAN (LAT_EMPLASEMEN near a station) become one roadbed; every chain rides its nearest
+// neighbour towards the root (the longest chain) and copies its height there.
+constexpr double LAT_BADAN = 14;          // axis spacing still counted as one roadbed (m)
+constexpr double SEJAJAR_MIN = 0.985;     // |cos| between tangents to call them parallel
+constexpr double COCOK_MIN = 0.6;         // share of the SHORTER chain that must match
+constexpr double PETA_MAKS = 34;          // max distance when projecting a sample onto its leader (m)
+constexpr double LAT_EMPLASEMEN = 30;     // lateral threshold inside a station yard (m)
+constexpr double JANGKAU_EMPLASEMEN = 700;// this far from the station point still counts as the yard (m)
+constexpr int RAMP_PETA = 5;              // weight ramp at the edge of the mapped run (samples)
+constexpr double BEDA_TULISAN = 1.5;      // hand-written height difference that CANCELS a pairing (m)
+
+struct Guide {
+  int leader = -1;
+  std::vector<double> to;       // leader chainage per sample of this chain (gaps filled from neighbours)
+  std::vector<double> weight;   // 1 = follow the leader, 0 = own profile
+  std::vector<char> found;      // sample really met the leader (not gap-filled)
+  bool valid() const { return leader >= 0; }
+};
+
+struct Roadbeds { std::vector<Guide> guide; std::vector<int> order; };   // order: leader before follower
+
+Roadbeds pairRoadbeds(const std::vector<ChainData>& data, const TrackGraph& g, const std::vector<StationZone>& stations) {
+  const int N = (int)data.size();
+  Roadbeds out; out.guide.resize((size_t)N);
+  if (N < 2) return out;
+
+  // unit tangent per sample
+  std::vector<std::vector<std::pair<double, double>>> tan((size_t)N);
+  for (int di = 0; di < N; ++di) {
+    const ChainData& d = data[(size_t)di]; int n = (int)d.px.size();
+    tan[(size_t)di].resize((size_t)n);
+    for (int i = 0; i < n; ++i) {
+      int a = std::max(0, i - 1), b = std::min(n - 1, i + 1);
+      double dx = d.px[(size_t)b] - d.px[(size_t)a], dy = d.py[(size_t)b] - d.py[(size_t)a];
+      double L = std::hypot(dx, dy); if (L == 0) L = 1;
+      tan[(size_t)di][(size_t)i] = {dx / L, dy / L};
+    }
+  }
+
+  // sample grid — code = di * MILLION + i
+  const long long MILLION = 1000000; const double CELL = 40;
+  std::map<std::pair<long long, long long>, std::vector<long long>> grid;
+  for (int di = 0; di < N; ++di)
+    for (size_t i = 0; i < data[(size_t)di].px.size(); ++i)
+      grid[{(long long)std::floor(data[(size_t)di].px[i] / CELL), (long long)std::floor(data[(size_t)di].py[i] / CELL)}].push_back(di * MILLION + (long long)i);
+  std::vector<long long> near;
+  auto nearby = [&](double x, double y, double maxD) -> const std::vector<long long>& {
+    near.clear();
+    long long cx = (long long)std::floor(x / CELL), cy = (long long)std::floor(y / CELL);
+    long long r = (long long)std::ceil(maxD / CELL);
+    for (long long i = -r; i <= r; ++i) for (long long j = -r; j <= r; ++j) {
+      auto it = grid.find({cx + i, cy + j});
+      if (it != grid.end()) near.insert(near.end(), it->second.begin(), it->second.end());
+    }
+    return near;
+  };
+  // the yard is ONE surface, so the lateral threshold is looser there; on the open line it stays tight
+  auto threshold = [&](double x, double y) {
+    for (const StationZone& st : stations) if (std::hypot(x - st.wx, y - st.wy) <= st.r + JANGKAU_EMPLASEMEN) return LAT_EMPLASEMEN;
+    return LAT_BADAN;
+  };
+
+  // how many samples of A have a parallel twin on B?
+  std::map<std::pair<int, int>, int> match; std::map<std::pair<int, int>, double> sumDist;
+  for (int di = 0; di < N; ++di) {
+    const ChainData& d = data[(size_t)di];
+    for (size_t i = 0; i < d.px.size(); ++i) {
+      double px = d.px[i], py = d.py[i], lat = threshold(px, py);
+      std::map<int, double> closest;   // one sample = one vote per chain
+      for (long long code : nearby(px, py, lat)) {
+        int dj = (int)(code / MILLION); if (dj == di) continue;
+        size_t j = (size_t)(code % MILLION);
+        double dist = std::hypot(data[(size_t)dj].px[j] - px, data[(size_t)dj].py[j] - py);
+        if (dist < 0.5 || dist > lat) continue;
+        auto t1 = tan[(size_t)di][i], t2 = tan[(size_t)dj][j];
+        if (std::fabs(t1.first * t2.first + t1.second * t2.second) < SEJAJAR_MIN) continue;
+        auto it = closest.find(dj);
+        if (it == closest.end() || dist < it->second) closest[dj] = dist;
+      }
+      for (auto& [dj, dist] : closest) { match[{di, dj}] += 1; sumDist[{di, dj}] += dist; }
+    }
+  }
+  auto matchOf = [&](int a, int b) { auto it = match.find({a, b}); return it == match.end() ? 0 : it->second; };
+  auto pairDist = [&](int a, int b) {   // mean lateral distance of a chain pair (m)
+    double sum = 0; int n = 0;
+    for (auto k : {std::make_pair(a, b), std::make_pair(b, a)}) { auto it = sumDist.find(k); if (it != sumDist.end()) sum += it->second; n += matchOf(k.first, k.second); }
+    return n ? sum / n : std::numeric_limits<double>::infinity();
+  };
+
+  // mean hand-written height of a chain (NaN = none)
+  std::vector<double> written((size_t)N, std::numeric_limits<double>::quiet_NaN());
+  for (int di = 0; di < N; ++di) {
+    const Chain& c = data[(size_t)di].chain; double sum = 0; int n = 0;
+    auto check = [&](int id) { const TrackNode& nd = g.nodes[(size_t)id]; if (nd.hasHeight) { sum += nd.height; ++n; } };
+    check(c.nodeStart); check(c.nodeEnd);
+    for (const Link& lk : c.links) check(lk.enterNode);
+    if (n) written[(size_t)di] = sum / n;
+  }
+
+  std::vector<int> uf((size_t)N); for (int i = 0; i < N; ++i) uf[(size_t)i] = i;
+  std::function<int(int)> find = [&](int i) { return uf[(size_t)i] == i ? i : (uf[(size_t)i] = find(uf[(size_t)i])); };
+  std::vector<std::vector<int>> neigh((size_t)N);
+  for (int a = 0; a < N; ++a) for (int b = a + 1; b < N; ++b) {
+    int c = std::max(matchOf(a, b), matchOf(b, a));
+    if (c < COCOK_MIN * (double)std::min(data[(size_t)a].px.size(), data[(size_t)b].px.size())) continue;
+    // HAND-WRITTEN WINS: a stacked yard (OSM `layer`, e.g. Manggarai) has parallel tracks a dozen metres apart — correctly
+    double ta = written[(size_t)a], tb = written[(size_t)b];
+    if (!std::isnan(ta) && !std::isnan(tb) && std::fabs(ta - tb) > BEDA_TULISAN) continue;
+    neigh[(size_t)a].push_back(b); neigh[(size_t)b].push_back(a);
+    int ra = find(a), rb = find(b); if (ra != rb) uf[(size_t)rb] = ra;
+  }
+
+  // root of every roadbed = the LONGEST chain
+  std::map<int, int> root;
+  for (int i = 0; i < N; ++i) {
+    int k = find(i); auto it = root.find(k);
+    if (it == root.end() || data[(size_t)i].chain.total > data[(size_t)it->second].chain.total) root[k] = i;
+  }
+
+  // HOP TREE: every chain rides its NEAREST neighbour towards the root, not the root itself — a 4–5 track yard puts the
+  // outer track 25 m from the longest one, too far for a perpendicular projection, yet the height still spreads outward
+  std::vector<int> leaderOf((size_t)N, -1);
+  for (auto& [k, r] : root) {
+    std::unordered_set<int> in{r};
+    for (;;) {
+      double best = std::numeric_limits<double>::infinity(); int from = -1, to = -1;
+      for (int u : in) for (int v : neigh[(size_t)u]) {
+        if (in.count(v)) continue;
+        double j = pairDist(u, v);
+        if (j < best) { best = j; from = u; to = v; }
+      }
+      if (to < 0) break;
+      leaderOf[(size_t)to] = from; in.insert(to); out.order.push_back(to);
+    }
+  }
+
+  for (int di : out.order) {
+    int pm = leaderOf[(size_t)di];
+    const ChainData& d = data[(size_t)di]; const ChainData& L = data[(size_t)pm];
+    int n = (int)d.px.size();
+    Guide gd; gd.to.assign((size_t)n, 0); gd.found.assign((size_t)n, 0);
+    bool any = false;
+    for (int i = 0; i < n; ++i) {
+      double px = d.px[(size_t)i], py = d.py[(size_t)i];
+      double d1 = PETA_MAKS * PETA_MAKS; int i1 = -1;
+      for (long long code : nearby(px, py, PETA_MAKS)) {
+        if ((int)(code / MILLION) != pm) continue;
+        int j = (int)(code % MILLION);
+        double dx = L.px[(size_t)j] - px, dy = L.py[(size_t)j] - py, dd = dx * dx + dy * dy;
+        if (dd < d1) { d1 = dd; i1 = j; }
+      }
+      if (i1 < 0) continue;
+      // project onto the edge towards the neighbour on our side — otherwise the chainage jumps 20 m per sample
+      double q1x = L.px[(size_t)i1], q1y = L.py[(size_t)i1];
+      int i2 = -1; double bestD = std::numeric_limits<double>::infinity();
+      for (int j : {i1 - 1, i1 + 1}) {
+        if (j < 0 || j >= (int)L.px.size()) continue;
+        double qx = L.px[(size_t)j], qy = L.py[(size_t)j];
+        if ((px - q1x) * (qx - q1x) + (py - q1y) * (qy - q1y) <= 0) continue;
+        double dd = (qx - px) * (qx - px) + (qy - py) * (qy - py);
+        if (dd < bestD) { bestD = dd; i2 = j; }
+      }
+      double sc = L.s[(size_t)i1];
+      if (i2 >= 0) {
+        double ex = L.px[(size_t)i2] - q1x, ey = L.py[(size_t)i2] - q1y, ee = ex * ex + ey * ey; if (ee == 0) ee = 1;
+        double t = std::max(0.0, std::min(1.0, ((px - q1x) * ex + (py - q1y) * ey) / ee));
+        sc = L.s[(size_t)i1] + (L.s[(size_t)i2] - L.s[(size_t)i1]) * t;
+      }
+      gd.to[(size_t)i] = sc; gd.found[(size_t)i] = 1; any = true;
+    }
+    if (!any) continue;
+
+    // fill the gaps of `to` from the nearest mapped neighbour so interpolation is always valid
+    int last = -1;
+    for (int i = 0; i < n; ++i) { if (gd.found[(size_t)i]) { last = i; continue; } if (last >= 0) gd.to[(size_t)i] = gd.to[(size_t)last]; }
+    for (int i = n - 1; i >= 0; --i) { if (gd.found[(size_t)i]) { last = i; continue; } if (last >= 0) gd.to[(size_t)i] = gd.to[(size_t)last]; }
+
+    // Weight: full over the mapped run, ramping to zero only at the edge of the unmapped part and around hand-written
+    // node heights — NOT at every chain end (yard tracks are short point-to-point chains; the roadbed holds to the end
+    // and the point node listens to it in the pin step).
+    std::vector<int> edge((size_t)n, 1 << 29);
+    for (int i = 0; i < n; ++i) if (!gd.found[(size_t)i]) edge[(size_t)i] = 0;
+    auto pinHand = [&](int nodeId, double sChain) {
+      if (nodeId < 0 || !g.nodes[(size_t)nodeId].hasHeight) return;
+      double tot = d.chain.total != 0 ? d.chain.total : 1;
+      int i = std::max(0, std::min(n - 1, (int)std::lround((sChain / tot) * (n - 1))));
+      edge[(size_t)i] = 0;
+    };
+    pinHand(d.chain.nodeStart, 0); pinHand(d.chain.nodeEnd, d.chain.total);
+    for (const Link& lk : d.chain.links) if (lk.s0 > 0) pinHand(lk.enterNode, lk.s0);
+    for (int i = 1; i < n; ++i) edge[(size_t)i] = std::min(edge[(size_t)i], edge[(size_t)i - 1] + 1);
+    for (int i = n - 2; i >= 0; --i) edge[(size_t)i] = std::min(edge[(size_t)i], edge[(size_t)i + 1] + 1);
+    // the ramp MUST fit the chain: a fixed 100 m ramp at both ends eats a 100–300 m yard chain whole
+    int ramp = std::max(1, std::min(RAMP_PETA, (n - 1) / 3));
+    gd.weight.assign((size_t)n, 0);
+    for (int i = 0; i < n; ++i) {
+      if (!gd.found[(size_t)i]) continue;
+      double t = std::min(1.0, (double)edge[(size_t)i] / ramp);
+      gd.weight[(size_t)i] = t * t * (3 - 2 * t);
+    }
+    gd.leader = pm;
+    out.guide[(size_t)di] = std::move(gd);
+  }
+  return out;
+}
+
 } // namespace
 
 void VerticalProfile::build(const TrackGraph& g, const HeightSource& dem, const std::vector<StationZone>& stations,
@@ -186,6 +394,25 @@ void VerticalProfile::build(const TrackGraph& g, const HeightSource& dem, const 
     samples_ += d.s.size();
     data.push_back(std::move(d));
   }
+
+  // 1b. pair parallel chains into roadbeds
+  Roadbeds beds = pairRoadbeds(data, g, stations);
+  const std::vector<Guide>& guide = beds.guide; const std::vector<int>& order = beds.order;
+
+  // A blind run belongs to the ROADBED, not one track: a bridge tagged on one track only would let the other dive into
+  // the valley (and drag the deck with it when it leads). Unify the marks both ways: leaves -> root, then root -> leaves.
+  auto mapBlind = [&](int di, bool up) {
+    const Guide& gd = guide[(size_t)di]; if (!gd.valid()) return;
+    ChainData& L = data[(size_t)gd.leader]; ChainData& child = data[(size_t)di];
+    double stepL = L.s.size() > 1 ? L.s.back() / (double)(L.s.size() - 1) : 1; if (stepL == 0) stepL = 1;
+    for (size_t i = 0; i < child.blind.size(); ++i) {
+      if (!gd.found[i]) continue;
+      size_t j = (size_t)std::max(0, std::min((int)L.blind.size() - 1, (int)std::lround(gd.to[i] / stepL)));
+      if (up) { if (child.blind[i]) L.blind[j] = 1; } else if (L.blind[j]) child.blind[i] = 1;
+    }
+  };
+  for (int k = (int)order.size() - 1; k >= 0; --k) mapBlind(order[(size_t)k], true);
+  for (int di : order) mapBlind(di, false);
 
   // 4. blind runs -> straight line between their edges
   for (ChainData& d : data) {
@@ -254,23 +481,44 @@ void VerticalProfile::build(const TrackGraph& g, const HeightSource& dem, const 
       smooth[di][i] = smooth[di][i] * (1 - ww) + datum[(size_t)k] * ww;
     }
 
+  // 4c. ONE ROADBED = ONE HEIGHT: followers copy the leader's height at the parallel position. After the station
+  //     flattening (whose datum is already shared) and before the pins, so hand-written heights and node agreement
+  //     still have the last word.
+  for (int di : order) {
+    const Guide& gd = guide[(size_t)di]; if (!gd.valid()) continue;
+    std::vector<double>& hh = smooth[(size_t)di]; const std::vector<double>& hp = smooth[(size_t)gd.leader];
+    const ChainData& Lp = data[(size_t)gd.leader];
+    for (size_t i = 0; i < hh.size(); ++i) {
+      double w = gd.weight[i]; if (w <= 0) continue;
+      hh[i] = hh[i] * (1 - w) + lerpSample(Lp.s, hp, gd.to[i]) * w;
+    }
+  }
+  // chains that agreed on a roadbed height decide a shared node's datum; lone chains (diagonal point legs,
+  // stub tracks) still guessing from the DEM do not get averaged in — else the yard steps again through the back door
+  std::unordered_set<int> inRoadbed;
+  for (int di : order) { const Guide& gd = guide[(size_t)di]; if (gd.valid()) { inRoadbed.insert(di); inRoadbed.insert(gd.leader); } }
+
   // 8. pins: chain ends (shared node datum) and hand-written node heights; exact at the pin,
   //    smoothstep between pins, ramp to zero over RAMP_NODE samples outside the outermost pins.
   const int RAMP_NODE = std::max(2, (int)std::lround(120 / opt.step));
   std::vector<std::unordered_set<int>> lockedIdx(data.size());
   auto pinAll = [&](std::vector<std::vector<double>>& series, bool lock) {
-    std::map<int, std::vector<double>> nodeVals;
+    std::map<int, std::vector<double>> nodeVals, nodeValsBed;
     for (size_t di = 0; di < data.size(); ++di) {
       const std::vector<double>& hh = series[di];
+      bool bed = inRoadbed.count((int)di) > 0;
       nodeVals[data[di].chain.nodeStart].push_back(hh.front());
       nodeVals[data[di].chain.nodeEnd].push_back(hh.back());
+      if (bed) { nodeValsBed[data[di].chain.nodeStart].push_back(hh.front()); nodeValsBed[data[di].chain.nodeEnd].push_back(hh.back()); }
     }
     std::map<int, double> nodeDatum;
     for (auto& [id, a] : nodeVals) {
       const TrackNode& n = g.nodes[(size_t)id];
       if (n.hasHeight) { nodeDatum[id] = n.height; continue; }
-      double sum = 0; for (double v : a) sum += v;
-      nodeDatum[id] = sum / (double)a.size();
+      auto itB = nodeValsBed.find(id);
+      const std::vector<double>& src = itB != nodeValsBed.end() && !itB->second.empty() ? itB->second : a;
+      double sum = 0; for (double v : src) sum += v;
+      nodeDatum[id] = sum / (double)src.size();
     }
     for (size_t di = 0; di < data.size(); ++di) {
       const ChainData& d = data[di]; std::vector<double>& hh = series[di];
@@ -344,11 +592,25 @@ void VerticalProfile::build(const TrackGraph& g, const HeightSource& dem, const 
     }
   }
 
-  // Re-pin on the final values (5c in the original), then pour back per segment.
+  // 5b. followers ride the leader's CURVE: equal inputs (4c) are not enough — DP and the clamp run per chain and paired
+  //     chains never have exactly the same length, so knots land in different places and a DP-tolerance offset is
+  //     reborn. The leader may itself have a leader (wide yard) — followed to the root.
+  std::function<double(int, double)> valueUsed = [&](int di, double sc) -> double {
+    double own = curves[(size_t)di].at(sc);
+    const Guide& gd = guide[(size_t)di]; if (!gd.valid()) return own;
+    double w = lerpSample(data[(size_t)di].s, gd.weight, sc);
+    if (w <= 0) return own;
+    double v = valueUsed(gd.leader, lerpSample(data[(size_t)di].s, gd.to, sc));
+    return w >= 1 ? v : own * (1 - w) + v * w;
+  };
+
+  // 5c. Re-pin on the FINAL values: the node agreement was made on `smooth`; a follower at a point node returns its
+  //     leader's final curve at the projected chainage (often a through track that does not end here), free to miss
+  //     `smooth` by the DP tolerance -> two heights at one point, stepped rails. Same pins, on the values really used.
   std::vector<std::vector<double>> final_(data.size());
   for (size_t di = 0; di < data.size(); ++di) {
     final_[di].resize(data[di].s.size());
-    for (size_t i = 0; i < data[di].s.size(); ++i) final_[di][i] = curves[di].at(data[di].s[i]);
+    for (size_t i = 0; i < data[di].s.size(); ++i) final_[di][i] = valueUsed((int)di, data[di].s[i]);
   }
   pinAll(final_, false);
 

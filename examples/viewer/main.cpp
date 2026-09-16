@@ -209,6 +209,7 @@ void App::step() {
   renderer.flushTransparent();
   char hud[256];
   if (!status.empty()) std::snprintf(hud, sizeof hud, "%s", status.c_str());
+  else if (std::getenv("ENG_CAPTURE")) std::snprintf(hud, sizeof hud, "%s  %.1f MB  draws %u  culled %u", path.c_str(), bytes / 1e6, renderer.drawCalls, renderer.culled);   // golden capture: no timing text
   else std::snprintf(hud, sizeof hud, "%s  %.1f MB  %.0f ms  draws %u  culled %u  %.0f fps", path.c_str(), bytes / 1e6, loadMs, renderer.drawCalls, renderer.culled, fps);
   text.rect(8, 8, text.measure(hud) + 16, text.lineHeight() + 8, {0, 0, 0, 0.5f});
   text.draw(hud, 16, 12);

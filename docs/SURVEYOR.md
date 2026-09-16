@@ -118,4 +118,4 @@ Markers (`engine_api_markers.cpp` → `engine/app/markers.*`; drawn after the wo
 | Ukur in 3D | New for both renderers: `eng_ukur_line` + labels; `eng_pick_track` for Shift snap | 0.5 day |
 | Palette thumbnails | `eng_thumbnail(id, px) → rgba` (offscreen FBO render of a resident model) | 0.5 day |
 | Papan nama text | Engine text-on-mesh for `papan-nama` materials (the `teks` / `ketinggian` fields are saved but not drawn) | 0.5 day |
-| Bundle decoupling | The Ayana chunk still pulls the `dunia3d` chunk (three) through `tiga/dunia3dKonst.ts` (imports `TataObjek`), `mejaApungAyana.ts` (`mejaApug3d`), `kompas3d.ts`; move those value imports to types / three-free modules | 0.5 day |
+| Bundle decoupling (done) | `tiga/konstInti.ts` + `tiga/kompasInti.ts` hold the value imports; the `duniaAyana` chunk no longer imports the `dunia3d` chunk (checked in `dist/assets`) | — |

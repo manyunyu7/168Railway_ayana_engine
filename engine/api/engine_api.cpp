@@ -541,7 +541,7 @@ KEEP void eng_key(const char* code, int down) {
   std::string c = code; bool d = down != 0;
   if (c == "KeyW") g->keyW = d; else if (c == "KeyA") g->keyA = d; else if (c == "KeyS") g->keyS = d; else if (c == "KeyD") g->keyD = d;
   else if (c == "KeyQ") g->keyQ = d; else if (c == "KeyE") g->keyE = d;
-  else if (c == "KeyR") { if (d && g->rig.mode == CamMode::Kabin) g->rig.resetKabin(); }   // cab eye back to MATA_KABIN
+  else if (c == "KeyR" || c == "Home") { if (d && g->rig.mode == CamMode::Kabin) g->rig.resetKabin(); }   // cab eye back to MATA_KABIN (dunia3d.ts: Home)
   else if (c == "ShiftLeft" || c == "ShiftRight") g->shift = d;
   else if (c == "ArrowUp") g->up = d; else if (c == "ArrowDown") g->down = d; else if (c == "ArrowLeft") g->kl = d; else if (c == "ArrowRight") g->kr = d;
   else if (c == "ControlLeft" || c == "ControlRight" || c == "MetaLeft") g->ctrl = d;
