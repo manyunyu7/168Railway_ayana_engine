@@ -119,7 +119,7 @@ void Game::handleInput(Window& win, double dt) {
     if (pressed(GLFW_KEY_ENTER) || pressed(GLFW_KEY_KP_ENTER)) { if (clockText_.size() == 5) setClock(clockText_); clockPrompt_ = false; }
     if (pressed(GLFW_KEY_ESCAPE)) clockPrompt_ = false;
   } else {
-    if (pressed(GLFW_KEY_SPACE) && rig_.mode != CamMode::Jalan) setPaused(!paused_);   // in jalan Space = jump (the pause button stays)
+    if (pressed(GLFW_KEY_SPACE) && rig_.mode != CamMode::Jalan && rig_.mode != CamMode::Orang) setPaused(!paused_);   // in jalan Space = jump (the pause button stays)
     if (pressed(GLFW_KEY_EQUAL) || pressed(GLFW_KEY_KP_ADD)) setTimeScale(std::fmin(timeScale_ * 2, 64));
     if (pressed(GLFW_KEY_MINUS) || pressed(GLFW_KEY_KP_SUBTRACT)) setTimeScale(std::fmax(timeScale_ / 2, 0.5));
     if (pressed(GLFW_KEY_M)) { panel_.visible = !panel_.visible; if (panel_.visible) panel_.fitStation("", fw, fh); }
@@ -127,7 +127,7 @@ void Game::handleInput(Window& win, double dt) {
     if (pressed(GLFW_KEY_J)) { clockPrompt_ = true; clockText_.clear(); }
     if (izin_.open) { if (pressed(GLFW_KEY_ENTER) || pressed(GLFW_KEY_KP_ENTER)) confirmIzin(); }
     if (menu_.open) { for (int k = GLFW_KEY_1; k <= GLFW_KEY_9; ++k) if (pressed(k)) chooseRoute(k - GLFW_KEY_1); }
-    else { for (int k = GLFW_KEY_1; k <= GLFW_KEY_6; ++k) if (pressed(k)) setCamMode((CamMode)(k - GLFW_KEY_1)); }   // 1 bebas 2 jalan 3 kabin 4 samping 5 atas 6 ekor
+    else { for (int k = GLFW_KEY_1; k <= GLFW_KEY_7; ++k) if (pressed(k)) setCamMode((CamMode)(k - GLFW_KEY_1)); }   // 1 bebas 2 jalan 3 kabin 4 samping 5 atas 6 ekor 7 orang
     if (pressed(GLFW_KEY_COMMA)) cycleSubject(-1);
     if (pressed(GLFW_KEY_PERIOD)) cycleSubject(1);
     rig_.teropongTahan = win.key(GLFW_KEY_Z);
@@ -503,11 +503,11 @@ bool Game::subjectPath(TrainPath& out, std::string* idOut) const {
 void Game::setCamMode(CamMode m) {
   if (m == rig_.mode) return;
   TrainPath tp;
-  if (m != CamMode::Bebas && m != CamMode::Jalan && !subjectPath(tp)) { pushMessage("Belum ada KA di lintas"); return; }
+  if (m != CamMode::Bebas && m != CamMode::Jalan && m != CamMode::Orang && !subjectPath(tp)) { pushMessage("Belum ada KA di lintas"); return; }
   vec3 eye = camEye(), look = rig_.mode != CamMode::Bebas ? rig_.look() : useFly_ ? fly_.position + fly_.forward() * 60 : orbit_.target;
   CamMode old = rig_.mode;
   if (m == CamMode::Bebas) {   // hand back to the orbit FROM the current view; out of jalan push the target 60 m ahead
-    if (old == CamMode::Jalan) look = eye + normalize(look - eye) * 60;
+    if (old == CamMode::Jalan || old == CamMode::Orang) look = eye + normalize(look - eye) * 60;
     vec3 o = eye - look; float d = std::fmax(length(o), 2.f);
     orbit_.target = look; orbit_.distance = d; orbit_.pitch = std::asin(std::clamp(o.y / d, -0.999f, 0.999f)); orbit_.yaw = std::atan2(o.x, o.z);
     useFly_ = false;
@@ -515,8 +515,10 @@ void Game::setCamMode(CamMode m) {
   rig_.setMode(m, eye, look);
   auto ground = [this](float x, float z) { return scene_.groundScene(x, z); };
   if (m == CamMode::Jalan) rig_.enterWalk(eye, look, ground);
+  if (m == CamMode::Orang) rig_.enterOrang(eye, look, ground);
   const CamProfile p = camProfile(m);
   pushMessage(m == CamMode::Bebas ? "Kamera bebas (orbit)" : m == CamMode::Jalan ? "Jalan-jalan - WASD = jalan, Shift = lari, seret = menoleh, Esc kembali"
+              : m == CamMode::Orang ? "Orang ketiga - WASD = jalan (relatif kamera), Shift = lari, Space = lompat, seret = mengelilingi, scroll = jarak"
               : m == CamMode::Kabin ? "Kamera Kabin - seret = menoleh, WASD/QE = geser mata, scroll = maju/mundur, R = kembali, , . = ganti KA, Z = teropong"
               : std::string("Kamera ") + p.nama + " - seret = mengelilingi KA, scroll = atur, , . = ganti KA, Z = teropong");
 }
@@ -535,13 +537,13 @@ void Game::updateCamera(float dt) {
   if (rig_.mode == CamMode::Bebas) { rig_.step(dt, nullptr, {}, {}); return; }
   auto ground = [this](float x, float z) { return scene_.groundScene(x, z); };
   WalkInput in;
-  if ((rig_.mode == CamMode::Jalan || rig_.mode == CamMode::Kabin) && !clockPrompt_) {   // jalan = walk, kabin = move the eye
+  if ((rig_.mode == CamMode::Jalan || rig_.mode == CamMode::Orang || rig_.mode == CamMode::Kabin) && !clockPrompt_) {   // jalan / orang = walk, kabin = move the eye
     in.forward = (win_->key(GLFW_KEY_W) || win_->key(GLFW_KEY_UP) ? 1.f : 0.f) - (win_->key(GLFW_KEY_S) || win_->key(GLFW_KEY_DOWN) ? 1.f : 0.f);
     in.side = (win_->key(GLFW_KEY_D) || win_->key(GLFW_KEY_RIGHT) ? 1.f : 0.f) - (win_->key(GLFW_KEY_A) || win_->key(GLFW_KEY_LEFT) ? 1.f : 0.f);
     in.up = (win_->key(GLFW_KEY_E) ? 1.f : 0.f) - (win_->key(GLFW_KEY_Q) ? 1.f : 0.f);
     in.run = win_->key(GLFW_KEY_LEFT_SHIFT) || win_->key(GLFW_KEY_RIGHT_SHIFT);
     in.reset = rig_.mode == CamMode::Kabin && win_->key(GLFW_KEY_R);
-    in.jump = rig_.mode == CamMode::Jalan && win_->key(GLFW_KEY_SPACE);
+    in.jump = (rig_.mode == CamMode::Jalan || rig_.mode == CamMode::Orang) && win_->key(GLFW_KEY_SPACE);
   }
   // debug: ENG_AUTOWALK=<yaw deg>[,run] walks straight in that heading from frame 5 on (with ENG_CAMERA=jalan) and
   // logs the feet every 60 frames — a headless check that the station walls hold and its platforms are climbed
@@ -551,7 +553,7 @@ void Game::updateCamera(float dt) {
     if (frame_ % 60 == 0) { vec3 e = rig_.eye(); std::printf("autowalk frame %d dt %.3f feet %.2f %.2f %.2f ground %.2f %s\n", frame_, dt, e.x, e.y - 1.62f, e.z, scene_.groundScene(e.x, e.z), rig_.walkerOnGround() ? "on" : "air"); }
   }
   std::vector<WalkBox> boxes;
-  if (rig_.mode == CamMode::Jalan) { scene_.collectWalkBoxes(boxes); in.boxes = &boxes; in.mesh = &scene_.walkCollider(); }
+  if (rig_.mode == CamMode::Jalan || rig_.mode == CamMode::Orang) { scene_.collectWalkBoxes(boxes); in.boxes = &boxes; in.mesh = &scene_.walkCollider(); }
   TrainPath tp; bool has = subjectPath(tp);
   if (has) tp.timeScale = paused_ ? 0 : timeScale_;
   if (!rig_.step(dt, has ? &tp : nullptr, ground, in)) { pushMessage("KA subjek hilang dari lintas - kembali ke kamera bebas"); setCamMode(CamMode::Bebas); }

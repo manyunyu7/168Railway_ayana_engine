@@ -15,8 +15,9 @@
 
 namespace eng {
 
-enum class CamMode { Bebas, Jalan, Kabin, Samping, Atas, Ekor };
-inline const char* camModeName(CamMode m) { static const char* N[] = {"bebas", "jalan", "kabin", "samping", "atas", "ekor"}; return N[(int)m]; }
+enum class CamMode { Bebas, Jalan, Kabin, Samping, Atas, Ekor, Orang };
+inline const char* camModeName(CamMode m) { static const char* N[] = {"bebas", "jalan", "kabin", "samping", "atas", "ekor", "orang"}; return N[(int)m]; }
+constexpr int CAM_MODE_COUNT = 7;
 bool parseCamMode(const std::string& s, CamMode& out);
 
 // Per-mode profile (profilKam). fog = linear [near, far] of the reference; corridor = the bbox-width formula.
@@ -60,7 +61,7 @@ public:
 
   CamMode mode = CamMode::Bebas;
   // adjustable framing (scroll in each mode)
-  float fovKabin = 62, fovJalan = 70, jarakSamping = 28, tinggiSamping = 7, sisiSamping = 1, tinggiAtas = 120, jarakEkor = 34;
+  float fovKabin = 62, fovJalan = 70, jarakOrang = 4.5f, jarakSamping = 28, tinggiSamping = 7, sisiSamping = 1, tinggiAtas = 120, jarakEkor = 34;
   // telescope (Z held / locked): fov/4, floor 8°, blend tau 0.09 s
   bool teropongTahan = false, teropongKunci = false;
   // cab eye offsets from MATA_KABIN (m): along the vehicle axis (+ forward), to the right, up; clamped in rig()
@@ -76,6 +77,13 @@ public:
   void drag(float dx, float dy);     // pixels: kabin = turn the head, others = orbit the subject, jalan = look
   void scroll(float steps);          // adjusts the mode's parameter (profile "atur"); kabin = eye forward/back
   void enterWalk(vec3 eye, vec3 look, const GroundFn& ground);   // turunJalan: stand where the orbit target was
+  // ORANG (third person, docs/multiplayer.md §5): the same walker carries the local AVATAR instead of the eye —
+  // the camera orbits 4.5 m behind it, 1.8 m over its feet, and WASD is relative to the camera's yaw. The figure
+  // itself is drawn by the host (engine/world/avatar_visual.h) from these three readouts.
+  void enterOrang(vec3 eye, vec3 look, const GroundFn& ground);   // stand where the previous view was looking
+  vec3 walkerPos() const { return pejalan_; }    // scene space, at the FEET
+  float walkerBodyYaw() const { return badanYaw_; }   // scene yaw of the BODY (heading of travel; rotationY convention)
+  float walkerSpeed() const { return lajuPejalan_; }  // m/s over the ground this frame
 
   bool walkerOnGround() const { return diTanah_; }
   vec3 eye() const { return camPos_; }
@@ -86,7 +94,7 @@ public:
   // Reference distance of the mode (profilKam `acuan`, the LOD yardstick): bebas = the orbit distance given,
   // jalan 90, kabin 60, samping/ekor = their following distance, atas = its height.
   float acuan(float orbitDistance) const {
-    switch (mode) { case CamMode::Jalan: return 90; case CamMode::Kabin: return 60; case CamMode::Samping: return jarakSamping;
+    switch (mode) { case CamMode::Jalan: case CamMode::Orang: return 90; case CamMode::Kabin: return 60; case CamMode::Samping: return jarakSamping;
                     case CamMode::Atas: return tinggiAtas; case CamMode::Ekor: return jarakEkor; default: return orbitDistance; }
   }
   bool bolehTeropong() const { return mode == CamMode::Kabin || mode == CamMode::Samping || mode == CamMode::Ekor || mode == CamMode::Jalan; }
@@ -102,6 +110,12 @@ private:
   void tolehKepala();
   void orbitKe(const GroundFn& ground);
   void langkahJalan(float dt, const GroundFn& ground, const WalkInput& in);
+  void langkahOrang(float dt, const GroundFn& ground, const WalkInput& in);
+  // Shared walker step (position, walls, floors, jump): `yaw` is the heading the keys are relative to, the two
+  // speeds are the mode's (the camera walk is fast, an avatar walks 1.4 / runs 4.5 m/s).
+  void langkahPejalan(float dt, const GroundFn& ground, const WalkInput& in, float yaw, float vJalan, float vLari);
+  // Third-person boom: shortened where a wall / vehicle box stands between the target and the eye.
+  float boomOrang(vec3 target, vec3 dir, float maks, const WalkInput& in) const;
   struct KenaDinding { float jarak = 0, nx = 0, nz = 0; bool ada = false; };
   KenaDinding sinarDatar(vec3 kaki, float ax, float az, float jauh, const WalkInput& in) const;
   void luncur(float& dx, float& dz, const WalkInput& in) const;
@@ -113,6 +127,9 @@ private:
   float lihatYaw_ = 0, lihatPitch_ = 0, orbitAz_ = 0, orbitEl_ = 0, toleh_ = 0;
   // walker (uji3dJalanKaki): body position on the ground, heading, look pitch, distance walked (step bob)
   vec3 pejalan_; float jalanYaw_ = 0, jalanPitch_ = 0, tempuh_ = 0;
+  // orang: camera orbit angles around the walker, the body's own yaw (turns towards the travel direction) and
+  // the ground speed of the last step (the avatar's animation is picked from it).
+  float orangYaw_ = 0, orangPitch_ = 0, badanYaw_ = 0, lajuPejalan_ = 0;
   float vyJalan_ = 0; bool diTanah_ = true, lompatSebelum_ = false; int lompatSisa_ = 2;
   // cab sway inputs: filtered longitudinal acceleration of the subject (keretaVisual3d.ts perbaruiAksel, τ 0.35 s)
   std::string subjekId_; float vSebelum_ = 0, aksel_ = 0;

@@ -3,6 +3,7 @@
 // keeps the ABI honest and lets it be unit-tested without a browser.
 #include "engine/api/engine_api.h"
 #include "engine/api/engine_api_edit.h"
+#include "engine/api/engine_api_avatar.h"
 #include "engine/api/engine_api_markers.h"
 #include "engine/api/engine_api_hud.h"
 #include "engine/app/camera_rig.h"
@@ -112,15 +113,15 @@ void updateCamera(float dt) {
   if (g->rig.mode == CamMode::Bebas) { g->rig.step(dt, nullptr, {}, {}); return; }
   auto ground = [](float x, float z) { return g->scene.groundScene(x, z); };
   WalkInput in;
-  if (g->rig.mode == CamMode::Jalan || g->rig.mode == CamMode::Kabin) {   // jalan = walk, kabin = move the eye
+  if (g->rig.mode == CamMode::Jalan || g->rig.mode == CamMode::Orang || g->rig.mode == CamMode::Kabin) {   // jalan / orang = walk, kabin = move the eye
     in.forward = (g->keyW || g->up ? 1.f : 0.f) - (g->keyS || g->down ? 1.f : 0.f);
     in.side = (g->keyD || g->kr ? 1.f : 0.f) - (g->keyA || g->kl ? 1.f : 0.f);
     in.up = (g->keyE ? 1.f : 0.f) - (g->keyQ ? 1.f : 0.f);
     in.run = g->shift;
-    in.jump = g->rig.mode == CamMode::Jalan && g->space;
+    in.jump = (g->rig.mode == CamMode::Jalan || g->rig.mode == CamMode::Orang) && g->space;
   }
   std::vector<WalkBox> boxes;
-  if (g->rig.mode == CamMode::Jalan) { g->scene.collectWalkBoxes(boxes); in.boxes = &boxes; in.mesh = &g->scene.walkCollider(); }
+  if (g->rig.mode == CamMode::Jalan || g->rig.mode == CamMode::Orang) { g->scene.collectWalkBoxes(boxes); in.boxes = &boxes; in.mesh = &g->scene.walkCollider(); }
   TrainPath tp; bool has = subjectPath(tp);
   if (has) { tp.timeScale = g->paused ? 0 : g->timeScale; }
   if (!g->rig.step(dt, has ? &tp : nullptr, ground, in)) eng_camera_mode(0);
@@ -209,6 +210,11 @@ bool eng_hud_view(EngHudView& v) {
 __attribute__((weak)) void eng_markers_draw(ModelRenderer&, vec3, float, int) {}
 __attribute__((weak)) void eng_markers_destroy(void) {}
 
+// Avatar hooks (engine_api_avatar.cpp): the same pattern.
+__attribute__((weak)) void eng_avatar_update(CameraRig&, const WorldOrigin&, float, int) {}
+__attribute__((weak)) void eng_avatar_draw(ModelRenderer&) {}
+__attribute__((weak)) void eng_avatar_destroy(void) {}
+
 // Editing bridge (engine_api_edit.cpp): the scene + the save object, edited in place.
 bool eng_edit_ctx(EngEditCtx& c) {
   if (!g) return false;
@@ -269,6 +275,7 @@ KEEP void eng_resize(int width, int height, float dpr) {
 
 KEEP void eng_shutdown(void) {
   if (!g) return;
+  eng_avatar_destroy();
   eng_markers_destroy();
   g->compass.shutdown(); g->scene.destroy();
   delete g; g = nullptr;
@@ -401,6 +408,8 @@ KEEP void eng_frame(float dt) {
     g->compass.update(g->orbit, cx, cy, w, h, rmb, g->ctrl, g->kl, g->kr, g->up, g->down, dt, g->viewProj.inverse());
   }
   updateCamera(dt);
+  // avatars: the local one rides the walker in "orang", the remote ones only need their clocks
+  eng_avatar_update(g->rig, g->scene.origin(), dt, g->rig.mode == CamMode::Orang ? 1 : 0);
   // LOD context (profilKam acuan): iconic rail line, wesel scale, glow detail; kabin hides the ribbons
   g->scene.refDistance = g->rig.acuan(g->orbit.distance);
   g->scene.cabView = g->rig.mode == CamMode::Kabin;
@@ -416,6 +425,7 @@ KEEP void eng_frame(float dt) {
   if (!g->hoverId.empty() && g->scene.objectPos(g->hoverId, g->hoverSignal, g->hoverPos)) g->scene.drawHoverRing(g->hoverPos, eye);
   { Frustum frustum(g->viewProj); g->scene.trains().draw(g->scene.renderer(), &frustum); }
   g->scene.drawOverlays(eye, camFovY());   // editor: selection box, ghost, ukur, gizmo
+  eng_avatar_draw(g->scene.renderer());                       // player figures (engine_api_avatar.cpp)
   eng_markers_draw(g->scene.renderer(), eye, camFovY(), h);   // editor markers (engine_api_markers.cpp)
   if (g->rig.mode == CamMode::Bebas) g->compass.draw(g->scene.renderer(), g->orbit);
   g->scene.renderer().flushTransparent();
@@ -476,19 +486,20 @@ KEEP const char* eng_stats(void) {
 // ---- camera ----
 KEEP int eng_camera_mode(int mode) {
   if (!g || !g->ready) return 0;
-  CamMode m = (CamMode)std::clamp(mode, 0, 5);
+  CamMode m = (CamMode)std::clamp(mode, 0, CAM_MODE_COUNT - 1);
   if (m == g->rig.mode) return mode;
   TrainPath tp;
-  if (m != CamMode::Bebas && m != CamMode::Jalan && !subjectPath(tp)) return (int)g->rig.mode;
+  if (m != CamMode::Bebas && m != CamMode::Jalan && m != CamMode::Orang && !subjectPath(tp)) return (int)g->rig.mode;
   vec3 eye = camEye(), look = g->rig.mode != CamMode::Bebas ? g->rig.look() : g->orbit.target;
   CamMode old = g->rig.mode;
   if (m == CamMode::Bebas) {
-    if (old == CamMode::Jalan) look = eye + normalize(look - eye) * 60;
+    if (old == CamMode::Jalan || old == CamMode::Orang) look = eye + normalize(look - eye) * 60;
     vec3 o = eye - look; float d = std::fmax(length(o), 2.f);
     g->orbit.target = look; g->orbit.distance = d; g->orbit.pitch = std::asin(std::clamp(o.y / d, -0.999f, 0.999f)); g->orbit.yaw = std::atan2(o.x, o.z);
   }
   g->rig.setMode(m, eye, look);
   if (m == CamMode::Jalan) g->rig.enterWalk(eye, look, [](float x, float z) { return g->scene.groundScene(x, z); });
+  if (m == CamMode::Orang) g->rig.enterOrang(eye, look, [](float x, float z) { return g->scene.groundScene(x, z); });
   return (int)m;
 }
 KEEP int eng_get_camera_mode(void) { return g ? (int)g->rig.mode : 0; }

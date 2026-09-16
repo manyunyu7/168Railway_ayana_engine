@@ -88,7 +88,7 @@ void Game::drawUi(int w, int h) {
   if (ui_.button({x, y, 90, bh}, "meja layan", panel_.visible)) { panel_.visible = !panel_.visible; if (panel_.visible) panel_.fitStation("", w, h); } x += 96;
   if (ui_.button({x, y, 60, bh}, "fly", useFly_ && rig_.mode == CamMode::Bebas, rig_.mode == CamMode::Bebas)) { useFly_ = !useFly_; if (useFly_) { fly_.position = orbit_.position(); vec3 d = normalize(orbit_.target - fly_.position); fly_.yaw = std::atan2(-d.x, -d.z); fly_.pitch = std::asin(d.y); } } x += 72;
   // camera modes (§9.1): 1 bebas .. 6 ekor; Z = telescope (hold) / click = lock
-  for (int i = 0; i < 6; ++i) { CamMode m = (CamMode)i; float bw = 64; if (ui_.button({x, y, bw, bh}, camModeName(m), rig_.mode == m)) setCamMode(m); x += bw + 4; }
+  for (int i = 0; i < CAM_MODE_COUNT; ++i) { CamMode m = (CamMode)i; float bw = 64; if (ui_.button({x, y, bw, bh}, camModeName(m), rig_.mode == m)) setCamMode(m); x += bw + 4; }
   if (ui_.button({x, y, 30, bh}, "Z", rig_.teropongKunci || rig_.teropongTahan, rig_.bolehTeropong())) rig_.teropongKunci = !rig_.teropongKunci;
 
   // --- clock prompt (modal-ish box under the top bar) ---

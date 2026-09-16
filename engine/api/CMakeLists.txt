@@ -1,7 +1,7 @@
 # `ayana` — the engine as an ES module for the reference web client (ppka-wannabe-2/src/tiga-ayana).
 # Emscripten only (the root CMakeLists adds this directory in the wasm preset). Output: build/wasm/ayana.js
 # + ayana.wasm + ayana.data (the font); web/deploy-to-ppka.sh copies them to ppka-wannabe-2/public/ayana/.
-add_executable(ayana engine_api.cpp engine_api_hud.cpp engine_api_edit.cpp engine_api_markers.cpp main_stub.cpp)
+add_executable(ayana engine_api.cpp engine_api_hud.cpp engine_api_edit.cpp engine_api_markers.cpp engine_api_avatar.cpp main_stub.cpp)
 target_link_libraries(ayana PRIVATE engine)
 set(AYANA_EXPORTS
   _eng_init _eng_resize _eng_shutdown _eng_load_world _eng_terrain_index _eng_terrain_tile _eng_terrain_tile_rgba _eng_terrain_tile_fail _eng_city_json _eng_set_state
@@ -18,7 +18,8 @@ set(AYANA_EXPORTS
   _eng_garis_set _eng_node_height _eng_rails_rebuild _eng_terrain_delta _eng_track_edit
   _eng_highlight _eng_gizmo _eng_gizmo_hit _eng_gizmo_angle _eng_ghost _eng_ukur_line
   _eng_node_info _eng_veg_mask _eng_node_handles _eng_ghost_lines _eng_pick_node
-  _eng_hiasan_text _eng_thumbnail)
+  _eng_hiasan_text _eng_thumbnail
+  _eng_avatar_set_local _eng_avatar_local_json _eng_avatar_upsert _eng_avatar_remove _eng_avatar_gesture _eng_avatar_outfit _eng_avatar_screen)
 string(REPLACE ";" "," AYANA_EXPORTS_CSV "${AYANA_EXPORTS}")
 target_link_options(ayana PRIVATE
   "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/font.efnt@/assets/font.efnt"

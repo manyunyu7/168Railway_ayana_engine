@@ -81,7 +81,9 @@ void eng_side_flip(void);                                         // `Pindah sis
 void eng_set_rig_param(float value);
 float eng_get_rig_param(void);
 
-// camera (modes as engine/app/camera_rig.h CamMode: 0 bebas 1 jalan 2 kabin 3 samping 4 atas 5 ekor)
+// camera (modes as engine/app/camera_rig.h CamMode: 0 bebas 1 jalan 2 kabin 3 samping 4 atas 5 ekor 6 orang)
+// "orang" = third person behind the local avatar: boom 4.5 m (scroll 2..9), target 1.8 m over its feet, pitch -12
+// at entry, drag orbits, WASD is relative to the camera's yaw and the avatar turns onto the direction it travels.
 int eng_camera_mode(int mode);       // returns the mode in effect (a train mode without a train stays put)
 int eng_get_camera_mode(void);
 void eng_orbit(float dx, float dy);  // pixels
@@ -189,6 +191,21 @@ int eng_gizmo_hit(float x, float y);            // 0 none, 1 ring (thick 0.7..1.
 float eng_gizmo_angle(float x, float y);        // cursor angle in the ring plane (rad, three convention), 1e9 = miss
 int eng_ghost(const char* modelId, double wx, double wy, float rotDeg, float skala);   // translucent blue model at the cursor (uji3dTata hantu); "" hides
 int eng_ukur_line(const char* json);            // [{x,y},...] world polyline drawn 0.4 m over the ground; "[]" / "" clears. Labels: the host projects the points (eng_project)
+
+// ---- avatar (engine_api_avatar.cpp; engine/world/avatar.h; ppka-wannabe-2/docs/multiplayer.md §4/§5) ----
+// The player figures of an online session. The LOCAL avatar (id 0) is driven by the engine: it is the walker of
+// the third-person camera (eng_camera_mode(6) = "orang"), so eng_avatar_set_local only takes the outfit / anim /
+// gesture and its position field is ignored; eng_avatar_local_json gives back what the host relays at 15 Hz.
+// Remote avatars are pushed in as they arrive and smoothed inside the engine (drawn 100 ms behind, extrapolated
+// for at most 200 ms). AvatarState JSON: {x, y, z (world metres, y south-positive, z = height), yaw (rad, 0 = +x),
+// anim "diam|jalan|lari|lompat|duduk", gesture? "s40|s3|s1|hormat|lambai|tunjuk", gestureT?, pakaian {...}}.
+void eng_avatar_set_local(const char* json);
+const char* eng_avatar_local_json(void);            // pointer to a static buffer, valid until the next call
+void eng_avatar_upsert(int id, const char* json);   // id = userId (0 = local: outfit only)
+void eng_avatar_remove(int id);
+void eng_avatar_gesture(const char* nama);          // local avatar: play a gesture once ("" cancels)
+void eng_avatar_outfit(int id, const char* pakaianJson);   // 0 = local
+int eng_avatar_screen(int id, float* out);          // out[2] = css px of the head top; 1 = in front of the camera
 
 // ---- markers (engine_api_markers.cpp; engine/app/markers.h) — a batch of world-space editor markers (spline handles,
 // trackside / scenery markers, measurement lines) replaced as a whole from JSON and drawn after the world overlays:

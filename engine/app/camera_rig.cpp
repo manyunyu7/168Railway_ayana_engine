@@ -9,6 +9,9 @@ namespace {
 constexpr float ZOOM_LIPAT = 4, FOV_MIN = 8, ZOOM_TAU = 0.09f;     // uji3dZoom.ts
 constexpr float EL_MIN = -8 * PI / 180, EL_MAKS = PI / 2;            // uji3dOrbit.ts elevation clamp
 constexpr float MATA_JALAN = 1.62f, LAJU_JALAN = 4.5f, LAJU_LARI = 12; // walker eye / speeds
+constexpr float LAJU_ORANG = 1.4f, LARI_ORANG = 4.5f;                  // avatar speeds (docs/multiplayer.md §5)
+constexpr float MATA_ORANG = 1.8f, ORANG_MIN = 2, ORANG_MAKS = 9, PITCH_ORANG = -12 * PI / 180;
+constexpr float BADAN_TAU = 0.12f;                                     // how fast the body turns onto the travel direction
 constexpr float RADIUS_JALAN = 0.38f, NAIK_MAKS = 0.45f, GRAVITASI = 9.81f, LAJU_LOMPAT = 4.6f; constexpr int LOMPAT_MAKS = 2;
 constexpr float TINGGI_SINAR[3] = {0.35f, 1.05f, 1.55f};   // knee, chest, head above the feet
 constexpr float KERB_PERON = 1.1f, RUANG_KEPALA = 0.12f, MIRING_MIN = 0.25f;   // platform kerb stepped onto without a jump; head room under a ceiling
@@ -21,15 +24,17 @@ float fovTeropong(float baku) { return std::max(FOV_MIN, baku / ZOOM_LIPAT); }
 float fovDariCampur(float baku, float c) { c = std::clamp(c, 0.f, 1.f); return baku + (fovTeropong(baku) - baku) * c; }
 float skalaSeret(float kini, float baku) { return std::tan(kini * PI / 360) / std::tan(baku * PI / 360); }
 vec3 horizontal(vec3 v) { v.y = 0; return v; }
+float shortAngle(float a) { while (a > PI) a -= 2 * PI; while (a < -PI) a += 2 * PI; return a; }
 } // namespace
 
 bool parseCamMode(const std::string& s, CamMode& out) {
-  for (int i = 0; i < 6; ++i) if (s == camModeName((CamMode)i)) { out = (CamMode)i; return true; }
+  for (int i = 0; i < CAM_MODE_COUNT; ++i) if (s == camModeName((CamMode)i)) { out = (CamMode)i; return true; }
   return false;
 }
 
 CamProfile camProfile(CamMode m) {
   switch (m) {
+    case CamMode::Orang:   return {"Orang ketiga", 0.1f, 12000, 60, false, 400, 5000, 12};
     case CamMode::Jalan:   return {"Jalan-jalan", 0.1f, 12000, 70, false, 400, 5000, 999};
     case CamMode::Kabin:   return {"Kabin", 0.15f, 12000, 62, false, 500, 6000, 26};
     case CamMode::Samping: return {"Samping", 0.5f, 20000, 52, false, 700, 9000, 7};
@@ -75,6 +80,16 @@ void CameraRig::enterWalk(vec3 eye, vec3 look, const GroundFn& ground) {
   jalanPitch_ = 0; tempuh_ = 0;
   pejalan_ = {look.x, ground(look.x, look.z), look.z};
   vyJalan_ = 0; diTanah_ = true; lompatSisa_ = LOMPAT_MAKS; lompatSebelum_ = false;
+}
+
+// ORANG: the walker stands where the previous view was aimed, the camera swings behind it.
+void CameraRig::enterOrang(vec3 eye, vec3 look, const GroundFn& ground) {
+  enterWalk(eye, look, ground);
+  vec3 arah = horizontal(look - eye);
+  orangYaw_ = dot(arah, arah) > 1e-6f ? std::atan2(-arah.x, -arah.z) : 0;   // same convention as jalanYaw_
+  orangPitch_ = PITCH_ORANG;
+  badanYaw_ = std::atan2(std::cos(orangYaw_), -std::sin(orangYaw_));         // body faces where the camera looks
+  lajuPejalan_ = 0;
 }
 
 // dunia3d.ts rig(): position + look point for the train modes
@@ -236,17 +251,24 @@ void CameraRig::luncur(float& dx, float& dz, const WalkInput& in) const {
 // the nearest mesh floor probed from NAIK_MAKS above the feet (KERB_PERON for platform floors, so a 1 m platform is
 // stepped onto at its edge; ramps and stairs are ordinary floors). Jump on the key's rising edge (double jump
 // while the quota lasts), gravity otherwise; a ceiling stops the rise (head room RUANG_KEPALA over the eye).
-void CameraRig::langkahJalan(float dtRaw, const GroundFn& ground, const WalkInput& in) {
+void CameraRig::langkahPejalan(float dtRaw, const GroundFn& ground, const WalkInput& in, float yaw, float vJalan, float vLari) {
   const float dt = std::min(0.05f, std::max(0.f, dtRaw));   // a stalled frame must not teleport through a wall
-  vec3 fwd{-std::sin(jalanYaw_), 0, -std::cos(jalanYaw_)}, right{std::cos(jalanYaw_), 0, -std::sin(jalanYaw_)};
-  float v = in.run ? LAJU_LARI : LAJU_JALAN;
+  vec3 fwd{-std::sin(yaw), 0, -std::cos(yaw)}, right{std::cos(yaw), 0, -std::sin(yaw)};
+  float v = in.run ? vLari : vJalan;
   vec3 move = fwd * in.forward + right * in.side;
+  lajuPejalan_ = 0;
   if (dot(move, move) > 1e-6f) {
     move = normalize(move) * (v * dt);
     float dx = move.x, dz = move.z;
     luncur(dx, dz, in);
     pejalan_.x += dx; pejalan_.z += dz;
-    tempuh_ += std::hypot(dx, dz);
+    float d = std::sqrt(dx * dx + dz * dz);
+    tempuh_ += d;
+    lajuPejalan_ = dt > 0 ? d / dt : 0;
+    if (d > 1e-5f) {   // body yaw follows the direction actually travelled (sliding along a wall turns it too)
+      float mau = std::atan2(-dz, dx);
+      badanYaw_ += shortAngle(mau - badanYaw_) * (1 - std::exp(-dt / BADAN_TAU));
+    }
   }
   // vertical: floor under the feet
   float lantai = ground(pejalan_.x, pejalan_.z); bool lantaiPeron = false;
@@ -286,11 +308,58 @@ void CameraRig::langkahJalan(float dtRaw, const GroundFn& ground, const WalkInpu
     if (pejalan_.y <= lantai) { pejalan_.y = lantai; vyJalan_ = 0; diTanah_ = true; lompatSisa_ = LOMPAT_MAKS; }
     else diTanah_ = false;
   }
+}
+
+// JALAN: the eye rides the walker (first person).
+void CameraRig::langkahJalan(float dt, const GroundFn& ground, const WalkInput& in) {
+  langkahPejalan(dt, ground, in, jalanYaw_, LAJU_JALAN, LAJU_LARI);
   float ayun = diTanah_ ? std::sin(tempuh_ * 2.1f) * 0.035f : 0;   // step bob from distance walked, not time; none in the air
   posKam_ = {pejalan_.x, pejalan_.y + MATA_JALAN + ayun, pejalan_.z};
   vec3 arah{-std::sin(jalanYaw_) * std::cos(jalanPitch_), std::sin(jalanPitch_), -std::cos(jalanYaw_) * std::cos(jalanPitch_)};
   lihatKam_ = posKam_ + arah * 60;
   camPos_ = posKam_; camLook_ = lihatKam_; camUp_ = {0, 1, 0};
+}
+
+// Boom length that clears the world: the walls (WalkCollider) and the vehicle boxes between the target and the
+// eye pull the camera in. The wall ray is horizontal (the collider only knows horizontal rays), so a steep boom
+// is tested over its horizontal reach — enough to stop the camera passing through a station wall.
+float CameraRig::boomOrang(vec3 target, vec3 dir, float maks, const WalkInput& in) const {
+  float jarak = maks;
+  float hx = dir.x, hz = dir.z, hl = std::sqrt(hx * hx + hz * hz);
+  if (in.mesh && hl > 1e-3f) {
+    WalkCollider::WallHit k;
+    float jauh = maks * hl;
+    if (in.mesh->wallRay({target.x, target.y, target.z}, hx / hl, hz / hl, jauh, k)) jarak = std::min(jarak, std::max(0.f, k.dist / hl - 0.25f));
+  }
+  if (in.boxes) for (const WalkBox& wb : *in.boxes) {   // segment vs AABB (slab test along the boom)
+    if (!wb.wall) continue;
+    const AABB& b = wb.box;
+    float t0 = 0, t1 = jarak; bool luar = false;
+    const float o[3] = {target.x, target.y, target.z}, d[3] = {dir.x, dir.y, dir.z};
+    const float mn[3] = {b.min.x, b.min.y, b.min.z}, mx[3] = {b.max.x, b.max.y, b.max.z};
+    for (int i = 0; i < 3 && !luar; ++i) {
+      if (std::fabs(d[i]) < 1e-9f) { if (o[i] < mn[i] || o[i] > mx[i]) luar = true; continue; }
+      float inv = 1 / d[i], a = (mn[i] - o[i]) * inv, c = (mx[i] - o[i]) * inv; if (a > c) std::swap(a, c);
+      t0 = std::max(t0, a); t1 = std::min(t1, c);
+      if (t0 > t1) luar = true;
+    }
+    if (!luar) jarak = std::min(jarak, std::max(0.f, t0 - 0.25f));
+  }
+  return std::max(0.4f, jarak);
+}
+
+// ORANG: the walker carries the avatar, the camera orbits behind it (drag = yaw/pitch, scroll = boom).
+void CameraRig::langkahOrang(float dt, const GroundFn& ground, const WalkInput& in) {
+  langkahPejalan(dt, ground, in, orangYaw_, LAJU_ORANG, LARI_ORANG);
+  vec3 target{pejalan_.x, pejalan_.y + MATA_ORANG, pejalan_.z};
+  float cp = std::cos(orangPitch_), sp = std::sin(orangPitch_);
+  vec3 arah{-std::sin(orangYaw_) * cp, sp, -std::cos(orangYaw_) * cp};   // camera view direction
+  jarakOrang = std::clamp(jarakOrang, ORANG_MIN, ORANG_MAKS);
+  float jarak = boomOrang(target, arah * -1.f, jarakOrang, in);
+  posKam_ = target - arah * jarak;
+  posKam_.y = std::max(posKam_.y, ground(posKam_.x, posKam_.z) + 0.4f);
+  lihatKam_ = target;
+  upKam_ = {0, 1, 0};
 }
 
 // KABIN: move the eye with the keys (clamped in rig()) and filter the subject's acceleration for the brake pitch.
@@ -318,6 +387,14 @@ bool CameraRig::step(float dt, const TrainPath* subject, const GroundFn& ground,
   langkahZoom(dt);
   if (mode == CamMode::Bebas) return true;
   if (mode == CamMode::Jalan) { langkahJalan(dt, ground, walk); return true; }
+  if (mode == CamMode::Orang) {
+    langkahOrang(dt, ground, walk);
+    campurKam_ = std::min(1.f, campurKam_ + dt / 0.4f);
+    float redam = 4 + (camProfile(mode).redam - 4) * campurKam_;
+    float k = 1 - std::exp(-redam * std::max(0.f, dt));
+    camPos_ = lerp(camPos_, posKam_, k); camLook_ = lerp(camLook_, lihatKam_, k); camUp_ = {0, 1, 0};
+    return true;
+  }
   if (!subject || !subject->valid()) return false;
   if (mode == CamMode::Kabin) langkahKabin(dt, walk, *subject);
   if (!rig(*subject, ground)) return false;
@@ -339,6 +416,7 @@ bool CameraRig::step(float dt, const TrainPath* subject, const GroundFn& ground,
 void CameraRig::drag(float dx, float dy) {
   float sk = skalaSeret(fovKini_, fovBaku());   // slower while zoomed: screen pixels per drag pixel stay constant
   if (mode == CamMode::Kabin) { lihatYaw_ -= dx * DRAG_KABIN * sk; lihatPitch_ = std::clamp(lihatPitch_ - dy * DRAG_KABIN * sk, -1.2f, 1.2f); toleh_ = 0; }
+  else if (mode == CamMode::Orang) { orangYaw_ -= dx * DRAG_ORBIT * sk; orangPitch_ = std::clamp(orangPitch_ - dy * DRAG_ORBIT * sk, -1.2f, 1.0f); }
   else if (mode == CamMode::Jalan) { jalanYaw_ -= dx * DRAG_JALAN * sk; jalanPitch_ = std::clamp(jalanPitch_ - dy * DRAG_JALAN * sk, -1.4f, 1.4f); }
   else if (mode != CamMode::Bebas) { orbitAz_ += dx * DRAG_ORBIT * sk; orbitEl_ += dy * DRAG_ORBIT * sk; }
 }
@@ -348,6 +426,7 @@ void CameraRig::scroll(float steps) {
   switch (mode) {
     case CamMode::Kabin: fovKabin = std::clamp(fovKabin * f, 20.f, 90.f); break;   // zoom (fov); W/S move the eye
     case CamMode::Jalan: fovJalan = std::clamp(fovJalan * f, 45.f, 95.f); break;
+    case CamMode::Orang: jarakOrang = std::clamp(jarakOrang / f, ORANG_MIN, ORANG_MAKS); break;   // scroll up = closer
     case CamMode::Samping: jarakSamping = std::clamp(jarakSamping * f, 8.f, 160.f); break;
     case CamMode::Atas: tinggiAtas = std::clamp(tinggiAtas * f, 40.f, 2000.f); break;
     case CamMode::Ekor: jarakEkor = std::clamp(jarakEkor * f, 10.f, 200.f); break;
