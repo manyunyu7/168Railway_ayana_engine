@@ -178,13 +178,14 @@ void ModelRenderer::drawItem(const DrawItem& d) {
   float det = w[0][0] * (w[1][1] * w[2][2] - w[1][2] * w[2][1]) - w[1][0] * (w[0][1] * w[2][2] - w[0][2] * w[2][1]) + w[2][0] * (w[0][1] * w[1][2] - w[0][2] * w[1][1]);
   rhi::setFrontFaceCCW(det >= 0);
   rhi::setUniform(u.instanced, d.instances ? 1 : 0);
-  if (d.instances) rhi::drawMeshInstanced(*d.mesh, d.instances); else rhi::drawMesh(*d.mesh);
+  if (d.instances) { rhi::attachInstances(*d.mesh, d.instanceBuf); rhi::drawMeshInstanced(*d.mesh, d.instances); }
+  else rhi::drawMesh(*d.mesh);
   ++drawCalls;
 }
 
 void ModelRenderer::submit(DrawItem d) {
   if (d.material->alphaMode == AlphaMode::Blend) {
-    d.depth = length(d.world.transformPoint({}) - eye_);
+    d.depth = length((d.instances ? d.sortPoint : d.world.transformPoint({})) - eye_);
     transparent_.push_back(d);
   } else drawItem(d);
 }
@@ -203,15 +204,15 @@ void ModelRenderer::draw(const GpuModel& model, const mat4& transform, const Fru
   }
 }
 
-void ModelRenderer::drawInstanced(const GpuModel& model, const mat4& transform, uint32_t count) {
+void ModelRenderer::drawInstanced(const GpuModel& model, const mat4& transform, uint32_t count, rhi::Buffer instances, vec3 sortPoint) {
   static const Material DEFAULT;
-  if (!count) return;
+  if (!count || !instances.id) return;
   for (size_t n = 0; n < model.nodes.size(); ++n) {
     int mi = model.nodes[n].mesh; if (mi < 0) continue;
     mat4 w = transform * model.world[n];
     for (const GpuPrimitive& p : model.meshes[(size_t)mi].primitives) {
       const Material& mt = p.material >= 0 ? model.materials[(size_t)p.material] : DEFAULT;
-      submit({&p.mesh, &mt, &model.textures, {}, w, 0, count});
+      submit({&p.mesh, &mt, &model.textures, {}, w, 0, count, nullptr, instances, sortPoint});
     }
   }
 }

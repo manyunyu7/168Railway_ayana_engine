@@ -66,7 +66,8 @@ int main() {
   std::printf("models: tree %d station %d\n", haveTree, haveStation);
   { Json st = Json::parse(eng_stats(), &err); CHECK(st["decor"].boolOr(false));
     std::printf("textures: %d unique, %d refs, %.1f MB, %.1f MB shared\n", st["textures"]["unique"].intOr(0), st["textures"]["refs"].intOr(0),
-                st["textures"]["mb"].numberOr(0), st["textures"]["sharedMb"].numberOr(0)); }
+                st["textures"]["mb"].numberOr(0), st["textures"]["sharedMb"].numberOr(0));
+    std::printf("hiasan: %d drawn, %d instanced\n", st["hiasan"]["drawn"].intOr(0), st["hiasan"]["instanced"].intOr(0)); }
   eng_frame(0.016f);
   EngEditCtx c; CHECK(eng_edit_ctx(c) && c.ready && c.viewValid);
   WorldScene& scene = *c.scene;

@@ -72,14 +72,16 @@ public:
   // Frustum culling uses the rest-pose bounds grown by `boundsPad` metres — a posed skeleton leaves them.
   void drawSkinned(const GpuModel& model, const mat4& transform, const std::vector<mat4>& palette,
                    const Frustum* frustum = nullptr, float boundsPad = 1.0f);
-  // Instanced: every primitive of the model must have had an instance buffer attached
-  // (rhi::attachInstances); draws `count` copies, world = transform * node * instance.
-  void drawInstanced(const GpuModel& model, const mat4& transform, uint32_t count);
+  // Instanced: draws `count` copies, world = transform * node * instance, the instance matrices read from
+  // `instances` (mat4 per copy, rhi::createDynamicBuffer). The buffer is attached to every primitive at draw
+  // time, so several users may instance the same model with their own buffers (trees, garis, hiasan).
+  // `sortPoint`: where blended primitives sort against the other transparent draws (a representative instance).
+  void drawInstanced(const GpuModel& model, const mat4& transform, uint32_t count, rhi::Buffer instances, vec3 sortPoint = {});
   void flushTransparent();   // call after all draws of the frame
   unsigned drawCalls = 0, culled = 0;   // per-frame stats (reset in beginFrame)
   vec3 eye() const { return eye_; }     // camera position given to beginFrame
 private:
-  struct DrawItem { const rhi::Mesh* mesh; const Material* material; const std::vector<rhi::Texture>* textures; rhi::Texture baseTex; mat4 world; float depth; uint32_t instances = 0; const std::vector<mat4>* palette = nullptr; };
+  struct DrawItem { const rhi::Mesh* mesh; const Material* material; const std::vector<rhi::Texture>* textures; rhi::Texture baseTex; mat4 world; float depth; uint32_t instances = 0; const std::vector<mat4>* palette = nullptr; rhi::Buffer instanceBuf{}; vec3 sortPoint{}; };
   void drawItem(const DrawItem& d);
   void submit(DrawItem d);
   struct Uniforms { int viewProj, model, eye, sunDir, sunColor, skyColor, groundColor, baseColor, emissive, metallic, roughness,

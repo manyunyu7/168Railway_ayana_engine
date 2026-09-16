@@ -56,7 +56,7 @@ void eng_set_paused(int paused);     // game paused: JPL arms / cloud drift free
 // changes in the engine. Unknown name = 0. All on by default (benang off).
 int eng_set_layer(const char* name, int on);
 const char* eng_stats(void);         // JSON: fps, drawCalls, buildMs, summary, pending assets, terrain {near, far, patches, resident, requested, pendingJobs, trees},
-                                     // textures {unique, refs, mb, sharedMb: GPU MB not uploaded twice thanks to atlas sharing}
+                                     // textures {unique, refs, mb, sharedMb: GPU MB not uploaded twice thanks to atlas sharing}, hiasan {drawn, instanced} (last frame)
 
 // ---- quality / world look (dunia3d.ts laci KAMERA; the host persists the choices) ----
 // Quality tier (dunia3dKonst.ts TINGKAT_MUTU): 0 penuh .. 4 minimum -> tree draw radius 3200/2600/2000/1400/900 m and
@@ -207,6 +207,11 @@ void eng_avatar_remove(int id);
 void eng_avatar_gesture(const char* nama);          // local avatar: play a gesture once ("" cancels)
 void eng_avatar_outfit(int id, const char* pakaianJson);   // 0 = local
 int eng_avatar_screen(int id, float* out);          // out[2] = css px of the head top; 1 = in front of the camera
+// Asset slots the skinned figures need, as a JSON array of catalog ids ("avatar:rangka", "avatar:tubuh-baku", ...)
+// for the outfits currently known (local + remotes). The host may prefetch them; the engine requests every slot
+// it draws by itself anyway (eng_model_begin_glb, same path as any other catalog model) and falls back to the
+// placeholder body until they arrive.
+const char* eng_avatar_assets_json(void);
 
 // ---- markers (engine_api_markers.cpp; engine/app/markers.h) — a batch of world-space editor markers (spline handles,
 // trackside / scenery markers, measurement lines) replaced as a whole from JSON and drawn after the world overlays:

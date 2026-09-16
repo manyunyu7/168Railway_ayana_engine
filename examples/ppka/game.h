@@ -3,6 +3,7 @@
 #include "engine/app/camera_rig.h"
 #include "engine/app/compass.h"
 #include "engine/app/world_scene.h"
+#include "engine/render/texture_cache.h"
 #include "engine/core/fly_camera.h"
 #include "engine/core/orbit_camera.h"
 #include "engine/core/window.h"
@@ -23,6 +24,13 @@ public:
   void shutdown();
   void frame(Window& win, double realDt);
   bool wantsCapture(int& frameNo) const;
+  // Per-frame render counters for the capture log: draw calls, culled primitives, hiasan instancing, texture sharing.
+  std::string debugRender() const {
+    const WorldSceneStats& st = scene_.stats(); const TextureCacheStats tc = textureCacheStats();
+    char b[240]; std::snprintf(b, sizeof b, "draws %u culled %u hiasan %u/%u instanced textures %u unique %u refs %.1f MB (%.1f MB shared)",
+                               scene_.renderer().drawCalls, scene_.renderer().culled, st.hiasanInstanced, st.hiasanDrawn, tc.entries, tc.references, tc.bytes / 1e6, tc.bytesShared / 1e6);
+    return b;
+  }
   std::string debugCamera() const { char b[200]; vec3 e = camEye(); std::snprintf(b, sizeof b, "target %.4f %.4f %.4f eye %.4f %.4f %.4f d %.3f yaw %.5f pitch %.5f clock %.3f", orbit_.target.x, orbit_.target.y, orbit_.target.z, e.x, e.y, e.z, orbit_.distance, orbit_.yaw, orbit_.pitch, sim_.state().clock); return b; }
 
 private:

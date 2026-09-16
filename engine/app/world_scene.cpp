@@ -177,7 +177,7 @@ void WorldScene::draw(const mat4& viewProj, const mat4& view, vec3 eye, float fo
   if (layers.pohon) trees_.draw(renderer_, eye, &frustum);
   double hh = std::fmod(clock / 3600.0, 24.0); bool night = hh < 6 || hh >= 18;
   rails_.draw(renderer_, &frustum, refDistance, night, benangAlways);
-  for (const Placed& p : scenery_) if (p.model->textured() && frustum.contains(p.bounds)) renderer_.draw(*p.model, p.xf, &frustum);   // skipped while textures stream
+  drawScenery(frustum);
   if (meja_.count()) { meja_.update(state_, eye, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count()); meja_.draw(renderer_, eye); }
   if (papan_.count()) papan_.draw(renderer_, eye, &frustum);
   signals_.setView(fovY, viewportH, night); trains_.setView(fovY, viewportH, night);
@@ -193,7 +193,31 @@ void WorldScene::draw(const mat4& viewProj, const mat4& view, vec3 eye, float fo
   if (drawTrains) trains_.draw(renderer_, &frustum);
 }
 
+void WorldScene::drawScenery(const Frustum& frustum) {
+  for (auto& [m, g] : hiasanGroups_) g.mats.clear();
+  stats_.hiasanDrawn = stats_.hiasanInstanced = 0;
+  for (const Placed& p : scenery_) {
+    if (!p.model->textured() || !frustum.contains(p.bounds)) continue;   // skipped while textures stream
+    hiasanGroups_[p.model].mats.push_back(p.xf);
+    ++stats_.hiasanDrawn;
+  }
+  for (auto& [model, g] : hiasanGroups_) {
+    if (g.mats.empty()) continue;
+    if (g.mats.size() == 1) { renderer_.draw(*model, g.mats[0], &frustum); continue; }   // per-primitive culling for singles
+    if (g.mats.size() > g.cap) {   // (re)allocate with headroom
+      if (g.buf.id) rhi::destroyBuffer(g.buf);
+      g.cap = std::max<size_t>(16, g.mats.size() * 2);
+      g.buf = rhi::createDynamicBuffer(g.cap * sizeof(mat4));
+    }
+    rhi::updateBuffer(g.buf, std::as_bytes(std::span(g.mats)));
+    renderer_.drawInstanced(*model, mat4::identity(), (uint32_t)g.mats.size(), g.buf, g.mats[0].transformPoint({}));
+    stats_.hiasanInstanced += (unsigned)g.mats.size();
+  }
+}
+
 void WorldScene::destroy() {
+  for (auto& [m, g] : hiasanGroups_) if (g.buf.id) rhi::destroyBuffer(g.buf);
+  hiasanGroups_.clear();
   trains_.shutdown(); trees_.destroy(); garis_.destroy(); clouds_.destroy(); boards_.destroy(); jpl_.destroy(); city_.destroy();
   meja_.destroy(); papan_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy(); routes_.destroy();
   scenery_.clear(); walk_.clear(); walkDirty_ = false;

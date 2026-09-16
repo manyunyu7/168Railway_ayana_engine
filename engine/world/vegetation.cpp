@@ -30,7 +30,6 @@ void Vegetation::build(const Terrain& terrain, AssetCatalog& catalog, std::span<
     ModelSlot slot{m, {}, {}, {}};
     slot.norm = mat4::scale({1 / sz.y, 1 / sz.y, 1 / sz.y}) * mat4::translation({-c.x, -m->bounds.min.y, -c.z});   // unit height, trunk at origin
     slot.instances = rhi::createDynamicBuffer((size_t)INSTANCE_CAP * sizeof(mat4));
-    for (GpuMesh& gm : m->meshes) for (GpuPrimitive& p : gm.primitives) rhi::attachInstances(p.mesh, slot.instances);
     models_.push_back(slot);
   }
   stats = {};
@@ -191,7 +190,7 @@ void Vegetation::draw(ModelRenderer& r, vec3 eye, const Frustum* frustum) {
     if (m.mats.empty()) continue;
     rhi::updateBuffer(m.instances, std::as_bytes(std::span(m.mats)));
     if (!m.model->textured()) continue;   // textures still streaming
-    r.drawInstanced(*m.model, mat4::identity(), (uint32_t)m.mats.size());
+    r.drawInstanced(*m.model, mat4::identity(), (uint32_t)m.mats.size(), m.instances, m.mats.front().transformPoint({}));
   }
   stats.drawn = total;
 }

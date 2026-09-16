@@ -135,7 +135,6 @@ void GarisVisuals::build(const Json& hiasan, AssetCatalog& catalog, const WorldO
     if (slot.mats.empty()) continue;
     slot.instances = rhi::createDynamicBuffer(slot.mats.size() * sizeof(mat4));
     rhi::updateBuffer(slot.instances, std::as_bytes(std::span(slot.mats)));
-    for (GpuMesh& gm : slot.model->meshes) for (GpuPrimitive& p : gm.primitives) rhi::attachInstances(p.mesh, slot.instances);
   }
   stats.glbSlots = slots_.size();
   for (auto& [key, mb] : procBuild_) {
@@ -152,7 +151,7 @@ void GarisVisuals::draw(ModelRenderer& r, const Frustum* frustum) {
   for (auto& [id, slot] : slots_) {
     if (slot.mats.empty() || (frustum && !frustum->contains(slot.bounds))) continue;
     if (!slot.model->textured()) continue;   // textures still streaming
-    r.drawInstanced(*slot.model, mat4::identity(), (uint32_t)slot.mats.size());
+    r.drawInstanced(*slot.model, mat4::identity(), (uint32_t)slot.mats.size(), slot.instances, slot.bounds.center());
   }
   for (const ProcMesh& pm : proc_) {
     if (frustum && !frustum->contains(pm.bounds)) continue;

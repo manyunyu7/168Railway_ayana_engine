@@ -31,12 +31,16 @@
 #include "engine/world/vegetation.h"
 #include "engine/world/walk_collision.h"
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
 namespace eng {
 
-struct WorldSceneStats { double buildMs = 0; std::string summary; };
+struct WorldSceneStats {
+  double buildMs = 0; std::string summary;
+  unsigned hiasanDrawn = 0, hiasanInstanced = 0;   // per frame: visible placements, and how many of them went out instanced
+};
 
 // Visibility toggles (the web client's "Tampilan" drawer, dunia3dKonst.ts TAMPIL_BAKU): everything on by default
 // here, the host applies its own defaults (pita and wesel off in the reference client). Hidden point arrows are
@@ -96,6 +100,7 @@ public:
   void setStationScene(vec3 p) { stationScene_ = p; }
 
   ModelRenderer& renderer() { return renderer_; }
+  const ModelRenderer& renderer() const { return renderer_; }
   Sky& sky() { return sky_; }
   Lighting& lighting() { return light_; }
   Terrain& terrain() { return terrain_; }
@@ -220,6 +225,12 @@ private:
   AssetCatalog catalog_; RollingStock stock_; TrainVisuals trains_;
   struct Placed { GpuModel* model; mat4 xf; AABB bounds; int objIndex = -1; };   // objIndex: world.hiasan.objek[]
   std::vector<Placed> scenery_;
+  // Repeated hiasan (the same model placed several times: houses, shops, lamps) go out as one instanced draw
+  // per model: each frame the visible placements are bucketed by model, singles drawn as before. Groups are
+  // keyed by the catalog's GpuModel pointer (stable until destroy()); buffers grow on demand and live on.
+  struct InstanceGroup { rhi::Buffer buf{}; size_t cap = 0; std::vector<mat4> mats; };
+  std::map<GpuModel*, InstanceGroup> hiasanGroups_;
+  void drawScenery(const Frustum& frustum);
   mutable WalkCollider walk_;
   mutable bool walkDirty_ = false;   // hiasan / garis edited: rebuilt on the next walkCollider()
   void buildWalkCollider() const;

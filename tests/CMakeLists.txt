@@ -28,6 +28,8 @@ engine_test(test_edit ../engine/api/engine_api.cpp ../engine/api/engine_api_hud.
 
 engine_test(test_texture_cache)
 set_tests_properties(test_texture_cache PROPERTIES LABELS "gpu")
+engine_test(test_instancing)
+set_tests_properties(test_instancing PROPERTIES LABELS "gpu")
 
 # Golden image (needs a window/GPU): runs the viewer with ENG_CAPTURE and compares.
 engine_test(test_golden)
