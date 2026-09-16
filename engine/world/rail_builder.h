@@ -28,6 +28,9 @@ public:
   static constexpr float GAUGE_HALF = 0.534f;  // REL_L_DALAM
   static constexpr float BALLAST_FOOT = -0.580f;
   static constexpr float SLEEPER_RANGE = 420;  // chunks nearer than this draw meshed sleepers over the painted ones
+  // Meshed sleepers are OFF by default: the boxes do not blend with the painted sleepers of the photo atlas
+  // (different pitch / look). Set before build() to lay them (also lowers the crib and lays the turnout's long ones).
+  bool meshedSleepers = false;
 
   // ground (optional) is used only for bridge shape / piers (raw DEM; demBase subtracted). Bridge shape:
   // `jenisJembatan` override, else bentukJembatan(span, height) — viaduct (twin columns) when the deck is

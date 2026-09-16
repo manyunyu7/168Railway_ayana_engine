@@ -35,7 +35,7 @@ constexpr float uLatBalas(float lat) { return uLat(std::max(-1.795f, std::min(1.
 // bed (inner slopes cut at the shoulder, a flat crib strip between the shoulders — KAI double track sits at
 // 4.0–4.5 m centres, where two 3.59 m trapezoids would otherwise interpenetrate).
 constexpr float BAHU_LAT = 1.25f, BAHU_H = -0.236f, KAKI_LAT = 1.795f;   // shoulder 0.25 m past the sleeper end (engine tweak over 1.117 / -0.243)
-constexpr float KRIBEL_H = REL_TAPAK - 0.06f;                            // crib stone 6 cm below the sleeper top, so the meshed sleepers stand proud
+constexpr float KRIBEL_DROP = 0.06f;                                    // with meshed sleepers the crib stone sits this far below the sleeper top
 constexpr float SKIRT_LAT = 2.45f, SKIRT_H = BALAS_KAKI - 0.16f;   // plateau is BALAS_KAKI - 0.04: the skirt edge is buried
 constexpr float SKIRT_SHADE = 0.50f, KAKI_SHADE = 0.82f;           // dirt-stained edge
 constexpr float BADAN_MIN = 1.0f, BADAN_MAX = 6.0f;                // neighbour axis spacing counted as one bed (m); below 1 m the rail beds overlap anyway
@@ -293,7 +293,7 @@ void extrude(MeshBuilder& b, const Pt* pts, size_t n, const PP* prof, size_t P, 
 
 // Nearest parallel track on one side of a ring (lateral axis spacing, rail-head height difference).
 struct Neighbour { bool has = false; float lat = 0, dy = 0; size_t seg = 0; };
-struct RingCtx { Neighbour left, right; float shade = 1; float open = 1; bool plain = false; };   // plain: stone-only texture on the bed (diverging leg under the turnout sleepers)   // open: 1 = free ballast (wobble + skirt), 0 = contained (deck / tunnel floor); fades over OPEN_FADE before a structure
+struct RingCtx { Neighbour left, right; float shade = 1; float open = 1; bool plain = false; float kribel = REL_TAPAK; };   // plain: stone-only texture on the bed (diverging leg under the turnout sleepers)   // open: 1 = free ballast (wobble + skirt), 0 = contained (deck / tunnel floor); fades over OPEN_FADE before a structure
 
 // One ring of the ballast section (BALAS_N points, increasing lat) with its per-point shade.
 void profilBalasRing(const Pt& p, const RingCtx& c, PP* out, float* shade) {
@@ -320,7 +320,7 @@ void profilBalasRing(const Pt& p, const RingCtx& c, PP* out, float* shade) {
     float skLat = ftLat + sgn * (SKIRT_LAT - KAKI_LAT + 0.45f * n1) * o + sgn * 0.02f * (1 - o), skH = ftH + (SKIRT_H - ftH) * o;
     skirt = {skLat, skH, uLat(skLat)}; sSkirt = c.shade * (1 + (SKIRT_SHADE - 1) * o);
   };
-  out[3] = {-REL_L_LUAR, KRIBEL_H, uLat(-REL_L_LUAR)}; out[4] = {+REL_L_LUAR, KRIBEL_H, uLat(+REL_L_LUAR)};
+  out[3] = {-REL_L_LUAR, c.kribel, uLat(-REL_L_LUAR)}; out[4] = {+REL_L_LUAR, c.kribel, uLat(+REL_L_LUAR)};
   shade[3] = shade[4] = c.shade;
   side(-1, c.left, out[0], out[1], out[2], shade[0], shade[1], shade[2]);
   side(+1, c.right, out[7], out[6], out[5], shade[7], shade[6], shade[5]);
@@ -605,7 +605,10 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
         if (bedDebug && i == pts.size() / 2) std::fprintf(stderr, "bed %s L %d %.2f %s dy %.2f R %d %.2f %s dy %.2f\n", seg.id.c_str(), c.left.has, c.left.lat, c.left.has ? g.segments[c.left.seg].id.c_str() : "-", c.left.dy, c.right.has, c.right.lat, c.right.has ? g.segments[c.right.seg].id.c_str() : "-", c.right.dy);
         if ((c.left.has && si < c.left.seg) || (c.right.has && si < c.right.seg)) ++stats_.stripRings;
         c.open = 0;
-        for (const Range& r : cut[si].plain) if (pts[i].s >= r.a - 2 && pts[i].s <= r.b + 2) c.plain = true;
+        if (meshedSleepers) {
+          c.kribel = REL_TAPAK - KRIBEL_DROP;
+          for (const Range& r : cut[si].plain) if (pts[i].s >= r.a - 2 && pts[i].s <= r.b + 2) c.plain = true;
+        }
         if (seg.kind == RailKind::Ground) {   // fade the free section out toward a portal / abutment
           double d = 1e9;
           if (auto it = ends.find(seg.a); it != ends.end()) d = std::min(d, it->second + pts[i].s);
@@ -779,7 +782,7 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
     }
     // Sleepers: one instance every JARAK_BANTALAN, tile-aligned with the painted ones (13 per 7.76 m tile), skipped
     // where a turnout lays its own long sleepers. Placed here (not per run) so the pitch is continuous.
-    {
+    if (meshedSleepers) {
       const std::vector<Range>& skip = cut[si].noSleepers;
       for (float tile = 0; tile < (float)L; tile += TEX_LENGTH)
         for (int j = 0; j < 13; ++j) {
@@ -863,7 +866,7 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
       orientedBox(st, toe, side * 1.45f, -side * 0.55f, REL_TAPAK - 0.02f, REL_TAPAK + 0.04f, -0.03f, 0.03f);   // rod across to the blades
     }
     // long sleepers along the through leg spanning both legs
-    {
+    if (meshedSleepers) {
       float until = (t.sFrog > 0 ? t.sFrog : t.sHeel + 6) + TURNOUT_SLEEPERS_PAST_FROG;
       float Lt = allPts[(size_t)t.leg[0]].back().s, Ld = allPts[(size_t)t.leg[1]].back().s;
       for (float d = 0.3f; d <= std::min(until, std::min(Lt, Ld) - 0.3f); d += JARAK_BANTALAN) {
