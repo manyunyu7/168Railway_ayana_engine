@@ -45,7 +45,7 @@ public:
   const std::vector<RailChunk>& chunks() const { return chunks_; }
 
   struct BridgeInfo { std::string seg; BridgeShape shape; float span, height; };   // per host bridge segment
-  struct Stats { int chunks = 0; uint32_t tris = 0; int bridgeSegs = 0, tunnelSegs = 0, piers = 0, trussSegs = 0, viaductSegs = 0; double buildMs = 0; std::vector<BridgeInfo> bridges; };
+  struct Stats { int chunks = 0; uint32_t tris = 0; int bridgeSegs = 0, tunnelSegs = 0, piers = 0, trussSegs = 0, viaductSegs = 0; int bedRings = 0, stripRings = 0; double buildMs = 0; std::vector<BridgeInfo> bridges; };
   const Stats& stats() const { return stats_; }
 
   Material ballastMat, railMat, concreteMat, tunnelMat, steelMat;

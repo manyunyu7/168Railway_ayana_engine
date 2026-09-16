@@ -28,14 +28,36 @@ constexpr float TRW_TEPI = 2.45f, TRW_SPRING = 2.10f, TRW_RAMP = 45, JBT_RAMP = 
 constexpr float JARAK_BANTALAN = 0.6f;
 constexpr int TEX_N = 512;
 constexpr float uLat(float lat) { return 0.36f + lat * 0.1042f; }
+constexpr float uLatBalas(float lat) { return uLat(std::max(-1.795f, std::min(1.795f, lat))); }   // stay inside the stone band
+// Ballast section (engine additions over PROFIL_BALAS): the shoulder / foot wobble with world-keyed noise,
+// a buried "skirt" carries the stone out to ~2.5 m and under the carved plateau so the ballast-terrain seam
+// is a wavy, dark, buried edge instead of a straight step, and parallel tracks within BADAN_MAX share one
+// bed (inner slopes cut at the shoulder, a flat crib strip between the shoulders — KAI double track sits at
+// 4.0–4.5 m centres, where two 3.59 m trapezoids would otherwise interpenetrate).
+constexpr float BAHU_LAT = 1.117f, BAHU_H = -0.243f, KAKI_LAT = 1.795f;
+constexpr float SKIRT_LAT = 2.45f, SKIRT_H = BALAS_KAKI - 0.16f;   // plateau is BALAS_KAKI - 0.04: the skirt edge is buried
+constexpr float SKIRT_SHADE = 0.50f, KAKI_SHADE = 0.82f;           // dirt-stained edge
+constexpr float BADAN_MIN = 2.3f, BADAN_MAX = 6.0f;                // neighbour axis spacing counted as one bed (m)
+constexpr float TRW_GELAP = 40, TRW_SHADE = 0.08f;                 // full interior darkness this far past a portal
+constexpr size_t BALAS_N = 8;                                      // ring points: skirt foot shoulder rail | rail shoulder foot skirt
+
+float smoothstep01(float t) { t = std::max(0.f, std::min(1.f, t)); return t * t * (3 - 2 * t); }
+// Value noise in [-1, 1] keyed on scene x/z so neighbouring segments, chunk runs and parallel chains agree.
+float hash2(int x, int z) {
+  uint32_t h = (uint32_t)x * 374761393u + (uint32_t)z * 668265263u;
+  h = (h ^ (h >> 13)) * 1274126177u; h ^= h >> 16;
+  return (float)h / 4294967295.f * 2 - 1;
+}
+float noise2(float x, float z) {
+  float fx = std::floor(x), fz = std::floor(z), tx = smoothstep01(x - fx), tz = smoothstep01(z - fz);
+  int ix = (int)fx, iz = (int)fz;
+  float a = hash2(ix, iz), b = hash2(ix + 1, iz), c = hash2(ix, iz + 1), d = hash2(ix + 1, iz + 1);
+  return (a + (b - a) * tx) * (1 - tz) + (c + (d - c) * tx) * tz;
+}
 
 struct PP { float lat, h, u; };
 struct Pt { float x, y, z, tx, tz, s; };
 
-const PP PROFIL_BALAS[] = {
-  {-1.795f, BALAS_KAKI, uLat(-1.795f)}, {-1.117f, -0.243f, uLat(-1.117f)}, {-REL_L_LUAR, REL_TAPAK, uLat(-REL_L_LUAR)},
-  {+REL_L_LUAR, REL_TAPAK, uLat(+REL_L_LUAR)}, {+1.117f, -0.243f, uLat(+1.117f)}, {+1.795f, BALAS_KAKI, uLat(+1.795f)},
-};
 const PP PROFIL_REL_KIRI[] = {
   {-REL_L_LUAR, REL_TAPAK, U_REL_BADAN}, {-REL_L_LUAR, 0, U_REL_BADAN}, {-REL_L_LUAR, 0, U_REL_KEPALA0},
   {-REL_L_DALAM, 0, U_REL_KEPALA1}, {-REL_L_DALAM, 0, U_REL_BADAN}, {-REL_L_DALAM, REL_TAPAK, U_REL_BADAN},
@@ -139,18 +161,24 @@ void batangKotak(MeshBuilder& b, vec3 a, vec3 c, float t) {
   b.quad(v[4], v[5], v[6], v[7]); b.quad(v[3], v[2], v[1], v[0]);
 }
 
-// Extrude a (lat, height, u) profile along rings; analytic normals from the profile edges.
-void extrude(MeshBuilder& b, const Pt* pts, size_t n, const PP* prof, size_t P, float texLen) {
+// Extrude a (lat, height, u) profile along rings; analytic normals from the profile edges. The profile may
+// vary per ring (`perRing`: prof holds n*P points) and every vertex may carry a brightness (`shade`, n*P,
+// or n values per ring when `shadePerRing`).
+void extrudeVar(MeshBuilder& b, const Pt* pts, size_t n, const PP* prof, size_t P, float texLen, bool perRing,
+                const float* shade, bool shadePerRing) {
   if (n < 2 || P < 2) return;
   uint32_t base = (uint32_t)b.vertices.size();
   for (size_t i = 0; i < n; ++i) {
     const Pt& p = pts[i];
+    const PP* pr = perRing ? prof + i * P : prof;
     float nx = -p.tz, nz = p.tx, v = p.s / texLen;
     for (size_t j = 0; j < P; ++j) {
-      const PP &q0 = prof[j > 0 ? j - 1 : 0], &q1 = prof[j + 1 < P ? j + 1 : P - 1];
+      const PP &q0 = pr[j > 0 ? j - 1 : 0], &q1 = pr[j + 1 < P ? j + 1 : P - 1];
       float dl = q1.lat - q0.lat, dh = q1.h - q0.h, l = std::hypot(dl, dh); if (l <= 0) l = 1;
       float nl = -dh / l, nh = dl / l;
-      b.vertex({p.x + nx * prof[j].lat, p.y + prof[j].h, p.z + nz * prof[j].lat}, {nx * nl, nh, nz * nl}, {prof[j].u, v});
+      vec3 pos{p.x + nx * pr[j].lat, p.y + pr[j].h, p.z + nz * pr[j].lat}, nrm{nx * nl, nh, nz * nl}; vec2 uv{pr[j].u, v};
+      if (shade) b.vertex(pos, nrm, uv, shadePerRing ? shade[i] : shade[i * P + j]);
+      else b.vertex(pos, nrm, uv);
     }
   }
   for (size_t i = 0; i + 1 < n; ++i)
@@ -159,11 +187,53 @@ void extrude(MeshBuilder& b, const Pt* pts, size_t n, const PP* prof, size_t P, 
       b.triangle(a, a + 1, c); b.triangle(a + 1, c + 1, c);
     }
 }
+void extrude(MeshBuilder& b, const Pt* pts, size_t n, const PP* prof, size_t P, float texLen, const float* ringShade = nullptr) {
+  extrudeVar(b, pts, n, prof, P, texLen, false, ringShade, true);
+}
 
-float smoothstep01(float t) { t = std::max(0.f, std::min(1.f, t)); return t * t * (3 - 2 * t); }
+// Nearest parallel track on one side of a ring (lateral axis spacing, rail-head height difference).
+struct Neighbour { bool has = false; float lat = 0, dy = 0; size_t seg = 0; };
+struct RingCtx { Neighbour left, right; float shade = 1; bool jitter = true, skirt = true; };
+
+// One ring of the ballast section (BALAS_N points, increasing lat) with its per-point shade.
+void profilBalasRing(const Pt& p, const RingCtx& c, PP* out, float* shade) {
+  float nx = -p.tz, nz = p.tx;
+  auto side = [&](float sgn, const Neighbour& nb, PP& skirt, PP& foot, PP& sh, float& sSkirt, float& sFoot, float& sSh) {
+    sSh = c.shade;
+    if (nb.has) {   // shared bed: cut at the shoulder (the crib strip continues from here)
+      sh = {sgn * BAHU_LAT, BAHU_H, uLatBalas(sgn * BAHU_LAT)};
+      foot = {sgn * (BAHU_LAT + 0.02f), BAHU_H, sh.u}; skirt = {sgn * (BAHU_LAT + 0.04f), BAHU_H, sh.u};
+      sFoot = sSkirt = c.shade;
+      return;
+    }
+    float n1 = 0, n2 = 0;
+    if (c.jitter) {
+      float wx = p.x + nx * sgn * KAKI_LAT, wz = p.z + nz * sgn * KAKI_LAT;
+      n1 = noise2(wx * 0.31f, wz * 0.31f); n2 = noise2(wx * 0.23f + 37.1f, wz * 0.23f - 91.7f);
+    }
+    float shLat = sgn * (BAHU_LAT + 0.10f * n1), shH = BAHU_H + 0.03f * n2;
+    float ftLat = sgn * (KAKI_LAT + 0.22f * n2), ftH = BALAS_KAKI + 0.04f * n1;
+    // foot / skirt keep the unclamped u (0.55..0.68, still stone in both atlases) so the edge is not streaked
+    sh = {shLat, shH, uLatBalas(shLat)}; foot = {ftLat, ftH, uLat(ftLat)};
+    sFoot = c.shade * (c.skirt ? KAKI_SHADE : 1.f);
+    if (c.skirt) { float skLat = sgn * (SKIRT_LAT + 0.45f * n1); skirt = {skLat, SKIRT_H, uLat(skLat)}; sSkirt = c.shade * SKIRT_SHADE; }
+    else { skirt = {ftLat + sgn * 0.02f, ftH, foot.u}; sSkirt = sFoot; }
+  };
+  out[3] = {-REL_L_LUAR, REL_TAPAK, uLat(-REL_L_LUAR)}; out[4] = {+REL_L_LUAR, REL_TAPAK, uLat(+REL_L_LUAR)};
+  shade[3] = shade[4] = c.shade;
+  side(-1, c.left, out[0], out[1], out[2], shade[0], shade[1], shade[2]);
+  side(+1, c.right, out[7], out[6], out[5], shade[7], shade[6], shade[5]);
+}
+// Crib strip between two shoulders (3 points, increasing lat). `nb` is the neighbour on side sgn.
+void profilStrip(float sgn, const Neighbour& nb, PP* out) {
+  float mine = sgn * BAHU_LAT, theirs = nb.lat - sgn * BAHU_LAT, mid = (mine + theirs) / 2;
+  PP a{mine, BAHU_H, uLat(BAHU_LAT)}, m{mid, BAHU_H / 2 + (nb.dy + BAHU_H) / 2 - 0.02f, uLat(1.55f)}, b2{theirs, nb.dy + BAHU_H, uLat(BAHU_LAT)};
+  if (sgn > 0) { out[0] = a; out[1] = m; out[2] = b2; } else { out[0] = b2; out[1] = m; out[2] = a; }
+}
 
 // Rail distance from every node to the nearest tunnel mouth, capped (uji3dJembatan.ts jarakKeMulut).
-std::map<int, double> mouthDistances(const TrackGraph& g, double maxD) {
+// inside = false walks the open track away from the mouths; true walks the tunnel segments into the hill.
+std::map<int, double> mouthDistances(const TrackGraph& g, double maxD, bool inside = false) {
   std::map<int, double> out;
   std::priority_queue<std::pair<double, int>, std::vector<std::pair<double, int>>, std::greater<>> pq;
   for (size_t ni = 0; ni < g.nodes.size(); ++ni) {
@@ -176,7 +246,7 @@ std::map<int, double> mouthDistances(const TrackGraph& g, double maxD) {
     if (d > out[n]) continue;
     for (int si : g.nodes[(size_t)n].segs) {
       const TrackSegment& s = g.segments[(size_t)si];
-      if (s.kind == RailKind::Tunnel) continue;
+      if ((s.kind == RailKind::Tunnel) != inside) continue;
       int o = g.otherNode(si, n); double nd = d + s.length;
       if (nd > maxD) continue;
       auto it = out.find(o);
@@ -285,19 +355,80 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
   };
   auto groundAt = [&](const Pt& p) { double wx, wy; o.toWorld({p.x, p.y, p.z}, wx, wy); return ground ? ground->rawHeight(wx, wy) - demBase : -1e9f; };
 
-  std::vector<Pt> pts;
+  // Pass 1: rings of every segment (4 m), a grid of them for the parallel-track search, and the interior
+  // mouth distances for the tunnel darkness.
+  std::vector<std::vector<Pt>> allPts(g.segments.size());
+  struct RingRef { size_t seg, ring; };
+  std::map<std::pair<int, int>, std::vector<RingRef>> grid;   // 8 m cells
+  auto gridKey = [](float x, float z) { return std::pair<int, int>{(int)std::floor(x / 8), (int)std::floor(z / 8)}; };
   for (size_t si = 0; si < g.segments.size(); ++si) {
     const TrackSegment& seg = g.segments[si];
     const double L = seg.length;
     if (L <= 0) continue;
     const int n = std::max(1, (int)std::ceil(L / SAMPLE_STEP));
-    pts.clear(); pts.reserve((size_t)n + 1);
+    std::vector<Pt>& pts = allPts[si]; pts.reserve((size_t)n + 1);
     for (int i = 0; i <= n; ++i) {
       double s = L * i / n;
       TrackSample sm = g.sampleAt((int)si, s);
       float y = profile.railHeight(seg.id.c_str(), s);
       vec3 p = o.toScene(sm.wx, sm.wy, y);
       pts.push_back({p.x, p.y, p.z, (float)sm.tx, (float)sm.ty, (float)s});
+      grid[gridKey(p.x, p.z)].push_back({si, (size_t)i});
+    }
+  }
+  std::map<int, double> inside = mouthDistances(g, TRW_GELAP + 60, true);
+  // Nearest parallel track on each side of a ring: another segment's ring within BADAN_MAX laterally,
+  // |cos| >= 0.985 and within one ring spacing along the track (the along test also rejects this track's
+  // own later rings on a tight curve).
+  auto neighbours = [&](size_t si, const Pt& p, Neighbour& left, Neighbour& right) {
+    left = right = {};
+    float nx = -p.tz, nz = p.tx;
+    auto k = gridKey(p.x, p.z);
+    for (int dx = -1; dx <= 1; ++dx)
+      for (int dz = -1; dz <= 1; ++dz) {
+        auto it = grid.find({k.first + dx, k.second + dz});
+        if (it == grid.end()) continue;
+        for (const RingRef& r : it->second) {
+          if (r.seg == si) continue;
+          const Pt& q = allPts[r.seg][r.ring];
+          if (std::fabs(q.tx * p.tx + q.tz * p.tz) < 0.985f) continue;
+          float ox = q.x - p.x, oz = q.z - p.z;
+          float lat = ox * nx + oz * nz, along = ox * p.tx + oz * p.tz;
+          if (std::fabs(along) > SAMPLE_STEP * 0.75f) continue;
+          float a = std::fabs(lat);
+          if (a < BADAN_MIN || a > BADAN_MAX) continue;
+          Neighbour& nb = lat < 0 ? left : right;
+          if (!nb.has || a < std::fabs(nb.lat)) nb = {true, lat, q.y - p.y, r.seg};
+        }
+      }
+  };
+
+  const bool bedDebug = std::getenv("ENG_BED_DEBUG") != nullptr;
+  std::vector<RingCtx> ctx;
+  std::vector<PP> ringProf; std::vector<float> ringShade, segShade;
+  for (size_t si = 0; si < g.segments.size(); ++si) {
+    const TrackSegment& seg = g.segments[si];
+    const double L = seg.length;
+    if (L <= 0) continue;
+    const std::vector<Pt>& pts = allPts[si];
+    // Per-ring context: neighbours, tunnel darkness (interior distance to the nearest portal), and whether
+    // the section wobbles / spills (open ground only: on a deck or tunnel floor the stone is contained).
+    ctx.assign(pts.size(), {});
+    {
+      auto insideAt = [&](int node) { auto it = inside.find(node); return it == inside.end() ? 1e9 : it->second; };
+      double iA = insideAt(seg.a), iB = insideAt(seg.b);
+      for (size_t i = 0; i < pts.size(); ++i) {
+        RingCtx& c = ctx[i];
+        neighbours(si, pts[i], c.left, c.right);
+        if (c.left.has || c.right.has) ++stats_.bedRings;
+        if (bedDebug && i == pts.size() / 2) std::fprintf(stderr, "bed %s L %d %.2f %s dy %.2f R %d %.2f %s dy %.2f\n", seg.id.c_str(), c.left.has, c.left.lat, c.left.has ? g.segments[c.left.seg].id.c_str() : "-", c.left.dy, c.right.has, c.right.lat, c.right.has ? g.segments[c.right.seg].id.c_str() : "-", c.right.dy);
+        if ((c.left.has && si < c.left.seg) || (c.right.has && si < c.right.seg)) ++stats_.stripRings;
+        c.jitter = c.skirt = seg.kind == RailKind::Ground;
+        if (seg.kind == RailKind::Tunnel) {
+          double d = std::min(iA + pts[i].s, iB + (L - pts[i].s));
+          c.shade = 1 + (TRW_SHADE - 1) * smoothstep01((float)(d / TRW_GELAP));
+        }
+      }
     }
     { std::vector<vec3> line; line.reserve(pts.size()); for (const Pt& p : pts) line.push_back({p.x, p.y + 0.5f, p.z}); centre_.push_back(std::move(line)); }
     const bool atGrade = seg.kind == RailKind::Ground;
@@ -367,9 +498,30 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
       if (end >= pts.size()) end = pts.size() - 1;
       const Pt* run = &pts[start]; size_t rn = end - start + 1;
       Builders& b = cells[key];
-      extrude(b.ballast, run, rn, PROFIL_BALAS, std::size(PROFIL_BALAS), TEX_LENGTH);
-      extrude(b.rails, run, rn, PROFIL_REL_KIRI, std::size(PROFIL_REL_KIRI), TEX_LENGTH);
-      extrude(b.rails, run, rn, PROFIL_REL_KANAN, std::size(PROFIL_REL_KANAN), TEX_LENGTH);
+      // ballast: one section per ring (skirt / wobble / shared-bed cut), rails with the ring shade
+      ringProf.resize(rn * BALAS_N); ringShade.resize(rn * BALAS_N); segShade.resize(rn);
+      for (size_t i = 0; i < rn; ++i) {
+        profilBalasRing(run[i], ctx[start + i], &ringProf[i * BALAS_N], &ringShade[i * BALAS_N]);
+        segShade[i] = ctx[start + i].shade;
+      }
+      extrudeVar(b.ballast, run, rn, ringProf.data(), BALAS_N, TEX_LENGTH, true, ringShade.data(), false);
+      extrude(b.rails, run, rn, PROFIL_REL_KIRI, std::size(PROFIL_REL_KIRI), TEX_LENGTH, segShade.data());
+      extrude(b.rails, run, rn, PROFIL_REL_KANAN, std::size(PROFIL_REL_KANAN), TEX_LENGTH, segShade.data());
+      // crib strips to a parallel neighbour, built by the lower-index segment, in runs of consecutive rings
+      for (float sgn : {-1.f, 1.f}) {
+        size_t i = 0;
+        while (i < rn) {
+          auto owns = [&](size_t j) { const Neighbour& nb = sgn < 0 ? ctx[start + j].left : ctx[start + j].right; return nb.has && si < nb.seg; };
+          if (!owns(i)) { ++i; continue; }
+          size_t j = i; while (j < rn && owns(j)) ++j;
+          if (j - i >= 2) {
+            ringProf.resize((j - i) * 3);
+            for (size_t k = i; k < j; ++k) profilStrip(sgn, sgn < 0 ? ctx[start + k].left : ctx[start + k].right, &ringProf[(k - i) * 3]);
+            extrudeVar(b.ballast, run + i, j - i, ringProf.data(), 3, TEX_LENGTH, true, segShade.data() + i, true);
+          }
+          i = j;
+        }
+      }
       const Pair& pg = pairs[si];
       if (seg.kind == RailKind::Bridge && pg.host) {
         std::vector<PP> dek = profilDek(pg.latMin, pg.latMax, BALAS_KAKI), bawah = profilDekBawah(pg.latMin, pg.latMax, BALAS_KAKI);
@@ -382,8 +534,8 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
         }
       } else if (seg.kind == RailKind::Tunnel && pg.host) {
         std::vector<PP> arch = profilTerowongan(pg.latMin, pg.latMax, BALAS_KAKI, true), floor = profilTerowonganLantai(pg.latMin, pg.latMax, BALAS_KAKI);
-        extrude(b.tunnel, run, rn, arch.data(), arch.size(), TEX_LENGTH);
-        extrude(b.tunnel, run, rn, floor.data(), floor.size(), TEX_LENGTH);
+        extrude(b.tunnel, run, rn, arch.data(), arch.size(), TEX_LENGTH, segShade.data());
+        extrude(b.tunnel, run, rn, floor.data(), floor.size(), TEX_LENGTH, segShade.data());
       }
       start = end;
     }

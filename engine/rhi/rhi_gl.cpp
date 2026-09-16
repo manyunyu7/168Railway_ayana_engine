@@ -58,6 +58,7 @@ void init() {
   g_s3tcSrgb = g_s3tcSrgb || g_s3tc;   // GL 4.1 core: EXT_texture_sRGB formats are part of the S3TC support (macOS)
 #endif
   glEnable(GL_DEPTH_TEST);
+  glVertexAttrib1f((GLuint)ATTR_SHADE, 1.f);   // default for meshes without a shade attribute
   glEnable(GL_CULL_FACE);
   glCullFace(GL_BACK);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -104,8 +105,8 @@ Mesh createMesh(std::span<const std::byte> vertices, std::span<const Attribute> 
   m.vb = createBuffer(BufferKind::Vertex, vertices);
   for (const Attribute& a : layout) {
     glEnableVertexAttribArray(a.location);
-    glVertexAttribPointer(a.location, a.components, GL_FLOAT, a.normalized ? GL_TRUE : GL_FALSE,
-                          a.stride, (const void*)(intptr_t)a.offset);
+    glVertexAttribPointer(a.location, a.components, a.type == AttrType::U8 ? GL_UNSIGNED_BYTE : GL_FLOAT,
+                          a.normalized ? GL_TRUE : GL_FALSE, a.stride, (const void*)(intptr_t)a.offset);
   }
   m.ib = createBuffer(BufferKind::Index, std::as_bytes(indices));
   m.indexCount = (uint32_t)indices.size();
@@ -188,6 +189,7 @@ void setUniform(int loc, float x, float y, float z) { glUniform3f(loc, x, y, z);
 void setUniform(int loc, float x, float y, float z, float w) { glUniform4f(loc, x, y, z, w); }
 void setUniform(int loc, float v) { glUniform1f(loc, v); }
 void setUniform(int loc, int v) { glUniform1i(loc, v); }
+void setUniformMat4Array(int loc, const float* mats, int count) { if (loc >= 0 && count > 0) glUniformMatrix4fv(loc, count, GL_FALSE, mats); }
 
 float setAnisotropy(float level) {
   g_aniso = g_maxAniso > 0 ? std::min(std::max(level, 1.f), g_maxAniso) : 1.f;

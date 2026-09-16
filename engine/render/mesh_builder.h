@@ -3,6 +3,7 @@
 #include "engine/asset/model.h"
 #include "engine/math/geometry.h"
 #include "engine/rhi/rhi.h"
+#include <cstring>
 #include <span>
 #include <vector>
 
@@ -11,9 +12,15 @@ namespace eng {
 struct MeshBuilder {
   std::vector<Vertex> vertices;
   std::vector<uint32_t> indices;
+  std::vector<float> shade;          // optional per-vertex brightness (rhi::ATTR_SHADE); empty = all 1
   AABB bounds;
 
-  uint32_t vertex(vec3 p, vec3 n, vec2 uv) { vertices.push_back({p, n, uv}); bounds.expand(p); return (uint32_t)vertices.size() - 1; }
+  uint32_t vertex(vec3 p, vec3 n, vec2 uv) { vertices.push_back({p, n, uv}); bounds.expand(p); if (!shade.empty()) shade.push_back(1); return (uint32_t)vertices.size() - 1; }
+  uint32_t vertex(vec3 p, vec3 n, vec2 uv, float sh) {
+    if (shade.size() != vertices.size()) shade.resize(vertices.size(), 1.f);   // earlier vertices default to 1
+    vertices.push_back({p, n, uv}); bounds.expand(p); shade.push_back(sh);
+    return (uint32_t)vertices.size() - 1;
+  }
   void triangle(uint32_t a, uint32_t b, uint32_t c) { indices.push_back(a); indices.push_back(b); indices.push_back(c); }
   void quad(uint32_t a, uint32_t b, uint32_t c, uint32_t d) { triangle(a, b, c); triangle(a, c, d); }
   // Quad from 4 corner positions (counter-clockwise seen from the normal side), flat normal.
@@ -32,7 +39,11 @@ struct MeshBuilder {
   }
   void append(const MeshBuilder& o, const mat4& m) {
     uint32_t base = (uint32_t)vertices.size();
-    for (const Vertex& v : o.vertices) vertex(m.transformPoint(v.pos), normalize(m.transformDir(v.normal)), v.uv);
+    for (size_t i = 0; i < o.vertices.size(); ++i) {
+      const Vertex& v = o.vertices[i];
+      if (o.shade.empty()) vertex(m.transformPoint(v.pos), normalize(m.transformDir(v.normal)), v.uv);
+      else vertex(m.transformPoint(v.pos), normalize(m.transformDir(v.normal)), v.uv, o.shade[i]);
+    }
     for (uint32_t i : o.indices) indices.push_back(base + i);
   }
   void computeSmoothNormals() {
@@ -45,11 +56,23 @@ struct MeshBuilder {
     for (Vertex& v : vertices) v.normal = normalize(v.normal);
   }
   bool empty() const { return indices.empty(); }
-  void clear() { vertices.clear(); indices.clear(); bounds = {}; }
+  void clear() { vertices.clear(); indices.clear(); shade.clear(); bounds = {}; }
 
   rhi::Mesh upload() const {
-    const rhi::Attribute layout[] = {{0, 3, sizeof(Vertex), 0}, {1, 3, sizeof(Vertex), 12}, {2, 2, sizeof(Vertex), 24}};
-    return rhi::createMesh(std::as_bytes(std::span(vertices)), layout, indices);
+    if (shade.empty()) {
+      const rhi::Attribute layout[] = {{0, 3, sizeof(Vertex), 0}, {1, 3, sizeof(Vertex), 12}, {2, 2, sizeof(Vertex), 24}};
+      return rhi::createMesh(std::as_bytes(std::span(vertices)), layout, indices);
+    }
+    // interleaved pos/normal/uv/shade, 36 bytes
+    constexpr int S = (int)sizeof(Vertex) + 4;
+    std::vector<std::byte> buf((size_t)S * vertices.size());
+    for (size_t i = 0; i < vertices.size(); ++i) {
+      std::memcpy(&buf[i * (size_t)S], &vertices[i], sizeof(Vertex));
+      float sh = i < shade.size() ? shade[i] : 1.f;
+      std::memcpy(&buf[i * (size_t)S + sizeof(Vertex)], &sh, 4);
+    }
+    const rhi::Attribute layout[] = {{0, 3, S, 0}, {1, 3, S, 12}, {2, 2, S, 24}, {rhi::ATTR_SHADE, 1, S, (int)sizeof(Vertex)}};
+    return rhi::createMesh(buf, layout, indices);
   }
 };
 

@@ -16,8 +16,16 @@ enum class BufferKind { Vertex, Index };
 // Uncompressed formats always exist; block-compressed ones depend on the GPU/extension (see supports()).
 enum class Format { RGBA8, RGB8, RG8, R8, ETC2_RGB, ETC2_RGBA, BC1, BC3, BC7 };
 
-// One vertex attribute (mesh layout description).
-struct Attribute { int location; int components; int stride; int offset; bool normalized = false; };
+// One vertex attribute (mesh layout description). `type` = the data in the buffer; it always reaches the
+// shader as float (U8 unnormalized gives 0..255 — how skinning joint indices travel).
+enum class AttrType : uint8_t { Float, U8 };
+struct Attribute { int location; int components; int stride; int offset; bool normalized = false; AttrType type = AttrType::Float; };
+// Optional per-vertex brightness (float, location 7): meshes that omit it read the generic value 1.0 set in init().
+// The PBR shader multiplies the lit colour by it (tunnel interiors, ballast skirts).
+constexpr int ATTR_SHADE = 7;
+// Skinning attributes (engine/render: skinned vertex format): joint indices as unnormalized u8x4 and
+// weights as f32x4. 3..6 belong to instancing, 7 to shade, so the skinned pair sits above them.
+constexpr int ATTR_JOINTS = 8, ATTR_WEIGHTS = 9;
 
 void init();                        // once, after a GL context exists
 void setViewport(int w, int h);
@@ -54,6 +62,7 @@ void    setUniform(int loc, float x, float y, float z);
 void    setUniform(int loc, float x, float y, float z, float w);
 void    setUniform(int loc, float v);
 void    setUniform(int loc, int v);
+void    setUniformMat4Array(int loc, const float* mats, int count);   // mat4 uJoints[N] (skinning palette)
 
 // Anisotropic filtering level applied to textures created afterwards (clamped to the hardware maximum;
 // no-op when GL_EXT_texture_filter_anisotropic is missing). Returns the level in effect.

@@ -3,6 +3,11 @@
 
 namespace eng::shaders {
 
+// Skinned variant of PBR_VS: prepend this to the source and the shader reads the joint/weight attributes
+// and the uJoints[] palette (ModelRenderer keeps a second program compiled with it). The palette is a plain
+// uniform array: 64 mat4 = 4 KB, within the GL 4.1 / GLES 3.0 minimum for the vertex stage.
+inline const char* SKINNING_DEFINE = "#define SKINNED 1\n#define MAX_JOINTS 64\n";
+
 inline const char* PBR_VS = R"(
 layout(location=0) in vec3 aPos;
 layout(location=1) in vec3 aNormal;
@@ -11,15 +16,30 @@ layout(location=3) in vec4 aInst0;   // per-instance model matrix columns (rhi::
 layout(location=4) in vec4 aInst1;
 layout(location=5) in vec4 aInst2;
 layout(location=6) in vec4 aInst3;
+layout(location=7) in float aShade;  // optional per-vertex brightness (rhi::ATTR_SHADE), 1.0 when absent
+#ifdef SKINNED
+layout(location=8) in vec4 aJoints;  // joint indices, u8x4 unnormalized (rhi::ATTR_JOINTS)
+layout(location=9) in vec4 aWeights; // influences, sum 1 (rhi::ATTR_WEIGHTS)
+uniform mat4 uJoints[MAX_JOINTS];
+#endif
 uniform mat4 uViewProj, uModel;
 uniform int uInstanced;              // 1: model = uModel * instance matrix
 out vec3 vNormal, vWorldPos;
 out vec2 vUV;
+out float vShade;
 void main() {
+  vShade = aShade;
   mat4 model = uInstanced == 1 ? uModel * mat4(aInst0, aInst1, aInst2, aInst3) : uModel;
-  vec4 wp = model * vec4(aPos, 1.0);
+  vec3 pos = aPos, nrm = aNormal;
+#ifdef SKINNED
+  mat4 skin = aWeights.x * uJoints[int(aJoints.x)] + aWeights.y * uJoints[int(aJoints.y)]
+            + aWeights.z * uJoints[int(aJoints.z)] + aWeights.w * uJoints[int(aJoints.w)];
+  pos = (skin * vec4(aPos, 1.0)).xyz;
+  nrm = mat3(skin) * aNormal;        // uniform joint scale assumed (rigs never squash bones)
+#endif
+  vec4 wp = model * vec4(pos, 1.0);
   vWorldPos = wp.xyz;
-  vNormal = mat3(model) * aNormal;   // fine for uniform scale; use inverse-transpose later
+  vNormal = mat3(model) * nrm;       // fine for uniform scale; use inverse-transpose later
   vUV = aUV;
   gl_Position = uViewProj * wp;
 })";
@@ -27,6 +47,7 @@ void main() {
 inline const char* PBR_FS = R"(
 in vec3 vNormal, vWorldPos;
 in vec2 vUV;
+in float vShade;
 uniform vec3 uEye, uSunDir, uSunColor, uSkyColor, uGroundColor;
 uniform vec4 uBaseColor;
 uniform vec3 uEmissive;
@@ -77,7 +98,7 @@ void main() {
   vec3 emissive = uEmissive;
   if (uHasEmissiveTex == 1) emissive *= texture(uEmissiveTex, vUV).rgb;
 
-  vec3 color = direct + ambient + emissive;
+  vec3 color = (direct + ambient) * vShade + emissive;
   color = color / (color + vec3(1.0));          // Reinhard tonemap
   if (uFogDensity > 0.0) {
     float dist = length(uEye - vWorldPos);

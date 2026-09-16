@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -86,9 +87,9 @@ int main(int argc, char** argv) {
   SignalVisuals signals; signals.build(graph, profile, world["trackside"]);
   PointVisuals points; points.build(graph, profile);
   double buildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-  std::printf("graph %zu nodes %zu segs %d points %.3f km | profile %d chains gmax %.1f permille | rails %d chunks %u tris %d piers, %d bridge segs (%d truss, %d viaduct), %d tunnel segs (%.1f ms) | %zu signals | total %.1f ms\n",
+  std::printf("graph %zu nodes %zu segs %d points %.3f km | profile %d chains gmax %.1f permille | rails %d chunks %u tris %d piers, %d bridge segs (%d truss, %d viaduct), %d tunnel segs, %d bed rings / %d strip rings (%.1f ms) | %zu signals | total %.1f ms\n",
               graph.nodes.size(), graph.segments.size(), graph.pointCount(), graph.totalLength() / 1000, profile.chainCount(),
-              profile.gmax() * 1000, rails.stats().chunks, rails.stats().tris, rails.stats().piers, rails.stats().bridgeSegs, rails.stats().trussSegs, rails.stats().viaductSegs, rails.stats().tunnelSegs, rails.stats().buildMs,
+              profile.gmax() * 1000, rails.stats().chunks, rails.stats().tris, rails.stats().piers, rails.stats().bridgeSegs, rails.stats().trussSegs, rails.stats().viaductSegs, rails.stats().tunnelSegs, rails.stats().bedRings, rails.stats().stripRings, rails.stats().buildMs,
               signals.signals().size(), buildMs);
 
   for (const RailBuilder::BridgeInfo& b : rails.stats().bridges)
@@ -161,6 +162,11 @@ int main(int argc, char** argv) {
         TrackSample sm = graph.sampleAt((int)si, 0.0); vec3 m = graph.origin().toScene(sm.wx, sm.wy, profile.railHeight((int)si, 0.0));
         vec3 in = normalize(vec3{(float)sm.tx, 0, (float)sm.ty});   // scene z = world y
         cam.target = m + vec3{0, 2, 0}; cam.yaw = std::atan2(-in.x, -in.z); cam.pitch = 0.12f; cam.distance = 40;
+        if (const char* c = std::strchr(t.c_str() + 6, ':')) {   // mouth:n:dist — negative: the camera stands that far inside the tunnel
+          float d = (float)std::atof(c + 1);
+          if (d >= 0) cam.distance = d;
+          else { cam.distance = 12; cam.target = m + in * (-d + 12) + vec3{0, 2, 0}; }
+        }
         std::printf("target %s = seg %s mouth\n", t.c_str(), graph.segments[si].id.c_str());
         if (haveTerrain) for (float d = -20; d <= 80; d += 10) {   // ground vs rail head along the approach (negative = inside)
           vec3 q = m - in * d; double wx, wy; graph.origin().toWorld(q, wx, wy);
