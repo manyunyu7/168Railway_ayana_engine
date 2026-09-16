@@ -15,6 +15,7 @@ namespace eng {
 struct RailChunk {
   AABB bounds;
   rhi::Mesh ballast, rails, bridge, tunnel, truss;   // indexCount == 0 when the chunk has none
+  rhi::Buffer sleepers{}; uint32_t sleeperCount = 0; // instance matrices of the meshed sleepers (drawn within SLEEPER_RANGE)
   int cx = 0, cz = 0;                          // chunk cell (floor(scene / 640))
   uint32_t tris = 0;
 };
@@ -26,6 +27,7 @@ public:
   static constexpr float TEX_LENGTH = 7.76f;   // PANJANG_TEX_REL
   static constexpr float GAUGE_HALF = 0.534f;  // REL_L_DALAM
   static constexpr float BALLAST_FOOT = -0.580f;
+  static constexpr float SLEEPER_RANGE = 420;  // chunks nearer than this draw meshed sleepers over the painted ones
 
   // ground (optional) is used only for bridge shape / piers (raw DEM; demBase subtracted). Bridge shape:
   // `jenisJembatan` override, else bentukJembatan(span, height) — viaduct (twin columns) when the deck is
@@ -50,10 +52,10 @@ public:
   const std::vector<RailChunk>& chunks() const { return chunks_; }
 
   struct BridgeInfo { std::string seg; BridgeShape shape; float span, height; };   // per host bridge segment
-  struct Stats { int chunks = 0; uint32_t tris = 0; int bridgeSegs = 0, tunnelSegs = 0, piers = 0, trussSegs = 0, viaductSegs = 0; int bedRings = 0, stripRings = 0, turnouts = 0, frogs = 0; double buildMs = 0; std::vector<BridgeInfo> bridges; };
+  struct Stats { int chunks = 0; uint32_t tris = 0; int bridgeSegs = 0, tunnelSegs = 0, piers = 0, trussSegs = 0, viaductSegs = 0; int bedRings = 0, stripRings = 0, turnouts = 0, frogs = 0, sleepers = 0; double buildMs = 0; std::vector<BridgeInfo> bridges; };
   const Stats& stats() const { return stats_; }
 
-  Material ballastMat, railMat, concreteMat, tunnelMat, steelMat;
+  Material ballastMat, railMat, concreteMat, tunnelMat, steelMat, sleeperMat;
   rhi::Texture texture{};                      // ballast/sleeper/rail atlas (sRGB): the catalog's `tekstur.rel1067`
                                                // picture when available, else the procedural painter (same layout)
   // Replaces the atlas (the builder owns and frees it). Same UV layout as the procedural one: 512² atlas,
@@ -69,8 +71,11 @@ public:
 private:
   void paintTexture();
   std::vector<RailChunk> chunks_;
-  struct TurnoutMesh { std::string nodeId; rhi::Mesh closed[2], open[2]; AABB bounds; int setting = 0; };
+  static constexpr int BLADE_STEPS = 5;        // closed .. open blade meshes (animated over BLADE_TIME)
+  struct TurnoutMesh { std::string nodeId; rhi::Mesh blade[2][BLADE_STEPS]; AABB bounds; int setting = 0; mutable float pos[2]{0, 1}; };
   std::vector<TurnoutMesh> turnouts_;
+  mutable double lastTick_ = 0;
+  GpuModel sleeperModel_;
   std::vector<RailSample> samples_;
   std::vector<std::vector<vec3>> centre_;      // per-segment centreline (scene, rail head + 0.5) for the iconic line
   mutable rhi::Mesh iconic_; mutable float iconicWidth_ = 0; mutable bool iconicOn_ = false;

@@ -34,7 +34,8 @@ constexpr float uLatBalas(float lat) { return uLat(std::max(-1.795f, std::min(1.
 // is a wavy, dark, buried edge instead of a straight step, and parallel tracks within BADAN_MAX share one
 // bed (inner slopes cut at the shoulder, a flat crib strip between the shoulders — KAI double track sits at
 // 4.0–4.5 m centres, where two 3.59 m trapezoids would otherwise interpenetrate).
-constexpr float BAHU_LAT = 1.25f, BAHU_H = -0.205f, KAKI_LAT = 1.795f;   // shoulder heaped to ~sleeper top, 0.25 m past the sleeper end (engine tweak over 1.117 / -0.243)
+constexpr float BAHU_LAT = 1.25f, BAHU_H = -0.236f, KAKI_LAT = 1.795f;   // shoulder 0.25 m past the sleeper end (engine tweak over 1.117 / -0.243)
+constexpr float KRIBEL_H = REL_TAPAK - 0.06f;                            // crib stone 6 cm below the sleeper top, so the meshed sleepers stand proud
 constexpr float SKIRT_LAT = 2.45f, SKIRT_H = BALAS_KAKI - 0.16f;   // plateau is BALAS_KAKI - 0.04: the skirt edge is buried
 constexpr float SKIRT_SHADE = 0.50f, KAKI_SHADE = 0.82f;           // dirt-stained edge
 constexpr float BADAN_MIN = 1.0f, BADAN_MAX = 6.0f;                // neighbour axis spacing counted as one bed (m); below 1 m the rail beds overlap anyway
@@ -42,7 +43,10 @@ constexpr float BADAN_MIN = 1.0f, BADAN_MAX = 6.0f;                // neighbour 
 // >= 125 mm off the stock rail, check-rail flangeway 34-45 mm, 1:8..1:12 crossings): the blade heel is where the
 // legs' centrelines are HEEL_SPREAD apart, the frog nose where the inner rails cross (spread = gauge).
 constexpr float HEEL_SPREAD = 0.18f, BLADE_TIP_W = 0.012f, BLADE_OPEN = 0.125f, BLADE_STEP = 0.5f;
-constexpr float FROG_LEN = 3.2f, FROG_STEP = 0.4f, CHECK_HALF = 1.8f, CHECK_GAP = 0.045f;
+constexpr float FROG_LEN = 3.2f, FROG_BACK = 1.6f, FROG_STEP = 0.4f, CHECK_HALF = 1.8f, CHECK_GAP = 0.045f;
+constexpr float BLADE_TIME = 1.2f;                                   // seconds for a blade to swing
+constexpr float SLEEPER_HALF = 1.0f, SLEEPER_W = 0.24f, SLEEPER_H = 0.20f;   // KAI concrete sleeper 2.0 x 0.24 x 0.20
+constexpr float TURNOUT_SLEEPERS_PAST_FROG = 3.5f;                   // long sleepers (and no diverging-leg sleepers) until here
 constexpr float OPEN_FADE = 12;   // metres before a portal / abutment over which the free section becomes the contained one
 constexpr float TRW_GELAP = 15, TRW_SHADE = 0.06f, TRW_MOUTH_SHADE = 0.2f;   // the shader has no shadows: the sun would light the lining, so the shade also kills the direct term   // lining brightness: at the portal plane -> fully dark this far inside
 constexpr size_t BALAS_N = 8;                                      // ring points: skirt foot shoulder rail | rail shoulder foot skirt
@@ -209,6 +213,27 @@ void headwall(MeshBuilder& b, const Pt& p, float dir, const std::vector<PP>& arc
   }
 }
 
+// Instance matrix of a sleeper at ring q: local x = lateral (scaled by `scaleLat`, shifted by `offLat` m), z = along.
+mat4 sleeperXf(const Pt& q, float offLat, float scaleLat) {
+  float nx = -q.tz, nz = q.tx;
+  mat4 m;
+  m.m[0][0] = nx * scaleLat; m.m[0][1] = 0; m.m[0][2] = nz * scaleLat;
+  m.m[1][0] = 0; m.m[1][1] = 1; m.m[1][2] = 0;
+  m.m[2][0] = q.tx; m.m[2][1] = 0; m.m[2][2] = q.tz;
+  m.m[3][0] = q.x + nx * offLat; m.m[3][1] = q.y; m.m[3][2] = q.z + nz * offLat;
+  return m;
+}
+// Box in a ring's (lat, height, along) frame.
+void orientedBox(MeshBuilder& b, const Pt& q, float lat0, float lat1, float h0, float h1, float s0, float s1) {
+  float nx = -q.tz, nz = q.tx;
+  auto w = [&](float lat, float h, float sv) { return vec3{q.x + nx * lat + q.tx * sv, q.y + h, q.z + nz * lat + q.tz * sv}; };
+  vec3 a = w(lat0, h0, s0), bb = w(lat1, h0, s0), c = w(lat1, h0, s1), d = w(lat0, h0, s1);
+  vec3 e = w(lat0, h1, s0), f = w(lat1, h1, s0), g2 = w(lat1, h1, s1), h = w(lat0, h1, s1);
+  b.quad(e, h, g2, f); b.quad(a, bb, c, d);      // top, bottom
+  b.quad(a, e, f, bb); b.quad(d, c, g2, h);      // s0 face, s1 face
+  b.quad(a, d, h, e); b.quad(bb, f, g2, c);      // lat0 face, lat1 face
+}
+
 // Sample interpolated at chainage s (bangun3d.ts titikDiS).
 Pt titikDiS(const std::vector<Pt>& pts, float s) {
   float L = pts.back().s, t = std::max(0.f, std::min(L, s));
@@ -268,7 +293,7 @@ void extrude(MeshBuilder& b, const Pt* pts, size_t n, const PP* prof, size_t P, 
 
 // Nearest parallel track on one side of a ring (lateral axis spacing, rail-head height difference).
 struct Neighbour { bool has = false; float lat = 0, dy = 0; size_t seg = 0; };
-struct RingCtx { Neighbour left, right; float shade = 1; float open = 1; };   // open: 1 = free ballast (wobble + skirt), 0 = contained (deck / tunnel floor); fades over OPEN_FADE before a structure
+struct RingCtx { Neighbour left, right; float shade = 1; float open = 1; bool plain = false; };   // plain: stone-only texture on the bed (diverging leg under the turnout sleepers)   // open: 1 = free ballast (wobble + skirt), 0 = contained (deck / tunnel floor); fades over OPEN_FADE before a structure
 
 // One ring of the ballast section (BALAS_N points, increasing lat) with its per-point shade.
 void profilBalasRing(const Pt& p, const RingCtx& c, PP* out, float* shade) {
@@ -295,10 +320,12 @@ void profilBalasRing(const Pt& p, const RingCtx& c, PP* out, float* shade) {
     float skLat = ftLat + sgn * (SKIRT_LAT - KAKI_LAT + 0.45f * n1) * o + sgn * 0.02f * (1 - o), skH = ftH + (SKIRT_H - ftH) * o;
     skirt = {skLat, skH, uLat(skLat)}; sSkirt = c.shade * (1 + (SKIRT_SHADE - 1) * o);
   };
-  out[3] = {-REL_L_LUAR, REL_TAPAK, uLat(-REL_L_LUAR)}; out[4] = {+REL_L_LUAR, REL_TAPAK, uLat(+REL_L_LUAR)};
+  out[3] = {-REL_L_LUAR, KRIBEL_H, uLat(-REL_L_LUAR)}; out[4] = {+REL_L_LUAR, KRIBEL_H, uLat(+REL_L_LUAR)};
   shade[3] = shade[4] = c.shade;
   side(-1, c.left, out[0], out[1], out[2], shade[0], shade[1], shade[2]);
   side(+1, c.right, out[7], out[6], out[5], shade[7], shade[6], shade[5]);
+  if (c.plain)   // no painted sleepers: sample the plain stone band past the shoulder (u 0.56..0.74) across the bed
+    for (int k = 2; k <= 5; ++k) out[k].u = 0.56f + 0.18f * std::clamp((out[k].lat + BAHU_LAT) / (2 * BAHU_LAT), 0.f, 1.f);
 }
 // Crib strip between two shoulders (3 points, increasing lat). `nb` is the neighbour on side sgn.
 void profilStrip(float sgn, const Neighbour& nb, PP* out) {
@@ -389,10 +416,19 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
   railMat = {}; railMat.name = "rail"; railMat.metallic = 0.3f; railMat.roughness = 0.42f;
   concreteMat = {}; concreteMat.name = "concrete"; concreteMat.baseColor = {0x9a / 255.f, 0xa0 / 255.f, 0xa6 / 255.f, 1}; concreteMat.roughness = 0.92f; concreteMat.metallic = 0.02f;
   steelMat = {}; steelMat.name = "truss"; steelMat.baseColor = {0x5c / 255.f, 0x6b / 255.f, 0x5a / 255.f, 1}; steelMat.roughness = 0.68f; steelMat.metallic = 0.35f;
+  sleeperMat = {}; sleeperMat.name = "sleeper"; sleeperMat.baseColor = {0.42f, 0.41f, 0.39f, 1}; sleeperMat.roughness = 0.92f; sleeperMat.metallic = 0;
+  {   // one concrete sleeper as a tiny model for the instanced draw: x = lateral (+-1 m), y below the rail base, z along
+    Model m; m.materials.push_back(sleeperMat);
+    MeshBuilder box; box.box({-SLEEPER_HALF, REL_TAPAK - SLEEPER_H, -SLEEPER_W / 2}, {SLEEPER_HALF, REL_TAPAK, SLEEPER_W / 2});
+    Primitive pr; pr.material = 0; pr.vertices = box.vertices; pr.indices = box.indices; pr.boundsMin = box.bounds.min; pr.boundsMax = box.bounds.max;
+    Mesh me; me.name = "sleeper"; me.primitives.push_back(std::move(pr)); m.meshes.push_back(std::move(me));
+    Node nd; nd.name = "sleeper"; nd.mesh = 0; m.nodes.push_back(nd); m.roots.push_back(0);
+    m.computeBounds(); sleeperModel_.upload(m);
+  }
   tunnelMat = {}; tunnelMat.name = "tunnel"; tunnelMat.baseColor = {0x4a / 255.f, 0x4d / 255.f, 0x52 / 255.f, 1}; tunnelMat.roughness = 0.98f; tunnelMat.metallic = 0; tunnelMat.doubleSided = true;
 
   const WorldOrigin& o = g.origin();
-  struct Builders { MeshBuilder ballast, rails, bridge, tunnel, truss; };
+  struct Builders { MeshBuilder ballast, rails, bridge, tunnel, truss; std::vector<mat4> sleepers; };
   std::map<std::pair<int, int>, Builders> cells;
   auto cellOf = [](const Pt& p) { return std::pair<int, int>{(int)std::floor(p.x / CHUNK), (int)std::floor(p.z / CHUNK)}; };
   std::map<int, double> mouth = mouthDistances(g, TRW_RAMP);                       // tunnel mouths: terrain carve weight
@@ -467,15 +503,21 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
     }
   }
   std::map<int, double> inside = mouthDistances(g, TRW_GELAP + 60, true);
+  const bool bedDebug = std::getenv("ENG_BED_DEBUG") != nullptr;
 
   // Turnouts (wesel): legs [through, diverging], the side the diverging leg leaves on, the blade heel and the
   // frog nose along the through leg — all from the graph's own curves. Each leg's blade rail (the through leg's
   // rail on the diverging side, the diverging leg's rail on the through side) is cut back to the heel in the
   // static rails mesh and rebuilt as a tapered blade (closed / open meshes) drawn by setting.
   struct Turnout { int node; int leg[2]; float side, sHeel, sFrog; };
-  struct BladeCut { bool has = false; int end = 0; float latSign = 0; float sHeel = 0; };
-  std::vector<BladeCut> cut(g.segments.size());
+  struct Range { float a, b; };
+  struct SegCuts { std::vector<Range> rail[2]; std::vector<Range> noSleepers; std::vector<Range> plain; };   // in segment s; rail[0] = left (-lat), [1] = right
+  std::vector<SegCuts> cut(g.segments.size());
   std::vector<Turnout> turnouts;
+  auto toSeg = [&](int si, int node, float d0, float d1) {   // [d0, d1] from `node` along si -> segment s range
+    float L = allPts[(size_t)si].back().s; bool fromA = g.segments[(size_t)si].a == node;
+    return fromA ? Range{d0, d1} : Range{L - d1, L - d0};
+  };
   auto legPt = [&](int si, int node, float d) {   // point d metres from `node` along segment si, tangent away from the node
     const std::vector<Pt>& v = allPts[(size_t)si]; bool fromA = g.segments[(size_t)si].a == node; float L = v.back().s;
     Pt q = titikDiS(v, fromA ? d : L - d);
@@ -503,11 +545,17 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
     }
     if (t.sHeel <= 0) t.sHeel = std::min(6.f, Lmax * 0.5f);
     if (t.sHeel < 1.5f) continue;   // degenerate legs
+    float sleepersUntil = (t.sFrog > 0 ? t.sFrog : t.sHeel + 6) + TURNOUT_SLEEPERS_PAST_FROG;
     for (int i = 0; i < 2; ++i) {
       int si = t.leg[i]; bool fromA = g.segments[(size_t)si].a == (int)ni;
-      float bladeSide = i == 0 ? t.side : -t.side;   // in the away-from-node frame
-      cut[(size_t)si] = {true, fromA ? 0 : 1, bladeSide * (fromA ? 1.f : -1.f), t.sHeel};
+      float bladeSide = (i == 0 ? t.side : -t.side) * (fromA ? 1.f : -1.f);   // blade rail side in the segment's own frame
+      std::vector<Range>& rc = cut[(size_t)si].rail[bladeSide < 0 ? 0 : 1];
+      rc.push_back(toSeg(si, (int)ni, 0, t.sHeel));                                            // blade (rebuilt tapered)
+      if (t.sFrog > 0) rc.push_back(toSeg(si, (int)ni, t.sFrog - FROG_BACK, t.sFrog + FROG_LEN));   // frog casting replaces the crossing rails
+      cut[(size_t)si].noSleepers.push_back(toSeg(si, (int)ni, 0, sleepersUntil));            // long turnout sleepers instead
+      if (i == 1) cut[(size_t)si].plain.push_back(toSeg(si, (int)ni, 0, sleepersUntil));     // no painted sleepers on the diverging bed
     }
+    if (bedDebug) std::fprintf(stderr, "turnout %s through %s (graph leg %d) diverging %s side %+.0f heel %.1f frog %.1f\n", n.id.c_str(), g.segments[(size_t)t.leg[0]].id.c_str(), n.legs[0] == t.leg[0] ? 0 : 1, g.segments[(size_t)t.leg[1]].id.c_str(), t.side, t.sHeel, t.sFrog);
     turnouts.push_back(t);
   }
   stats_.turnouts = (int)turnouts.size();
@@ -537,7 +585,6 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
       }
   };
 
-  const bool bedDebug = std::getenv("ENG_BED_DEBUG") != nullptr;
   std::vector<RingCtx> ctx;
   std::vector<PP> ringProf; std::vector<float> ringShade, segShade;
   for (size_t si = 0; si < g.segments.size(); ++si) {
@@ -558,6 +605,7 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
         if (bedDebug && i == pts.size() / 2) std::fprintf(stderr, "bed %s L %d %.2f %s dy %.2f R %d %.2f %s dy %.2f\n", seg.id.c_str(), c.left.has, c.left.lat, c.left.has ? g.segments[c.left.seg].id.c_str() : "-", c.left.dy, c.right.has, c.right.lat, c.right.has ? g.segments[c.right.seg].id.c_str() : "-", c.right.dy);
         if ((c.left.has && si < c.left.seg) || (c.right.has && si < c.right.seg)) ++stats_.stripRings;
         c.open = 0;
+        for (const Range& r : cut[si].plain) if (pts[i].s >= r.a - 2 && pts[i].s <= r.b + 2) c.plain = true;
         if (seg.kind == RailKind::Ground) {   // fade the free section out toward a portal / abutment
           double d = 1e9;
           if (auto it = ends.find(seg.a); it != ends.end()) d = std::min(d, it->second + pts[i].s);
@@ -649,16 +697,23 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
         segShade[i] = ctx[start + i].shade;
       }
       extrudeVar(b.ballast, run, rn, ringProf.data(), BALAS_N, TEX_LENGTH, true, ringShade.data(), false);
-      for (float rs : {-1.f, 1.f}) {   // left / right rail; the blade rail of a turnout leg starts at the heel
-        const PP* prof = rs < 0 ? PROFIL_REL_KIRI : PROFIL_REL_KANAN; size_t P = std::size(PROFIL_REL_KIRI);
-        const BladeCut& bc = cut[si];
-        if (!bc.has || bc.latSign != rs) { extrude(b.rails, run, rn, prof, P, TEX_LENGTH, segShade.data()); continue; }
-        float s0 = bc.end == 0 ? bc.sHeel : -1e9f, s1 = bc.end == 0 ? 1e9f : (float)L - bc.sHeel;   // kept range
+      for (int rs = 0; rs < 2; ++rs) {   // left / right rail, in pieces around the turnout cuts (blade, frog casting)
+        const PP* prof = rs == 0 ? PROFIL_REL_KIRI : PROFIL_REL_KANAN; size_t P = std::size(PROFIL_REL_KIRI);
+        std::vector<Range> cuts = cut[si].rail[rs];
+        if (cuts.empty()) { extrude(b.rails, run, rn, prof, P, TEX_LENGTH, segShade.data()); continue; }
+        std::sort(cuts.begin(), cuts.end(), [](const Range& x, const Range& y) { return x.a < y.a; });
+        std::vector<Range> keep; float from = run[0].s;
+        for (const Range& c : cuts) { if (c.a > from) keep.push_back({from, std::min(c.a, run[rn - 1].s)}); from = std::max(from, c.b); }
+        if (from < run[rn - 1].s) keep.push_back({from, run[rn - 1].s});
         std::vector<Pt> kept; std::vector<float> ks;
-        if (run[0].s < s0 && run[rn - 1].s > s0) { kept.push_back(titikDiS(pts, s0)); ks.push_back(ctx[start].shade); }
-        for (size_t i = 0; i < rn; ++i) if (run[i].s >= s0 && run[i].s <= s1) { kept.push_back(run[i]); ks.push_back(segShade[i]); }
-        if (run[0].s < s1 && run[rn - 1].s > s1) { kept.push_back(titikDiS(pts, s1)); ks.push_back(ctx[end].shade); }
-        if (kept.size() >= 2) extrude(b.rails, kept.data(), kept.size(), prof, P, TEX_LENGTH, ks.data());
+        for (const Range& k : keep) {
+          if (k.b - k.a < 0.05f) continue;
+          kept.clear(); ks.clear();
+          if (k.a > run[0].s) { kept.push_back(titikDiS(pts, k.a)); ks.push_back(ctx[start].shade); }
+          for (size_t i = 0; i < rn; ++i) if (run[i].s >= k.a && run[i].s <= k.b) { kept.push_back(run[i]); ks.push_back(segShade[i]); }
+          if (k.b < run[rn - 1].s) { kept.push_back(titikDiS(pts, k.b)); ks.push_back(ctx[end].shade); }
+          if (kept.size() >= 2) extrude(b.rails, kept.data(), kept.size(), prof, P, TEX_LENGTH, ks.data());
+        }
       }
       // crib strips to a parallel neighbour, built by the lower-index segment, in runs of consecutive rings
       for (float sgn : {-1.f, 1.f}) {
@@ -722,6 +777,20 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
         ++stats_.piers;
       }
     }
+    // Sleepers: one instance every JARAK_BANTALAN, tile-aligned with the painted ones (13 per 7.76 m tile), skipped
+    // where a turnout lays its own long sleepers. Placed here (not per run) so the pitch is continuous.
+    {
+      const std::vector<Range>& skip = cut[si].noSleepers;
+      for (float tile = 0; tile < (float)L; tile += TEX_LENGTH)
+        for (int j = 0; j < 13; ++j) {
+          float sv = tile + (float)j * JARAK_BANTALAN + 0.13f;   // painted bar spans [m, m + 0.26]: centre on it
+          if (sv > (float)L) break;
+          bool out = false; for (const Range& r : skip) if (sv >= r.a && sv <= r.b) { out = true; break; }
+          if (out) continue;
+          Pt q = titikDiS(pts, sv);
+          cells[cellOf(q)].sleepers.push_back(sleeperXf(q, 0, 1)); ++stats_.sleepers;
+        }
+    }
     // Tunnel portal rings (1.3 m long, scale 1.15) at mouths.
     if (seg.kind == RailKind::Tunnel && pairs[si].host) {
       for (int end = 0; end < 2; ++end) {
@@ -750,9 +819,11 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
   }
 
   // Turnout parts. Blades: 6-point rail section per ring, tip BLADE_TIP_W wide pressed against the stock rail
-  // (its own rail line shifted one head width toward the centre), full width at the heel; the open blade is a
-  // further BLADE_OPEN off at the toe. Frog: a block filling the V between the two inner rails past the nose.
-  // Check rails: a rail piece CHECK_GAP inside each outer running rail across the frog.
+  // (its own rail line shifted one head width toward the centre), full width at the heel; BLADE_STEPS meshes
+  // from closed to open (+BLADE_OPEN at the toe) for the swing animation. Frog: the crossing rails are cut and
+  // a dark casting fills the throat + V, with the two rail heads meeting at the nose on top. Check rails:
+  // a rail piece CHECK_GAP inside each outer running rail across the frog. Switch machine + rod at the toe.
+  // Long sleepers span both legs from the toe to TURNOUT_SLEEPERS_PAST_FROG beyond the frog.
   auto railBox = [](float lo, float hi, PP* out) {
     out[0] = {lo, REL_TAPAK, U_REL_BADAN}; out[1] = {lo, 0, U_REL_BADAN}; out[2] = {lo, 0, U_REL_KEPALA0};
     out[3] = {hi, 0, U_REL_KEPALA1}; out[4] = {hi, 0, U_REL_BADAN}; out[5] = {hi, REL_TAPAK, U_REL_BADAN};
@@ -767,37 +838,65 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
       ring.clear();
       int n = std::max(2, (int)std::ceil(t.sHeel / BLADE_STEP));
       for (int k = 0; k <= n; ++k) ring.push_back(legPt(t.leg[i], t.node, t.sHeel * (float)k / (float)n));
-      for (int state = 0; state < 2; ++state) {   // 0 closed, 1 open
+      for (int step = 0; step < BLADE_STEPS; ++step) {
+        float openAmt = (float)step / (float)(BLADE_STEPS - 1);
         prof.resize(ring.size() * 6);
         for (size_t k = 0; k < ring.size(); ++k) {
           float tt = (float)k / (float)n, w = BLADE_TIP_W + (REL_L_LUAR - REL_L_DALAM - BLADE_TIP_W) * tt;
-          float shift = (REL_L_LUAR - REL_L_DALAM) * (1 - tt) + (state ? BLADE_OPEN * (1 - tt) : 0.f);
+          float shift = (REL_L_LUAR - REL_L_DALAM) * (1 - tt) + BLADE_OPEN * openAmt * (1 - tt);
           float outer = sgn * (REL_L_LUAR - shift), inner = outer - sgn * w;
           railBox(std::min(outer, inner), std::max(outer, inner), &prof[k * 6]);
         }
         MeshBuilder mb;
         extrudeVar(mb, ring.data(), ring.size(), prof.data(), 6, TEX_LENGTH, true, nullptr, false);
-        rhi::Mesh m = mb.upload(); tm.bounds.expand(mb.bounds);
-        (state ? tm.open : tm.closed)[legIdx[i]] = m;
+        tm.blade[legIdx[i]][step] = mb.upload(); tm.bounds.expand(mb.bounds);
       }
+      tm.pos[legIdx[i]] = tm.setting == legIdx[i] ? 0.f : 1.f;
     }
     turnouts_.push_back(std::move(tm));
+    // switch machine (0.9 x 0.55 x 0.45 on the sleeper top, opposite the diverging side) and the drive rod to the toe
+    {
+      Pt toe = legPt(t.leg[0], t.node, 0.9f);
+      MeshBuilder& st = cells[cellOf(toe)].truss;
+      float side = -t.side;
+      orientedBox(st, toe, side * 1.45f, side * 2.0f, REL_TAPAK, REL_TAPAK + 0.45f, -0.45f, 0.45f);
+      orientedBox(st, toe, side * 1.45f, -side * 0.55f, REL_TAPAK - 0.02f, REL_TAPAK + 0.04f, -0.03f, 0.03f);   // rod across to the blades
+    }
+    // long sleepers along the through leg spanning both legs
+    {
+      float until = (t.sFrog > 0 ? t.sFrog : t.sHeel + 6) + TURNOUT_SLEEPERS_PAST_FROG;
+      float Lt = allPts[(size_t)t.leg[0]].back().s, Ld = allPts[(size_t)t.leg[1]].back().s;
+      for (float d = 0.3f; d <= std::min(until, std::min(Lt, Ld) - 0.3f); d += JARAK_BANTALAN) {
+        Pt a = legPt(t.leg[0], t.node, d), dv = legPt(t.leg[1], t.node, d);
+        float spread = (dv.x - a.x) * (-a.tz) + (dv.z - a.z) * a.tx;
+        cells[cellOf(a)].sleepers.push_back(sleeperXf(a, spread / 2, (2 * SLEEPER_HALF + std::fabs(spread)) / (2 * SLEEPER_HALF))); ++stats_.sleepers;
+      }
+    }
     if (t.sFrog <= 0) continue;
     ++stats_.frogs;
     Pt at = legPt(t.leg[0], t.node, t.sFrog);
     Builders& b = cells[cellOf(at)];
-    {   // frog: between the through inner rail and the diverging inner rail, from the nose on
-      ring.clear(); prof.clear();
-      int n = (int)std::ceil(FROG_LEN / FROG_STEP);
+    {   // frog casting: dark block over the throat and the V, two rail heads on top meeting at the nose
+      ring.clear(); prof.clear(); std::vector<PP> headT, headD;
+      int n = (int)std::ceil((FROG_LEN + FROG_BACK) / FROG_STEP);
       float Lt = allPts[(size_t)t.leg[0]].back().s;
       for (int k = 0; k <= n; ++k) {
-        float d = std::min(Lt - 0.1f, t.sFrog + FROG_LEN * (float)k / (float)n);
+        float d = std::min(Lt - 0.1f, t.sFrog - FROG_BACK + (FROG_LEN + FROG_BACK) * (float)k / (float)n);
         Pt a = legPt(t.leg[0], t.node, d), dv = legPt(t.leg[1], t.node, d);
         float spread = (dv.x - a.x) * (-a.tz) + (dv.z - a.z) * a.tx;
-        float latT = t.side * GAUGE_HALF, latD = spread - t.side * GAUGE_HALF;
-        ring.push_back(a); PP box[6]; railBox(std::min(latT, latD), std::max(latT, latD), box); prof.insert(prof.end(), box, box + 6);
+        float latT = t.side * GAUGE_HALF, latD = spread - t.side * GAUGE_HALF;   // inner faces of the two inner rails
+        float tOut = latT + t.side * (REL_L_LUAR - REL_L_DALAM), dOut = latD - t.side * (REL_L_LUAR - REL_L_DALAM);
+        float lo = std::min({latT, latD, tOut, dOut}), hi = std::max({latT, latD, tOut, dOut});
+        ring.push_back(a);
+        PP box[6] = {{lo, REL_TAPAK, U_REL_BADAN}, {lo, -0.02f, U_REL_BADAN}, {lo, -0.02f, U_REL_KEPALA0 + 0.004f}, {hi, -0.02f, U_REL_KEPALA0 + 0.004f}, {hi, -0.02f, U_REL_BADAN}, {hi, REL_TAPAK, U_REL_BADAN}};   // worn-steel top
+        prof.insert(prof.end(), box, box + 6);
+        PP ht[6], hd[6]; railBox(std::min(latT, tOut), std::max(latT, tOut), ht); railBox(std::min(latD, dOut), std::max(latD, dOut), hd);
+        for (PP& q : ht) q.h = q.h < -0.05f ? -0.03f : 0; for (PP& q : hd) q.h = q.h < -0.05f ? -0.03f : 0;
+        headT.insert(headT.end(), ht, ht + 6); headD.insert(headD.end(), hd, hd + 6);
       }
       extrudeVar(b.rails, ring.data(), ring.size(), prof.data(), 6, TEX_LENGTH, true, nullptr, false);
+      extrudeVar(b.rails, ring.data(), ring.size(), headT.data(), 6, TEX_LENGTH, true, nullptr, false);
+      extrudeVar(b.rails, ring.data(), ring.size(), headD.data(), 6, TEX_LENGTH, true, nullptr, false);
     }
     for (int i = 0; i < 2; ++i) {   // check rails opposite the frog, inside the outer running rail of each leg
       float outerSide = i == 0 ? -t.side : t.side;
@@ -818,6 +917,12 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
     if (!b.bridge.empty()) c.bridge = b.bridge.upload();
     if (!b.tunnel.empty()) c.tunnel = b.tunnel.upload();
     if (!b.truss.empty()) c.truss = b.truss.upload();
+    if (!b.sleepers.empty()) {
+      c.sleepers = rhi::createDynamicBuffer(b.sleepers.size() * sizeof(mat4));
+      rhi::updateBuffer(c.sleepers, std::as_bytes(std::span(b.sleepers)));
+      c.sleeperCount = (uint32_t)b.sleepers.size();
+      for (const mat4& m : b.sleepers) c.bounds.expand({m.m[3][0], m.m[3][1], m.m[3][2]});
+    }
     c.tris = (uint32_t)((b.ballast.indices.size() + b.rails.indices.size() + b.bridge.indices.size() + b.tunnel.indices.size() + b.truss.indices.size()) / 3);
     stats_.tris += c.tris;
     chunks_.push_back(c);
@@ -836,11 +941,29 @@ void RailBuilder::draw(ModelRenderer& r, const Frustum* frustum, float refDist, 
     if (c.tunnel.indexCount) r.drawMesh(c.tunnel, tunnelMat, {}, I);
     if (c.truss.indexCount) r.drawMesh(c.truss, steelMat, {}, I);
   }
+  {   // meshed sleepers on the chunks near the eye
+    vec3 eye = r.eye();
+    for (const RailChunk& c : chunks_) {
+      if (!c.sleeperCount) continue;
+      vec3 q = vmax(c.bounds.min, vmin(c.bounds.max, eye));   // nearest point of the chunk box
+      if (length(q - eye) > SLEEPER_RANGE) continue;
+      if (frustum && !frustum->contains(c.bounds)) continue;
+      r.drawInstanced(sleeperModel_, I, c.sleeperCount, c.sleepers);
+    }
+  }
+  // blades: swing toward the setting over BLADE_TIME (the closed blade is the set leg's)
+  double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  float dt = lastTick_ > 0 ? (float)std::min(0.25, now - lastTick_) : 0.f; lastTick_ = now;
   for (const TurnoutMesh& t : turnouts_) {
+    for (int i = 0; i < 2; ++i) {
+      float target = t.setting == i ? 0.f : 1.f, step = dt / BLADE_TIME;
+      t.pos[i] = t.pos[i] < target ? std::min(target, t.pos[i] + step) : std::max(target, t.pos[i] - step);
+    }
     if (frustum && !frustum->contains(t.bounds)) continue;
-    int set = t.setting == 1 ? 1 : 0;
-    if (t.closed[set].indexCount) r.drawMesh(t.closed[set], railMat, texture, I);
-    if (t.open[1 - set].indexCount) r.drawMesh(t.open[1 - set], railMat, texture, I);
+    for (int i = 0; i < 2; ++i) {
+      int k = (int)std::lround(t.pos[i] * (BLADE_STEPS - 1));
+      if (t.blade[i][k].indexCount) r.drawMesh(t.blade[i][k], railMat, texture, I);
+    }
   }
   // Iconic centreline with the BENANG_MUNCUL / BENANG_HILANG hysteresis (dunia3d.ts:4057-4063).
   iconicOn_ = always || refDist > (iconicOn_ ? 500.f : 700.f);
@@ -919,8 +1042,10 @@ void RailBuilder::setPointState(const std::string& nodeId, int setting) {
 
 void RailBuilder::destroy() {
   for (RailChunk& c : chunks_) { rhi::destroyMesh(c.ballast); rhi::destroyMesh(c.rails); rhi::destroyMesh(c.bridge); rhi::destroyMesh(c.tunnel); rhi::destroyMesh(c.truss); }
-  for (TurnoutMesh& t : turnouts_) for (int i = 0; i < 2; ++i) { rhi::destroyMesh(t.closed[i]); rhi::destroyMesh(t.open[i]); }
+  for (TurnoutMesh& t : turnouts_) for (int i = 0; i < 2; ++i) for (int k = 0; k < BLADE_STEPS; ++k) rhi::destroyMesh(t.blade[i][k]);
   turnouts_.clear();
+  for (RailChunk& c : chunks_) if (c.sleepers.id) rhi::destroyBuffer(c.sleepers);
+  sleeperModel_.destroy();
   chunks_.clear(); samples_.clear(); centre_.clear();
   rhi::destroyMesh(iconic_); iconic_ = {}; iconicWidth_ = 0; iconicOn_ = false;
   if (texture.id) { rhi::destroyTexture(texture); texture = {}; }
