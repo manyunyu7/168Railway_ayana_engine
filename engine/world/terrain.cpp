@@ -26,6 +26,10 @@ struct Reader {
 inline float smoothstep01(float t) { return t * t * (3 - 2 * t); }
 inline int64_t cellKey(int i, int j) { return ((int64_t)i << 32) ^ (uint32_t)j; }
 constexpr uint8_t DEM_FAILED = 2;   // DemLayer::present: 0 absent, 1 delivered, 2 fetch failed (stays flat)
+// Layer grid caps. A DEM layer allocates n*n floats per cell so it stays small; a satellite layer only keeps
+// 2 bytes per grid cell (indexed + state), so its cap is generous: the detail layers' grids span the whole
+// track bbox even when only a few tiles are present (whoosh 93 x 82 km -> z17 grid 307 x 267 = 82k cells).
+constexpr int MAX_DEM_TILES = 4096, MAX_SAT_CELLS = 1 << 22;
 
 // Streaming radii per satellite layer (ubinStream.ts / DETAIL_TANAH): near layer 4000/6000, far layer resident,
 // detail by zoom (z16 1500/2200, z17 450/800).
@@ -80,7 +84,7 @@ bool Dem::load(const std::string& path, std::string& error) {
   layers.resize((size_t)nl);
   for (DemLayer& L : layers) {
     L.zoom = r.i32(); L.tx0 = r.i32(); L.ty0 = r.i32(); L.nx = r.i32(); L.ny = r.i32(); L.n = r.i32();
-    if (!r.ok || L.nx < 1 || L.ny < 1 || L.n < 2 || L.nx * L.ny > 4096) { error = path + ": bad layer"; return false; }
+    if (!r.ok || L.nx < 1 || L.ny < 1 || L.n < 2 || L.nx * L.ny > MAX_DEM_TILES) { error = path + ": bad layer"; return false; }
     L.ts = slippy::tileSizeMeter(L.zoom); L.x0 = slippy::tileOriginX(L.tx0, L.zoom); L.y0 = slippy::tileOriginY(L.ty0, L.zoom);
     L.present.resize((size_t)L.nx * L.ny);
     L.h.resize((size_t)L.nx * L.ny * L.n * L.n);
@@ -134,7 +138,7 @@ bool SatImage::load(const std::string& path, std::string& error) {
   for (size_t li = 0; li < layers.size(); ++li) {
     SatLayer& L = layers[li];
     L.zoom = r.i32(); L.tx0 = r.i32(); L.ty0 = r.i32(); L.nx = r.i32(); L.ny = r.i32(); L.px = r.i32();
-    if (!r.ok || L.nx < 1 || L.ny < 1 || L.px < 1 || L.px > 4096 || L.nx * L.ny > 65536) { error = path + ": bad layer"; return false; }
+    if (!r.ok || L.nx < 1 || L.ny < 1 || L.px < 1 || L.px > 4096 || L.nx * L.ny > MAX_SAT_CELLS) { error = path + ": bad layer"; return false; }
     L.ts = slippy::tileSizeMeter(L.zoom); L.mpp = L.ts / L.px;
     L.indexed.resize((size_t)L.nx * L.ny);
     if (!r.bytes(L.indexed.data(), L.indexed.size())) { error = path + ": truncated"; return false; }
@@ -234,7 +238,7 @@ bool Terrain::loadIndexLayers(const Json& index, std::string& error) {
   auto presentOf = [](const Json& L, size_t n) { std::vector<uint8_t> p(n, 0); const std::string& s = L["present"].str; for (size_t i = 0; i < n && i < s.size(); ++i) p[i] = s[i] == '1'; return p; };
   for (const Json& L : index["dem"].arr) {
     DemLayer d; d.zoom = L["zoom"].intOr(0); d.tx0 = L["tx0"].intOr(0); d.ty0 = L["ty0"].intOr(0); d.nx = L["nx"].intOr(0); d.ny = L["ny"].intOr(0); d.n = L["px"].intOr(256);
-    if (d.nx < 1 || d.ny < 1 || d.n < 2 || d.nx * d.ny > 4096) { error = "index.json: bad dem layer"; return false; }
+    if (d.nx < 1 || d.ny < 1 || d.n < 2 || d.nx * d.ny > MAX_DEM_TILES) { error = "index.json: bad dem layer"; return false; }
     d.ts = slippy::tileSizeMeter(d.zoom); d.x0 = slippy::tileOriginX(d.tx0, d.zoom); d.y0 = slippy::tileOriginY(d.ty0, d.zoom);
     d.indexed = presentOf(L, (size_t)d.nx * d.ny);
     d.present.assign(d.indexed.size(), 0);
@@ -243,9 +247,14 @@ bool Terrain::loadIndexLayers(const Json& index, std::string& error) {
   }
   for (const Json& L : index["sat"].arr) {
     SatLayer s; s.zoom = L["zoom"].intOr(0); s.tx0 = L["tx0"].intOr(0); s.ty0 = L["ty0"].intOr(0); s.nx = L["nx"].intOr(0); s.ny = L["ny"].intOr(0); s.px = L["px"].intOr(256);
-    if (s.nx < 1 || s.ny < 1 || s.px < 1 || s.nx * s.ny > 65536) { error = "index.json: bad sat layer"; return false; }
+    if (s.nx < 1 || s.ny < 1 || s.px < 1) { error = "index.json: bad sat layer"; return false; }
     s.ts = slippy::tileSizeMeter(s.zoom); s.mpp = s.ts / s.px;
-    s.indexed = presentOf(L, (size_t)s.nx * s.ny);
+    if ((size_t)s.nx * s.ny > (size_t)MAX_SAT_CELLS) {
+      // Too large a grid: keep the layer's slot (the host addresses layers by index: "sat/<i>") but with no
+      // tiles, so the rest of the terrain still loads instead of the whole index being rejected.
+      std::fprintf(stderr, "[terrain] index.json: sat layer %zu (z%d, %d x %d cells) exceeds %d cells - skipped\n", sat_.layers.size(), s.zoom, s.nx, s.ny, MAX_SAT_CELLS);
+      s.nx = s.ny = 1; s.indexed.assign(1, 0);
+    } else s.indexed = presentOf(L, (size_t)s.nx * s.ny);
     s.state.assign(s.indexed.size(), SatLayer::Absent);
     radiiFor(sat_.layers.size(), s.zoom, s.inR, s.outR);
     sat_.layers.push_back(std::move(s));

@@ -122,6 +122,21 @@ TEST_MAIN({
   CHECK(!s3.loadIndex(badLayer, err) && s3.dem().layers.empty());   // the half-built layer list is dropped
   CHECK(s3.demTilesWanted().empty() && s3.demComplete());
   s3.finishDem();
+  // A wide corridor's detail grid spans the whole bbox (whoosh: z17 307 x 267 cells for 52 present tiles): the
+  // index still loads, a grid over MAX_SAT_CELLS (4M) only empties that layer (slot kept: "sat/<i>" indexing).
+  Terrain s5; err.clear();
+  std::string wide = R"({"bbox":[12280000,860000,12311000,871000],
+    "dem":[{"dir":"dem","zoom":13,"tx0":6605,"ty0":4270,"nx":1,"ny":1,"px":256,"present":"1"}],
+    "sat":[{"dir":"sat/0","zoom":14,"tx0":13210,"ty0":8541,"nx":1,"ny":1,"px":512,"present":"1"},
+           {"dir":"sat/1","zoom":10,"tx0":825,"ty0":533,"nx":1,"ny":1,"px":256,"present":"1"},
+           {"dir":"sat/2","zoom":17,"tx0":105000,"ty0":68000,"nx":307,"ny":267,"px":512,"present":"1"},
+           {"dir":"sat/3","zoom":17,"tx0":105000,"ty0":68000,"nx":3000,"ny":3000,"px":512,"present":"1"}]})";
+  Json wideIdx = Json::parse(wide, &err);
+  CHECK_MSG(err.empty(), err);
+  CHECK_MSG(s5.loadIndex(wideIdx, err), err);
+  CHECK(s5.hasTerrain() && s5.sat().layers.size() == 4);
+  CHECK(s5.sat().layers[2].nx == 307 && s5.sat().layers[2].ny == 267 && s5.sat().layers[2].indexed[0] == 1);
+  CHECK(s5.sat().layers[3].nx == 1 && s5.sat().layers[3].ny == 1 && s5.sat().layers[3].indexed[0] == 0);   // 9M cells: emptied
   CHECK_NEAR(s3.origin().ox, 50.0, 1e-9);                          // bbox centre survives as the origin
   CHECK_NEAR(s3.rawHeight(10, 10), 0.0, 1e-6);
   CHECK_NEAR(s3.groundHeight(10, 10), 0.0, 1e-6);                  // flat at rail height (DEM 0)
