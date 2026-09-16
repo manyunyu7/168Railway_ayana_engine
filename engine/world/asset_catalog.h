@@ -19,6 +19,8 @@ struct CatalogEntry {
   std::map<std::string, std::string> bogie, kopling;   // attach node name (or "*") -> slot id
   bool pilot = false, prosedural = false;
   bool sarana = false;   // rolling-stock slot (model.json `sarana`): no collision geometry kept for it
+  std::vector<std::string> lod;   // coarser versions, nearest first (model.json `_kit.lod1`, `_kit.lod2` or `lod: [...]`);
+                                  // each is its own catalog entry `<id>:lod<n>` (same file/stream path as any model)
 };
 
 // `garis[]` class (spec §3.5): a body tile repeated every `langkah` metres along a spline, optional posts
@@ -76,6 +78,7 @@ public:
   std::string glbPath(const CatalogEntry& e);   // local or cached GLB ("" if unavailable)
   // GPU model for the id, cached by id. nullptr when the file is absent or broken.
   GpuModel* model(const std::string& id);
+  static std::string lodId(const std::string& id, int level);   // catalog id of the level-th coarser version (1 = lod1)
   void destroy();                               // frees every cached GpuModel
 
 private:

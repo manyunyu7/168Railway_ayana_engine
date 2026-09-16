@@ -40,6 +40,7 @@ namespace eng {
 struct WorldSceneStats {
   double buildMs = 0; std::string summary;
   unsigned hiasanDrawn = 0, hiasanInstanced = 0;   // per frame: visible placements, and how many of them went out instanced
+  unsigned hiasanLod = 0;                          // of the drawn ones, how many used a coarser version
 };
 
 // Visibility toggles (the web client's "Tampilan" drawer, dunia3dKonst.ts TAMPIL_BAKU): everything on by default
@@ -123,6 +124,10 @@ public:
   TracksideBoards& boards() { return boards_; }
   JplVisuals& jpl() { return jpl_; }
   const WorldSceneStats& stats() const { return stats_; }
+  // Hiasan LOD: a placement whose projected height on screen falls under lodPixels[n] draws its `lod<n+1>` version
+  // (catalog `_kit.lod1`/`lod2`), falling back to the nearest finer one that is loaded and textured.
+  static constexpr int MAX_LOD = 3;
+  float lodPixels[MAX_LOD] = {200, 70, 25};
   bool built() const { return built_; }
   SceneLayers layers;
   // Camera context for the LOD rules (dunia3d.ts profilKam `acuan`): the mode's reference distance (bebas =
@@ -223,8 +228,11 @@ private:
   SignalVisuals signals_; PointVisuals points_; RouteVisuals routes_;
   TracksideBoards boards_; JplVisuals jpl_; CityVisuals city_; GarisVisuals garis_; CloudVisual clouds_;
   AssetCatalog catalog_; RollingStock stock_; TrainVisuals trains_;
-  struct Placed { GpuModel* model; mat4 xf; AABB bounds; int objIndex = -1; };   // objIndex: world.hiasan.objek[]
+  // model: the full version (collision, picking, boards); lod[n]: the coarser `<id>:lod<n+1>` catalog models,
+  // nullptr while missing / not streamed yet (re-resolved each frame until they arrive). objIndex: world.hiasan.objek[]
+  struct Placed { GpuModel* model; mat4 xf; AABB bounds; int objIndex = -1; std::string id; GpuModel* lod[MAX_LOD] = {}; int lodCount = 0; };
   std::vector<Placed> scenery_;
+  GpuModel* pickLod(Placed& p, vec3 eye);   // the version to draw this frame (never nullptr)
   // Repeated hiasan (the same model placed several times: houses, shops, lamps) go out as one instanced draw
   // per model: each frame the visible placements are bucketed by model, singles drawn as before. Groups are
   // keyed by the catalog's GpuModel pointer (stable until destroy()); buffers grow on demand and live on.
@@ -250,6 +258,7 @@ private:
   } ov_;
   void buildOverlayMeshes();
   int viewportH_ = 1;   // framebuffer height of the last draw() (screen-sized handles)
+  float fovY_ = 1; vec3 eye_;   // camera of the last draw() (hiasan LOD)
   const Json* worldForEdit_ = nullptr;   // the save object given to the last buildDecor / edit (garis / ukur lookups)
   Vegetation trees_;
   MejaBoard meja_; NameBoards papan_; SimState state_;

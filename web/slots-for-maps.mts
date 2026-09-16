@@ -34,7 +34,11 @@ for (const map of process.argv.slice(2)) {
       if (car.sarana) { for (const m of modelSemuaArmada(car.sarana)) addSarana(m); addSarana(car.sarana); }
     }
   }
-  for (const o of world.hiasan?.objek ?? []) { const e = objek.find((x: any) => x.id === o.model); if (e) add(o.model, e.pilotBerkas ?? e.berkas); }
+  for (const o of world.hiasan?.objek ?? []) {
+    const e = objek.find((x: any) => x.id === o.model); if (!e) continue;
+    add(o.model, e.pilotBerkas ?? e.berkas);
+    for (let n = 1; n <= 4; n++) add(`${o.model}:lod${n}`, e._kit?.[`lod${n}`] ?? e[`lod${n}`]);   // coarser versions the engine picks by distance
+  }
   for (const g of world.hiasan?.garis ?? []) {
     const k = garis.find((x: any) => x.id === g.kelas); if (!k) continue;
     add(`garis:${k.id}`, k.berkas); add(`garis:${k.id}:tiang`, k.tiang);

@@ -152,13 +152,18 @@ int WorldScene::pickGaris(const Json& world, float px, float py, int w, int h, c
 // ------------------------------------------------------------------ hiasan
 bool WorldScene::hiasanPlace(int objIndex, const Json& o) {
   auto it = std::find_if(scenery_.begin(), scenery_.end(), [&](const Placed& p) { return p.objIndex == objIndex; });
-  GpuModel* m = catalog_.model(o["model"].stringOr(""));
+  const std::string id = o["model"].stringOr("");
+  GpuModel* m = catalog_.model(id);
   if (!m) { if (it != scenery_.end()) scenery_.erase(it); return false; }   // missing / not streamed yet
   double wx = o["x"].numberOr(0), wy = o["y"].numberOr(0);
   vec3 p = origin_.toScene(wx, wy, terrain_.groundHeight(wx, wy) + (float)o["naik"].numberOr(0));
   float yaw = radians((float)o["rot"].numberOr(0)), sc = (float)o["skala"].numberOr(1);
   mat4 xf = mat4::translation(p) * mat4::rotationY(yaw) * mat4::scale({sc, sc, sc}) * RollingStock::normalizeTransform(*m, true);
-  Placed pl{m, xf, m->bounds.transformed(xf), objIndex};
+  Placed pl{m, xf, m->bounds.transformed(xf), objIndex, id};
+  if (const CatalogEntry* e = catalog_.find(id)) {
+    pl.lodCount = std::min((int)e->lod.size(), MAX_LOD);
+    for (int n = 0; n < pl.lodCount; ++n) pl.lod[n] = catalog_.model(AssetCatalog::lodId(id, n + 1));   // nullptr = later (pickLod retries)
+  }
   if (it != scenery_.end()) *it = pl; else scenery_.push_back(pl);
   return true;
 }

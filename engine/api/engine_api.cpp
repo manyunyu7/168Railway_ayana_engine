@@ -479,10 +479,10 @@ KEEP const char* eng_stats(void) {
   const TextureCacheStats tc = textureCacheStats();
   std::snprintf(b, sizeof b, "{\"fps\":%.1f,\"drawCalls\":%u,\"culled\":%u,\"buildMs\":%.0f,\"ready\":%s,\"decor\":%s,\"tilesPending\":%d,\"decorPending\":%zu,\"modelsRequested\":%d,\"frame\":%d,"
                 "\"terrain\":{\"near\":%d,\"far\":%d,\"patches\":%d,\"resident\":%d,\"requested\":%d,\"pendingJobs\":%d,\"trees\":%zu},"
-                "\"textures\":{\"unique\":%u,\"refs\":%u,\"mb\":%.1f,\"sharedMb\":%.1f},\"hiasan\":{\"drawn\":%u,\"instanced\":%u},\"summary\":\"%s\"}",
+                "\"textures\":{\"unique\":%u,\"refs\":%u,\"mb\":%.1f,\"sharedMb\":%.1f},\"hiasan\":{\"drawn\":%u,\"instanced\":%u,\"lod\":%u},\"summary\":\"%s\"}",
                 g->fps, g->scene.renderer().drawCalls, g->scene.renderer().culled, g->scene.stats().buildMs, g->ready ? "true" : "false", g->decorDone ? "true" : "false",
                 g->tilesPending, g->decorPending.size(), g->modelsPending, g->frame, ts.nearTiles, ts.farTiles, ts.patches, ts.resident, ts.requested, ts.pendingJobs, g->scene.trees().stats.trees,
-                tc.entries, tc.references, tc.bytes / 1e6, tc.bytesShared / 1e6, g->scene.stats().hiasanDrawn, g->scene.stats().hiasanInstanced,
+                tc.entries, tc.references, tc.bytes / 1e6, tc.bytesShared / 1e6, g->scene.stats().hiasanDrawn, g->scene.stats().hiasanInstanced, g->scene.stats().hiasanLod,
                 SimProcessEscapeShim(g->scene.stats().summary).c_str());
   return ret(b);
 }

@@ -38,6 +38,12 @@ CatalogEntry entryFrom(const std::string& id, const Json& j) {
   e.prosedural = j.has("prosedural");
   readAttach(j["bogie"], e.bogie);
   readAttach(j["kopling"], e.kopling);
+  for (const Json& l : j["lod"].arr) if (l.isString() && !l.str.empty()) e.lod.push_back(l.str);
+  if (e.lod.empty()) for (int n = 1; n <= 4; ++n) {   // the kit convention: _kit.lod1, _kit.lod2 (contiguous)
+    std::string f = j["_kit"]["lod" + std::to_string(n)].stringOr(j["lod" + std::to_string(n)].stringOr(""));
+    if (f.empty()) break;
+    e.lod.push_back(f);
+  }
   return e;
 }
 
@@ -71,7 +77,13 @@ bool AssetCatalog::parseCatalog(const std::string& text) {
   for (const auto& [id, j] : doc["sarana"].obj) if (j.isObject()) { entries_[id] = entryFrom(id, j); entries_[id].sarana = true; }
   for (const Json& j : doc["objek"].arr) {
     std::string id = j["id"].stringOr("");
-    if (!id.empty() && !entries_.count(id)) entries_[id] = entryFrom(id, j);
+    if (id.empty() || entries_.count(id)) continue;
+    CatalogEntry e = entryFrom(id, j);
+    for (size_t n = 0; n < e.lod.size(); ++n) {   // `<id>:lod1`.. resolve through model() like any file
+      CatalogEntry l; l.id = lodId(id, (int)n + 1); l.berkas = e.lod[n]; l.nama = e.nama; l.kategori = e.kategori;
+      entries_[l.id] = l;
+    }
+    entries_[id] = e;
   }
   garis_.clear();
   for (const Json& j : doc["garis"].arr) {
@@ -165,6 +177,8 @@ std::string AssetCatalog::emodPath(const std::string& id) {
   }
   return emod;
 }
+
+std::string AssetCatalog::lodId(const std::string& id, int level) { return id + ":lod" + std::to_string(level); }
 
 GpuModel* AssetCatalog::model(const std::string& id) {
   auto it = models_.find(id);

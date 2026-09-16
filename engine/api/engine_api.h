@@ -56,7 +56,7 @@ void eng_set_paused(int paused);     // game paused: JPL arms / cloud drift free
 // changes in the engine. Unknown name = 0. All on by default (benang off).
 int eng_set_layer(const char* name, int on);
 const char* eng_stats(void);         // JSON: fps, drawCalls, buildMs, summary, pending assets, terrain {near, far, patches, resident, requested, pendingJobs, trees},
-                                     // textures {unique, refs, mb, sharedMb: GPU MB not uploaded twice thanks to atlas sharing}, hiasan {drawn, instanced} (last frame)
+                                     // textures {unique, refs, mb, sharedMb: GPU MB not uploaded twice thanks to atlas sharing}, hiasan {drawn, instanced, lod: drawn with a coarser _kit.lod version} (last frame)
 
 // ---- quality / world look (dunia3d.ts laci KAMERA; the host persists the choices) ----
 // Quality tier (dunia3dKonst.ts TINGKAT_MUTU): 0 penuh .. 4 minimum -> tree draw radius 3200/2600/2000/1400/900 m and

@@ -169,7 +169,7 @@ void WorldScene::draw(const mat4& viewProj, const mat4& view, vec3 eye, float fo
                       float fogDensity, bool drawTrains) {
   { double lon, lat; worldToLonLat(origin_.ox, origin_.oz, lon, lat); applySun(clock, lon, lat, light_, sky_); }
   light_.fogDensity = fogDensity;
-  viewportH_ = std::max(1, viewportH);
+  viewportH_ = std::max(1, viewportH); fovY_ = fovY; eye_ = eye;
   sky_.draw(viewProj.inverse(), eye);
   renderer_.beginFrame(viewProj, eye, light_);
   Frustum frustum(viewProj);
@@ -193,13 +193,30 @@ void WorldScene::draw(const mat4& viewProj, const mat4& view, vec3 eye, float fo
   if (drawTrains) trains_.draw(renderer_, &frustum);
 }
 
+GpuModel* WorldScene::pickLod(Placed& p, vec3 eye) {
+  if (p.lodCount == 0) return p.model;
+  vec3 ext = p.bounds.extent();
+  float size = std::max(ext.x, std::max(ext.y, ext.z));
+  float dist = std::max(1.0f, length(p.bounds.center() - eye) - size * 0.5f);
+  float px = size * (float)viewportH_ / (2 * dist * std::tan(fovY_ * 0.5f));   // projected height in framebuffer pixels
+  int level = 0;
+  for (int n = 0; n < p.lodCount; ++n) if (px < lodPixels[n]) level = n + 1;
+  for (; level > 0; --level) {
+    GpuModel*& m = p.lod[level - 1];
+    if (!m) m = catalog_.model(AssetCatalog::lodId(p.id, level));   // not loaded yet: ask again (streamed hosts answer later)
+    if (m && m->textured()) return m;
+  }
+  return p.model;
+}
+
 void WorldScene::drawScenery(const Frustum& frustum) {
   for (auto& [m, g] : hiasanGroups_) g.mats.clear();
-  stats_.hiasanDrawn = stats_.hiasanInstanced = 0;
-  for (const Placed& p : scenery_) {
+  stats_.hiasanDrawn = stats_.hiasanInstanced = stats_.hiasanLod = 0;
+  for (Placed& p : scenery_) {
     if (!p.model->textured() || !frustum.contains(p.bounds)) continue;   // skipped while textures stream
-    hiasanGroups_[p.model].mats.push_back(p.xf);
-    ++stats_.hiasanDrawn;
+    GpuModel* m = pickLod(p, eye_);
+    hiasanGroups_[m].mats.push_back(p.xf);
+    ++stats_.hiasanDrawn; if (m != p.model) ++stats_.hiasanLod;
   }
   for (auto& [model, g] : hiasanGroups_) {
     if (g.mats.empty()) continue;

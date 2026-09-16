@@ -121,6 +121,48 @@ int main() {
   CHECK(!eng_hiasan_remove(idx));
   eng_highlight("", 0); eng_gizmo("", 0, 0, 0, 0, 1, 0); eng_ghost("", 0, 0, 0, 1); eng_ukur_line("[]");
 
+  // ---- hiasan LOD: a kit building (catalog _kit.lod1/lod2) placed twice; the coarser versions are catalog
+  // entries `<id>:lod1` / `:lod2` provided like any model (here: tree files stand in for the house files).
+  // lodPixels decides: huge thresholds -> the coarsest resident version, zero -> the full one; a missing lod2
+  // falls back to lod1. Both placements share one model, so they also go out as one instanced draw.
+  if (haveTree) {
+    auto provideAs = [&](const std::string& id, const std::string& file) {
+      std::vector<uint8_t> b = readBytes(root + "/build/wasm/models/" + file + ".emod");
+      if (b.empty()) return false;
+      bool ok = eng_model_begin(id.c_str(), b.data(), (int)b.size());
+      if (ok) eng_model_textures_unavailable(id.c_str());
+      return ok;
+    };
+    const char* house = "kota-rumah-kampung";
+    const CatalogEntry* he = scene.catalog().find(house);
+    CHECK(he && he->lod.size() == 2 && scene.catalog().find(AssetCatalog::lodId(house, 1)) && scene.catalog().find(AssetCatalog::lodId(house, 2)));
+    if (provideAs(house, "pohon-05") && provideAs(AssetCatalog::lodId(house, 1), "pohon-06")) {
+      char h1[300], h2[300];
+      std::snprintf(h1, sizeof h1, "{\"model\":\"%s\",\"x\":%.2f,\"y\":%.2f,\"naik\":0,\"rot\":0,\"skala\":1}", house, tx, ty);
+      std::snprintf(h2, sizeof h2, "{\"model\":\"%s\",\"x\":%.2f,\"y\":%.2f,\"naik\":0,\"rot\":90,\"skala\":1}", house, tx + 12, ty);
+      int i1 = eng_hiasan_add(h1), i2 = eng_hiasan_add(h2);
+      CHECK(i1 >= 0 && i2 == i1 + 1);
+      auto lodStats = [&](float px, int& drawn, int& lod, int& inst) {
+        for (float& v : scene.lodPixels) v = px;
+        eng_frame(0.016f);
+        Json st = Json::parse(eng_stats(), &err);
+        drawn = st["hiasan"]["drawn"].intOr(-1); lod = st["hiasan"]["lod"].intOr(-1); inst = st["hiasan"]["instanced"].intOr(-1);
+      };
+      int drawn, lod, inst;
+      lodStats(0, drawn, lod, inst);        // full versions
+      CHECK(drawn >= 2 && lod == 0 && inst >= 2);
+      lodStats(1e9f, drawn, lod, inst);     // coarsest: lod2 missing -> lod1 for both, still one instanced group
+      CHECK(drawn >= 2 && lod == 2 && inst >= 2);
+      CHECK(provideAs(AssetCatalog::lodId(house, 2), "pohon-07"));
+      lodStats(1e9f, drawn, lod, inst);     // lod2 arrived later: picked up without re-placing
+      CHECK(lod == 2);
+      for (float& v : scene.lodPixels) v = 0;
+      lodStats(0, drawn, lod, inst);
+      CHECK(lod == 0);
+      CHECK(eng_hiasan_remove(i2)); CHECK(eng_hiasan_remove(i1));
+    } else std::printf("SKIP hiasan LOD: stand-in models missing\n");
+  }
+
   // ---- palette thumbnail: a resident model rendered offscreen (top-down RGBA rows, transparent background)
   CHECK(eng_thumbnail("no-such-model", 64) == nullptr);
   CHECK(eng_thumbnail("pohon-05", 4) == nullptr);
