@@ -178,8 +178,10 @@ void ModelRenderer::drawItem(const DrawItem& d) {
   float det = w[0][0] * (w[1][1] * w[2][2] - w[1][2] * w[2][1]) - w[1][0] * (w[0][1] * w[2][2] - w[0][2] * w[2][1]) + w[2][0] * (w[0][1] * w[1][2] - w[0][2] * w[1][1]);
   rhi::setFrontFaceCCW(det >= 0);
   rhi::setUniform(u.instanced, d.instances ? 1 : 0);
+  if (!mt.depthTest) rhi::setDepthTestEnabled(false);   // overlays (editor handles, hover ring) draw over whatever is in front
   if (d.instances) { rhi::attachInstances(*d.mesh, d.instanceBuf); rhi::drawMeshInstanced(*d.mesh, d.instances); }
   else rhi::drawMesh(*d.mesh);
+  if (!mt.depthTest) rhi::setDepthTestEnabled(true);
   ++drawCalls;
 }
 
@@ -214,6 +216,17 @@ void ModelRenderer::drawInstanced(const GpuModel& model, const mat4& transform, 
       const Material& mt = p.material >= 0 ? model.materials[(size_t)p.material] : DEFAULT;
       submit({&p.mesh, &mt, &model.textures, {}, w, 0, count, nullptr, instances, sortPoint});
     }
+  }
+}
+
+void ModelRenderer::drawNodeInstanced(const GpuModel& model, int node, uint32_t count, rhi::Buffer instances) {
+  static const Material DEFAULT;
+  if (!count || !instances.id || node < 0 || (size_t)node >= model.nodes.size()) return;
+  const int mesh = model.nodes[(size_t)node].mesh;
+  if (mesh < 0 || (size_t)mesh >= model.meshes.size()) return;
+  for (const GpuPrimitive& p : model.meshes[(size_t)mesh].primitives) {
+    const Material& material = p.material >= 0 ? model.materials[(size_t)p.material] : DEFAULT;
+    submit({&p.mesh, &material, &model.textures, {}, mat4::identity(), 0, count, nullptr, instances, {}});
   }
 }
 

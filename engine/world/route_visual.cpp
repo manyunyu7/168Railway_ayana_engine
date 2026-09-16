@@ -126,7 +126,7 @@ void RouteVisuals::draw(ModelRenderer& r, bool ribbons, bool cab) const {
 
 void RouteVisuals::drawHoverRing(ModelRenderer& r, vec3 base, float scale) {
   if (!ring_.indexCount) {
-    MeshBuilder b; const int n = 32; const float r0 = 0.86f, r1 = 1.0f;
+    MeshBuilder b; const int n = 32; const float r0 = 0.78f, r1 = 1.0f;
     for (int i = 0; i < n; ++i) {
       float a0 = 2 * PI * (float)i / n, a1 = 2 * PI * (float)(i + 1) / n;
       vec3 p00{std::cos(a0) * r0, 0, std::sin(a0) * r0}, p01{std::cos(a0) * r1, 0, std::sin(a0) * r1};
@@ -134,8 +134,10 @@ void RouteVisuals::drawHoverRing(ModelRenderer& r, vec3 base, float scale) {
       b.quad(p00, p01, p11, p10);
     }
     ring_ = b.upload();
-    ringMat_ = {}; ringMat_.name = "ring"; ringMat_.baseColor = {1, 1, 1, 1}; ringMat_.emissive = {0.9f, 0.9f, 0.9f};
-    ringMat_.metallic = 0; ringMat_.roughness = 1; ringMat_.doubleSided = true;
+    // unlit amber, no depth test: the ring lies on the ground, so it must not sink into the ballast or hide
+    // behind a train / signal post standing on it
+    ringMat_ = {}; ringMat_.name = "ring"; ringMat_.baseColor = {1.0f, 0.72f, 0.18f, 1}; ringMat_.emissive = {1.0f, 0.72f, 0.18f};
+    ringMat_.metallic = 0; ringMat_.roughness = 1; ringMat_.doubleSided = true; ringMat_.unlit = true; ringMat_.depthTest = false;
   }
   r.drawMesh(ring_, ringMat_, {}, mat4::translation(base + vec3{0, 0.05f, 0}) * mat4::scale({scale, 1, scale}));
 }
