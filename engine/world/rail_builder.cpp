@@ -38,7 +38,7 @@ constexpr float BAHU_LAT = 1.117f, BAHU_H = -0.243f, KAKI_LAT = 1.795f;
 constexpr float SKIRT_LAT = 2.45f, SKIRT_H = BALAS_KAKI - 0.16f;   // plateau is BALAS_KAKI - 0.04: the skirt edge is buried
 constexpr float SKIRT_SHADE = 0.50f, KAKI_SHADE = 0.82f;           // dirt-stained edge
 constexpr float BADAN_MIN = 2.3f, BADAN_MAX = 6.0f;                // neighbour axis spacing counted as one bed (m)
-constexpr float TRW_GELAP = 40, TRW_SHADE = 0.08f, TRW_MOUTH_SHADE = 0.55f;   // lining brightness: at the portal plane -> fully dark this far inside
+constexpr float TRW_GELAP = 15, TRW_SHADE = 0.06f, TRW_MOUTH_SHADE = 0.2f;   // the shader has no shadows: the sun would light the lining, so the shade also kills the direct term   // lining brightness: at the portal plane -> fully dark this far inside
 constexpr size_t BALAS_N = 8;                                      // ring points: skirt foot shoulder rail | rail shoulder foot skirt
 
 float smoothstep01(float t) { t = std::max(0.f, std::min(1.f, t)); return t * t * (3 - 2 * t); }
@@ -139,7 +139,7 @@ std::vector<Batang> rangkaBatang(float panjang, float latMin, float latMax, floa
 // outside) to the tunnel cover (crown + 2 m inside), which the 8 m ground cells cannot render as a cliff.
 constexpr float HW_MARGIN = 3.2f, HW_ABOVE = 2.2f, HW_THICK = 0.7f, HW_FRONT = 0.55f;   // wall face 0.55 m out from the mouth plane
 constexpr float WING_LEN = 6.5f, WING_OUT = 4.5f, WING_END_H = 1.6f, WING_THICK = 0.5f;
-constexpr float COLLAR_LEN = 13.5f, COLLAR_ROOF = 6.2f;   // cut-and-cover box behind the headwall roofing the terrain hole (Terrain HOLE_S1 + margin; roof just under COVER_H 6.6)
+constexpr float COLLAR_LEN = 14.5f, COLLAR_ROOF = 6.2f;   // cut-and-cover box behind the headwall roofing the terrain hole (Terrain HOLE_S1 + margin; roof just under COVER_H 6.6)
 void headwall(MeshBuilder& b, const Pt& p, float dir, const std::vector<PP>& arch, float latMin, float latMax) {
   // arch: the portal profile (increasing lat, first/last at the floor). Frame: outer rectangle.
   float nx = -p.tz, nz = p.tx;                       // lateral axis (profile lat)
@@ -151,33 +151,43 @@ void headwall(MeshBuilder& b, const Pt& p, float dir, const std::vector<PP>& arc
   float left = latMin + (DEK_TEPI - TRW_TEPI) - HW_MARGIN, right = latMax - (DEK_TEPI - TRW_TEPI) + HW_MARGIN;
   float cLat = (latMin + latMax) / 2, cH = TRW_SPRING;   // ray centre for the radial mapping
   auto world = [&](float lat, float h, float out) { return vec3{p.x + nx * lat + ox * out, p.y + h, p.z + nz * lat + oz * out}; };
-  // radial projection of an arch point onto the rectangle (from the arch centre)
-  auto onFrame = [&](const PP& q) {
+  // A wall in a plane `out` from the mouth with the opening `hole` cut out of the rectangle (l, r, bottom, tp):
+  // every hole point is projected radially from the arch centre onto the rectangle and the annulus is quadded.
+  auto onFrame = [&](const PP& q, float l, float r, float bottom, float tp) {
     float dl = q.lat - cLat, dh = q.h - cH;
     float t = 1e30f;
-    if (dl < 0) t = std::min(t, (left - cLat) / dl); else if (dl > 0) t = std::min(t, (right - cLat) / dl);
-    if (dh < 0) t = std::min(t, (floorY - cH) / dh); else if (dh > 0) t = std::min(t, (top - cH) / dh);
+    if (dl < 0) t = std::min(t, (l - cLat) / dl); else if (dl > 0) t = std::min(t, (r - cLat) / dl);
+    if (dh < 0) t = std::min(t, (bottom - cH) / dh); else if (dh > 0) t = std::min(t, (tp - cH) / dh);
     if (t >= 1e30f) t = 1;
     return PP{cLat + dl * t, cH + dh * t, 0};
   };
+  auto frame = [&](const std::vector<PP>& hole, float out, bool outward, float l, float r, float bottom, float tp) {
+    for (size_t i = 0; i + 1 < hole.size(); ++i) {
+      const PP &a0 = hole[i], &a1 = hole[i + 1];
+      PP r0 = onFrame(a0, l, r, bottom, tp), r1 = onFrame(a1, l, r, bottom, tp);
+      vec3 A = world(a0.lat, a0.h, out), B = world(r0.lat, r0.h, out), C = world(r1.lat, r1.h, out), D = world(a1.lat, a1.h, out);
+      if (outward) b.quad(A, B, C, D); else b.quad(D, C, B, A);
+    }
+  };
   const float f0 = HW_FRONT, f1 = HW_FRONT - HW_THICK;
-  for (size_t i = 0; i + 1 < arch.size(); ++i) {
-    const PP &a0 = arch[i], &a1 = arch[i + 1];
-    PP r0 = onFrame(a0), r1 = onFrame(a1);
-    b.quad(world(a0.lat, a0.h, f0), world(r0.lat, r0.h, f0), world(r1.lat, r1.h, f0), world(a1.lat, a1.h, f0));   // front face
-    b.quad(world(a1.lat, a1.h, f1), world(r1.lat, r1.h, f1), world(r0.lat, r0.h, f1), world(a0.lat, a0.h, f1));   // back face
-    b.quad(world(r0.lat, r0.h, f1), world(r1.lat, r1.h, f1), world(r1.lat, r1.h, f0), world(r0.lat, r0.h, f0));   // rim
+  frame(arch, f0, true, left, right, floorY, top);    // front face
+  frame(arch, f1, false, left, right, floorY, top);   // back face
+  for (size_t i = 0; i + 1 < arch.size(); ++i) {      // rim
+    PP r0 = onFrame(arch[i], left, right, floorY, top), r1 = onFrame(arch[i + 1], left, right, floorY, top);
+    b.quad(world(r0.lat, r0.h, f1), world(r1.lat, r1.h, f1), world(r1.lat, r1.h, f0), world(r0.lat, r0.h, f0));
   }
-  // collar: a box from the wall back into the hill around the tube; its top sits at the cover height so the
-  // ground hole over the tube (Terrain::inPortalHole) is roofed and the cutting-to-cover cliff is enclosed
+  // collar: a box from the wall back into the hill around the tube; its top sits just under the cover height so
+  // the ground hole over the tube (Terrain::inPortalHole) is roofed and the cutting-to-cover cliff is enclosed.
+  // The back face is a frame around the tube (scale 1.0) so the tunnel stays open.
   {
     float o0 = f1, o1 = -COLLAR_LEN, bottom = floorY - 1.5f, roof = COLLAR_ROOF;
     vec3 a0 = world(left, bottom, o0), a1 = world(right, bottom, o0), a2 = world(right, bottom, o1), a3 = world(left, bottom, o1);
     vec3 t0 = world(left, roof, o0), t1 = world(right, roof, o0), t2 = world(right, roof, o1), t3 = world(left, roof, o1);
-    b.quad(t0, t1, t2, t3); b.quad(t3, t2, t1, t0);   // roof, both ways (seen from above and, through the hole, from below)
-    b.quad(a3, a2, t2, t3); b.quad(t3, t2, a2, a3);   // back
+    b.quad(t0, t1, t2, t3);   // roof (top only; the tube arch hides its underside)
     b.quad(a0, a3, t3, t0); b.quad(t0, t3, a3, a0);   // left
     b.quad(a1, t1, t2, a2); b.quad(a2, t2, t1, a1);   // right
+    std::vector<PP> tube = profilTerowongan(latMin, latMax, BALAS_KAKI, false, 1.2f);   // a little slack: the tube may curve off the collar's straight axis (crown stays under the roof)
+    frame(tube, o1, false, left, right, bottom, roof); frame(tube, o1, true, left, right, bottom, roof);   // back, both ways
   }
   // wing walls: from the headwall's side edges out along the cutting, top sloping down
   for (float sgn : {-1.f, 1.f}) {
@@ -389,6 +399,11 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
     for (const Mid& a : mids)
       for (const Mid& b : mids) {
         if (a.si == b.si || g.segments[a.si].kind != g.segments[b.si].kind) continue;
+        {   // chain neighbours (sharing a node) are the same structure end to end, never a parallel partner:
+            // pairing them widened the tube and dropped the follower's lining
+          const TrackSegment &sa = g.segments[a.si], &sb = g.segments[b.si];
+          if (sa.a == sb.a || sa.a == sb.b || sa.b == sb.a || sa.b == sb.b) continue;
+        }
         if (std::fabs(a.tx * b.tx + a.tz * b.tz) < 0.985) continue;
         double dx = b.x - a.x, dz = b.z - a.z;
         double lat = dx * (-a.tz) + dz * a.tx, along = dx * a.tx + dz * a.tz;
@@ -646,8 +661,13 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
         {   // cap between the portal ring and the tube in the mouth plane, so the annulus does not show the collar interior
           std::vector<PP> tube = profilTerowongan(pairs[si].latMin, pairs[si].latMax, BALAS_KAKI, false, 1.f);
           std::vector<PP> both = portal; both.insert(both.end(), tube.begin(), tube.end());
-          Pt cap[2] = {p, p}; cap[0].s = 0; cap[1].s = 0.01f; cap[1].x += p.tx * 0.01f * dir; cap[1].z += p.tz * 0.01f * dir;
-          extrudeVar(cells[cellOf(p)].tunnel, cap, 2, both.data(), portal.size(), TEX_LENGTH, true, nullptr, false);
+          Pt cap[2] = {p, p}; cap[0].s = 0; cap[1].s = 0.3f; cap[1].x += p.tx * 0.3f * dir; cap[1].z += p.tz * 0.3f * dir;
+          const float capShade[2] = {TRW_MOUTH_SHADE * 0.5f, TRW_MOUTH_SHADE * 0.5f};
+          extrudeVar(cells[cellOf(p)].tunnel, cap, 2, both.data(), portal.size(), TEX_LENGTH, true, capShade, true);
+          // the tube lining also runs out through the ring (its start ring at the mouth otherwise leaves a seam)
+          std::vector<PP> tubeIn = profilTerowongan(pairs[si].latMin, pairs[si].latMax, BALAS_KAKI, true, 1.f);
+          Pt ext[2] = {p, p}; ext[0].s = 0; ext[1].s = 1.3f; ext[1].x += p.tx * 1.3f * dir; ext[1].z += p.tz * 1.3f * dir;
+          extrude(cells[cellOf(p)].tunnel, ext, 2, tubeIn.data(), tubeIn.size(), TEX_LENGTH, capShade);
         }
         headwall(cells[cellOf(p)].bridge, p, dir, portal, pairs[si].latMin, pairs[si].latMax);
       }

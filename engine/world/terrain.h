@@ -48,16 +48,16 @@ struct MeshBuilder;
 namespace terrain {
 constexpr int DEM_Z = 13, DEM_Z_FAR = 10, TILE_Z = 14;
 constexpr float CARVE_INNER = 9, CARVE_OUTER = 60;            // UKIR_DALAM / UKIR_LUAR
-constexpr float MOUTH_INNER = 4.5f, MOUTH_OUTER = 13;            // corridor radii right at a tunnel mouth (engine addition, see groundHeight)
+constexpr float MOUTH_INNER = 6.5f, MOUTH_OUTER = 16;            // corridor radii right at a tunnel mouth (engine addition, see groundHeight)
 // Tunnel cover (engine addition): along tunnel chords the ground is raised to >= rail + COVER_H (arch crown ~4.6 m
 // + 2 m of rock) within COVER_INNER, fading out at COVER_OUTER; the portal plane (RailSample portal markers)
 // gates carve vs. raise (step between PORTAL_IN0 and PORTAL_IN1 m inside), out to PORTAL_REACH from the mouth.
 constexpr float COVER_H = 6.6f, COVER_INNER = 6, COVER_OUTER = 16, PORTAL_REACH = 60;
-constexpr float PORTAL_IN0 = 2, PORTAL_IN1 = 5;   // the cutting-to-cover step lies this far INSIDE the mouth plane (inside the hole / collar)
+constexpr float PORTAL_IN0 = 3, PORTAL_IN1 = 6;   // the cutting-to-cover step lies this far INSIDE the mouth plane (inside the hole / collar)
 // Ground cells shrink to CELL_PORTAL within PORTAL_TIER_R of a mouth so the cutting-to-cover step is a short
 // cliff, and the cells right over the tube (HOLE_S0..HOLE_S1 m inside the plane, |lateral| <= HOLE_LAT) are left
 // out of the mesh; rail_builder's portal collar box roofs that hole.
-constexpr float CELL_PORTAL = 3, PORTAL_TIER_R = 40, HOLE_S0 = 1.0f, HOLE_S1 = 11, HOLE_LAT = 4.5f;
+constexpr float CELL_PORTAL = 3, PORTAL_TIER_R = 40, HOLE_S0 = 0.5f, HOLE_S1 = 12, HOLE_LAT = 5.5f;
 constexpr float LOW_OUTER = 20, LOW_INNER = 8, LOW_MAX_DROP = 1.5f, LOW_IGNORE_DIFF = 4;   // RENDAH_*
 constexpr float BALLAST_FOOT = -0.580f;                      // BALAS_KAKI
 constexpr float PLATEAU_OFFSET = BALLAST_FOOT - 0.04f;       // plateau below the rail head
