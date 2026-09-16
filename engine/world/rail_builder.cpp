@@ -38,6 +38,7 @@ constexpr float BAHU_LAT = 1.117f, BAHU_H = -0.243f, KAKI_LAT = 1.795f;
 constexpr float SKIRT_LAT = 2.45f, SKIRT_H = BALAS_KAKI - 0.16f;   // plateau is BALAS_KAKI - 0.04: the skirt edge is buried
 constexpr float SKIRT_SHADE = 0.50f, KAKI_SHADE = 0.82f;           // dirt-stained edge
 constexpr float BADAN_MIN = 2.3f, BADAN_MAX = 6.0f;                // neighbour axis spacing counted as one bed (m)
+constexpr float OPEN_FADE = 12;   // metres before a portal / abutment over which the free section becomes the contained one
 constexpr float TRW_GELAP = 15, TRW_SHADE = 0.06f, TRW_MOUTH_SHADE = 0.2f;   // the shader has no shadows: the sun would light the lining, so the shade also kills the direct term   // lining brightness: at the portal plane -> fully dark this far inside
 constexpr size_t BALAS_N = 8;                                      // ring points: skirt foot shoulder rail | rail shoulder foot skirt
 
@@ -262,7 +263,7 @@ void extrude(MeshBuilder& b, const Pt* pts, size_t n, const PP* prof, size_t P, 
 
 // Nearest parallel track on one side of a ring (lateral axis spacing, rail-head height difference).
 struct Neighbour { bool has = false; float lat = 0, dy = 0; size_t seg = 0; };
-struct RingCtx { Neighbour left, right; float shade = 1; bool jitter = true, skirt = true; };
+struct RingCtx { Neighbour left, right; float shade = 1; float open = 1; };   // open: 1 = free ballast (wobble + skirt), 0 = contained (deck / tunnel floor); fades over OPEN_FADE before a structure
 
 // One ring of the ballast section (BALAS_N points, increasing lat) with its per-point shade.
 void profilBalasRing(const Pt& p, const RingCtx& c, PP* out, float* shade) {
@@ -276,17 +277,18 @@ void profilBalasRing(const Pt& p, const RingCtx& c, PP* out, float* shade) {
       return;
     }
     float n1 = 0, n2 = 0;
-    if (c.jitter) {
+    const float o = c.open;   // wobble amplitude and skirt reach scale with it, so the section is continuous into a structure
+    if (o > 0) {
       float wx = p.x + nx * sgn * KAKI_LAT, wz = p.z + nz * sgn * KAKI_LAT;
-      n1 = noise2(wx * 0.31f, wz * 0.31f); n2 = noise2(wx * 0.23f + 37.1f, wz * 0.23f - 91.7f);
+      n1 = noise2(wx * 0.31f, wz * 0.31f) * o; n2 = noise2(wx * 0.23f + 37.1f, wz * 0.23f - 91.7f) * o;
     }
     float shLat = sgn * (BAHU_LAT + 0.10f * n1), shH = BAHU_H + 0.03f * n2;
     float ftLat = sgn * (KAKI_LAT + 0.22f * n2), ftH = BALAS_KAKI + 0.04f * n1;
     // foot / skirt keep the unclamped u (0.55..0.68, still stone in both atlases) so the edge is not streaked
     sh = {shLat, shH, uLatBalas(shLat)}; foot = {ftLat, ftH, uLat(ftLat)};
-    sFoot = c.shade * (c.skirt ? KAKI_SHADE : 1.f);
-    if (c.skirt) { float skLat = sgn * (SKIRT_LAT + 0.45f * n1); skirt = {skLat, SKIRT_H, uLat(skLat)}; sSkirt = c.shade * SKIRT_SHADE; }
-    else { skirt = {ftLat + sgn * 0.02f, ftH, foot.u}; sSkirt = sFoot; }
+    sFoot = c.shade * (1 + (KAKI_SHADE - 1) * o);
+    float skLat = ftLat + sgn * (SKIRT_LAT - KAKI_LAT + 0.45f * n1) * o + sgn * 0.02f * (1 - o), skH = ftH + (SKIRT_H - ftH) * o;
+    skirt = {skLat, skH, uLat(skLat)}; sSkirt = c.shade * (1 + (SKIRT_SHADE - 1) * o);
   };
   out[3] = {-REL_L_LUAR, REL_TAPAK, uLat(-REL_L_LUAR)}; out[4] = {+REL_L_LUAR, REL_TAPAK, uLat(+REL_L_LUAR)};
   shade[3] = shade[4] = c.shade;
@@ -300,22 +302,28 @@ void profilStrip(float sgn, const Neighbour& nb, PP* out) {
   if (sgn > 0) { out[0] = a; out[1] = m; out[2] = b2; } else { out[0] = b2; out[1] = m; out[2] = a; }
 }
 
-// Rail distance from every node to the nearest tunnel mouth, capped (uji3dJembatan.ts jarakKeMulut).
-// inside = false walks the open track away from the mouths; true walks the tunnel segments into the hill.
-std::map<int, double> mouthDistances(const TrackGraph& g, double maxD, bool inside = false) {
+// Rail distance from every node to the nearest structure end, capped (uji3dJembatan.ts jarakKeMulut).
+// inside = false: seeds are the tunnel mouths (anyStructure: every ground/structure junction, bridge abutments
+// too) and the walk follows the open track away from them (terrain carve weight / ballast section fade); true: seeds are the
+// tunnel mouths and the walk follows the tunnel segments into the hill (lining darkness).
+std::map<int, double> mouthDistances(const TrackGraph& g, double maxD, bool inside = false, bool anyStructure = false) {
   std::map<int, double> out;
   std::priority_queue<std::pair<double, int>, std::vector<std::pair<double, int>>, std::greater<>> pq;
   for (size_t ni = 0; ni < g.nodes.size(); ++ni) {
-    bool tun = false, ground = false;
-    for (int si : g.nodes[ni].segs) (g.segments[(size_t)si].kind == RailKind::Tunnel ? tun : ground) = true;
-    if (tun && ground) { out[(int)ni] = 0; pq.push({0, (int)ni}); }
+    bool tun = false, ground = false, structure = false;
+    for (int si : g.nodes[ni].segs) {
+      RailKind k = g.segments[(size_t)si].kind;
+      if (k == RailKind::Tunnel) tun = true;
+      if (k == RailKind::Ground) ground = true; else structure = true;
+    }
+    if (inside ? (tun && ground) : ((anyStructure ? structure : tun) && ground)) { out[(int)ni] = 0; pq.push({0, (int)ni}); }
   }
   while (!pq.empty()) {
     auto [d, n] = pq.top(); pq.pop();
     if (d > out[n]) continue;
     for (int si : g.nodes[(size_t)n].segs) {
       const TrackSegment& s = g.segments[(size_t)si];
-      if ((s.kind == RailKind::Tunnel) != inside) continue;
+      if (inside ? s.kind != RailKind::Tunnel : s.kind != RailKind::Ground) continue;
       int o = g.otherNode(si, n); double nd = d + s.length;
       if (nd > maxD) continue;
       auto it = out.find(o);
@@ -380,7 +388,8 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
   struct Builders { MeshBuilder ballast, rails, bridge, tunnel, truss; };
   std::map<std::pair<int, int>, Builders> cells;
   auto cellOf = [](const Pt& p) { return std::pair<int, int>{(int)std::floor(p.x / CHUNK), (int)std::floor(p.z / CHUNK)}; };
-  std::map<int, double> mouth = mouthDistances(g, TRW_RAMP);
+  std::map<int, double> mouth = mouthDistances(g, TRW_RAMP);                       // tunnel mouths: terrain carve weight
+  std::map<int, double> ends = mouthDistances(g, OPEN_FADE * 2, false, true);     // every structure end: ballast section fade
   stats_ = {};
 
   // Parallel double-track structures share one deck/tube: partner within 9 m laterally and
@@ -497,7 +506,13 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
         if (c.left.has || c.right.has) ++stats_.bedRings;
         if (bedDebug && i == pts.size() / 2) std::fprintf(stderr, "bed %s L %d %.2f %s dy %.2f R %d %.2f %s dy %.2f\n", seg.id.c_str(), c.left.has, c.left.lat, c.left.has ? g.segments[c.left.seg].id.c_str() : "-", c.left.dy, c.right.has, c.right.lat, c.right.has ? g.segments[c.right.seg].id.c_str() : "-", c.right.dy);
         if ((c.left.has && si < c.left.seg) || (c.right.has && si < c.right.seg)) ++stats_.stripRings;
-        c.jitter = c.skirt = seg.kind == RailKind::Ground;
+        c.open = 0;
+        if (seg.kind == RailKind::Ground) {   // fade the free section out toward a portal / abutment
+          double d = 1e9;
+          if (auto it = ends.find(seg.a); it != ends.end()) d = std::min(d, it->second + pts[i].s);
+          if (auto it = ends.find(seg.b); it != ends.end()) d = std::min(d, it->second + (L - pts[i].s));
+          c.open = smoothstep01((float)(d / OPEN_FADE));
+        }
         if (seg.kind == RailKind::Tunnel) {
           double d = std::min(iA + pts[i].s, iB + (L - pts[i].s));
           c.shade = TRW_MOUTH_SHADE + (TRW_SHADE - TRW_MOUTH_SHADE) * smoothstep01((float)(d / TRW_GELAP));
