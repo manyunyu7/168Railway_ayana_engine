@@ -38,7 +38,7 @@ constexpr float BAHU_LAT = 1.25f, BAHU_H = -0.236f, KAKI_LAT = 1.795f;   // shou
 constexpr float KRIBEL_DROP = 0.06f;                                    // with meshed sleepers the crib stone sits this far below the sleeper top
 constexpr float SKIRT_LAT = 2.45f, SKIRT_H = BALAS_KAKI - 0.16f;   // plateau is BALAS_KAKI - 0.04: the skirt edge is buried
 constexpr float SKIRT_SHADE = 0.50f, KAKI_SHADE = 0.82f;           // dirt-stained edge
-constexpr float BADAN_MIN = 1.0f, BADAN_MAX = 6.0f;                // neighbour axis spacing counted as one bed (m); below 1 m the rail beds overlap anyway
+constexpr float BADAN_MIN = 1.0f, BADAN_MAX = 9.0f;                // neighbour axis spacing counted as one bed (m); yards run continuous stone to ~9 m
 // Turnout (wesel) parts from the graph geometry (PM 60/2012 figures: blade tip ~1 m past the node, open blade
 // >= 125 mm off the stock rail, check-rail flangeway 34-45 mm, 1:8..1:12 crossings): the blade heel is where the
 // legs' centrelines are HEEL_SPREAD apart, the frog nose where the inner rails cross (spread = gauge).
@@ -47,6 +47,7 @@ constexpr float FROG_LEN = 3.2f, FROG_BACK = 1.6f, FROG_STEP = 0.4f, CHECK_HALF 
 constexpr float BLADE_TIME = 1.2f;                                   // seconds for a blade to swing
 constexpr float SLEEPER_HALF = 1.0f, SLEEPER_W = 0.24f, SLEEPER_H = 0.20f;   // KAI concrete sleeper 2.0 x 0.24 x 0.20
 constexpr float TURNOUT_SLEEPERS_PAST_FROG = 3.5f;                   // long sleepers (and no diverging-leg sleepers) until here
+constexpr float END_CAP = 3.0f, END_DROP = 0.7f;   // a dead-end track's ballast runs on this far and dives under the ground
 constexpr float OPEN_FADE = 12;   // metres before a portal / abutment over which the free section becomes the contained one
 constexpr float TRW_GELAP = 15, TRW_SHADE = 0.06f, TRW_MOUTH_SHADE = 0.2f;   // the shader has no shadows: the sun would light the lining, so the shade also kills the direct term   // lining brightness: at the portal plane -> fully dark this far inside
 constexpr size_t BALAS_N = 8;                                      // ring points: skirt foot shoulder rail | rail shoulder foot skirt
@@ -292,7 +293,7 @@ void extrude(MeshBuilder& b, const Pt* pts, size_t n, const PP* prof, size_t P, 
 }
 
 // Nearest parallel track on one side of a ring (lateral axis spacing, rail-head height difference).
-struct Neighbour { bool has = false; float lat = 0, dy = 0; size_t seg = 0; };
+struct Neighbour { bool has = false; float lat = 0, dy = 0; size_t seg = 0, ring = 0; };
 struct RingCtx { Neighbour left, right; float shade = 1; float open = 1; bool plain = false; float kribel = REL_TAPAK; };   // plain: stone-only texture on the bed (diverging leg under the turnout sleepers)   // open: 1 = free ballast (wobble + skirt), 0 = contained (deck / tunnel floor); fades over OPEN_FADE before a structure
 
 // One ring of the ballast section (BALAS_N points, increasing lat) with its per-point shade.
@@ -580,7 +581,7 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
           float a = std::fabs(lat);
           if (a < BADAN_MIN || a > BADAN_MAX) continue;
           Neighbour& nb = lat < 0 ? left : right;
-          if (!nb.has || a < std::fabs(nb.lat)) nb = {true, lat, q.y - p.y, r.seg};
+          if (!nb.has || a < std::fabs(nb.lat)) nb = {true, lat, q.y - p.y, r.seg, r.ring};
         }
       }
   };
@@ -700,6 +701,21 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
         segShade[i] = ctx[start + i].shade;
       }
       extrudeVar(b.ballast, run, rn, ringProf.data(), BALAS_N, TEX_LENGTH, true, ringShade.data(), false);
+      for (int e = 0; e < 2; ++e) {   // dead end: run the section END_CAP m past the last ring and END_DROP m down, so the bed ends buried
+        int node = e ? seg.b : seg.a;
+        bool atRun = e ? end == pts.size() - 1 : start == 0;
+        if (!atRun || g.nodes[(size_t)node].segs.size() != 1) continue;
+        Pt tip = pts[e ? pts.size() - 1 : 0]; float dir = e ? 1.f : -1.f;
+        Pt cap[2] = {tip, tip}; cap[1].x += tip.tx * END_CAP * dir; cap[1].z += tip.tz * END_CAP * dir; cap[1].y -= END_DROP; cap[1].s += END_CAP * dir;
+        if (!e) std::swap(cap[0], cap[1]);   // keep increasing s for the winding
+        PP capProf[2 * BALAS_N]; float capShade[2 * BALAS_N];
+        size_t tipRing = e ? rn - 1 : 0;
+        for (size_t k = 0; k < BALAS_N; ++k) {
+          capProf[k] = ringProf[tipRing * BALAS_N + k]; capProf[BALAS_N + k] = capProf[k];
+          capShade[k] = capShade[BALAS_N + k] = ringShade[tipRing * BALAS_N + k];
+        }
+        extrudeVar(b.ballast, cap, 2, capProf, BALAS_N, TEX_LENGTH, true, capShade, false);
+      }
       for (int rs = 0; rs < 2; ++rs) {   // left / right rail, in pieces around the turnout cuts (blade, frog casting)
         const PP* prof = rs == 0 ? PROFIL_REL_KIRI : PROFIL_REL_KANAN; size_t P = std::size(PROFIL_REL_KIRI);
         std::vector<Range> cuts = cut[si].rail[rs];
@@ -722,7 +738,14 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
       for (float sgn : {-1.f, 1.f}) {
         size_t i = 0;
         while (i < rn) {
-          auto owns = [&](size_t j) { const Neighbour& nb = sgn < 0 ? ctx[start + j].left : ctx[start + j].right; return nb.has && si < nb.seg; };
+          auto owns = [&](size_t j) {
+            const Neighbour& nb = sgn < 0 ? ctx[start + j].left : ctx[start + j].right;
+            if (!nb.has) return false;
+            if (si < nb.seg) return true;
+            Neighbour l, r; neighbours(nb.seg, allPts[nb.seg][nb.ring], l, r);   // does the neighbour see me back? then it builds the strip
+            const Neighbour& back = (l.has && l.seg == si) ? l : r;
+            return !(back.has && back.seg == si);
+          };
           if (!owns(i)) { ++i; continue; }
           size_t j = i; while (j < rn && owns(j)) ++j;
           if (j - i >= 2) {
