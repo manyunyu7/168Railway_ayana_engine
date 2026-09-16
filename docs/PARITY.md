@@ -93,6 +93,13 @@ Legend: ✅ done · 🟡 partial · ❌ missing · ➖ deliberately not ported (
 | Audio (platform PA, genta, train sounds) | ❌ | no audio system yet |
 | Editor drawers (REL, surveyor, ukur, tata hiasan, tanah) | ➖ | stay in the web client; the engine reads the same save |
 
+## Avatars (multiplayer)
+
+| Feature | Status | Notes |
+|---|---|---|
+| GPU skinning, animation player | ✅ | **`docs/SKINNING.md`**. glTF `skins[]` + `JOINTS_0`/`WEIGHTS_0` parsed (`engine/asset`), EMOD **v8** carries skins and per-vertex influences (v1–v7 still load), skinned vertex = pos/normal/uv + u8x4 joints + f32x4 weights (52 B, locations 8/9), `SKINNED` variant of the PBR shader with `uniform mat4 uJoints[64]` (4 KB, safe on GL 4.1 / GLES 3.0), `ModelRenderer::drawSkinned(model, transform, palette, frustum, boundsPad)`. `engine/render/animator.h` (header-only): `Pose`, `samplePose`, `blendPose`, `layerPose` + `jointMask` (gesture layer on an arm/head sub-tree), `jointPalette`, `AnimationPlayer` (speed-parameter locomotion blend with a shared phase and clip time-scaling, base clip, gesture fade 0.25 s). Tests `tests/test_skin` + `examples/skintest`; test rig `assets/test/rigged.glb` from `tools/testdata/make_rigged.py` |
+| Avatar assets, third-person camera, `eng_avatar_*` ABI | 🟡 | separate work (`../ppka-wannabe-2/docs/multiplayer.md` §4–6) |
+
 ## Platform
 
 | Feature | Status | Notes |

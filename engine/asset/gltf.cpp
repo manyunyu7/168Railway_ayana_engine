@@ -224,15 +224,18 @@ bool loadGlb(std::span<const uint8_t> bytes, Model& out, std::string& err) {
       int uvSet = prim.material >= 0 && prim.material < (int)out.materials.size() ? out.materials[(size_t)prim.material].baseColorUv : 0;
       std::string uvKey = "TEXCOORD_" + std::to_string(uvSet);
       if (!at.has(uvKey)) uvKey = "TEXCOORD_0";
-      Accessor pos, nrm, uv; bool hasN = at.has("NORMAL"), hasUV = at.has(uvKey);
+      Accessor pos, nrm, uv, jnt, wgt; bool hasN = at.has("NORMAL"), hasUV = at.has(uvKey);
+      bool hasSkin = at.has("JOINTS_0") && at.has("WEIGHTS_0");
       if (!ctx.accessor(at["POSITION"].intOr(0), pos)) return false;
       if (hasN && !ctx.accessor(at["NORMAL"].intOr(0), nrm)) return false;
       if (hasUV && !ctx.accessor(at[uvKey].intOr(0), uv)) return false;
+      if (hasSkin && (!ctx.accessor(at["JOINTS_0"].intOr(0), jnt) || !ctx.accessor(at["WEIGHTS_0"].intOr(0), wgt))) return false;
       // KHR_texture_transform of the base colour texture, baked: uv' = offset + R(rotation) * (scale * uv)
       const Material* pm = prim.material >= 0 && prim.material < (int)out.materials.size() ? &out.materials[(size_t)prim.material] : nullptr;
       bool xform = pm && (pm->uvOffset.x != 0 || pm->uvOffset.y != 0 || pm->uvScale.x != 1 || pm->uvScale.y != 1 || pm->uvRotation != 0);
       float cr = xform ? std::cos(pm->uvRotation) : 1, sr = xform ? std::sin(pm->uvRotation) : 0;
       prim.vertices.resize(pos.count);
+      if (hasSkin) prim.skin.resize(pos.count);
       prim.boundsMin = {1e30f, 1e30f, 1e30f}; prim.boundsMax = -prim.boundsMin;
       for (size_t i = 0; i < pos.count; ++i) {
         Vertex& v = prim.vertices[i];
@@ -240,6 +243,18 @@ bool loadGlb(std::span<const uint8_t> bytes, Model& out, std::string& err) {
         if (hasN) v.normal = {nrm.readFloat(i, 0), nrm.readFloat(i, 1), nrm.readFloat(i, 2)};
         if (hasUV) v.uv = {uv.readFloat(i, 0), uv.readFloat(i, 1)};
         if (xform) { vec2 t{v.uv.x * pm->uvScale.x, v.uv.y * pm->uvScale.y}; v.uv = {pm->uvOffset.x + cr * t.x - sr * t.y, pm->uvOffset.y + sr * t.x + cr * t.y}; }
+        if (hasSkin) {   // JOINTS_0 is u8/u16 (never normalised), WEIGHTS_0 float or normalised u8/u16
+          VertexSkin& sk = prim.skin[i];
+          float sum = 0;
+          for (int c = 0; c < 4; ++c) {
+            float w = c < wgt.comps ? wgt.readFloat(i, c) : 0;
+            float j = c < jnt.comps ? jnt.readFloat(i, c) : 0;
+            if (j < 0 || j > 255) { err = "more than 256 joints in a skin"; return false; }
+            sk.joints[c] = (uint8_t)j; sk.weights[c] = w < 0 ? 0 : w; sum += sk.weights[c];
+          }
+          if (sum > 1e-6f) { for (float& w : sk.weights) w /= sum; }
+          else { sk.weights[0] = 1; sk.weights[1] = sk.weights[2] = sk.weights[3] = 0; }
+        }
         prim.boundsMin = vmin(prim.boundsMin, v.pos); prim.boundsMax = vmax(prim.boundsMax, v.pos);
       }
       if (pr.has("indices")) {
@@ -267,7 +282,7 @@ bool loadGlb(std::span<const uint8_t> bytes, Model& out, std::string& err) {
   out.nodes.resize(nodes.size());
   for (size_t i = 0; i < nodes.size(); ++i) {
     const Json& n = nodes[i]; Node& node = out.nodes[i];
-    node.name = n["name"].stringOr(""); node.mesh = n["mesh"].intOr(-1); nodeTransform(n, node);
+    node.name = n["name"].stringOr(""); node.mesh = n["mesh"].intOr(-1); node.skin = n["skin"].intOr(-1); nodeTransform(n, node);
     for (const auto& [k, v] : n["extras"].obj) {   // scalars only; arrays/objects are dropped
       if (v.isNumber()) { char buf[32]; std::snprintf(buf, sizeof buf, "%.9g", v.num); node.extras[k] = buf; }
       else if (v.isString()) node.extras[k] = v.str;
@@ -279,6 +294,26 @@ bool loadGlb(std::span<const uint8_t> bytes, Model& out, std::string& err) {
   const Json& sc = doc["scenes"][(size_t)scene];
   if (sc.isNull()) { for (size_t i = 0; i < out.nodes.size(); ++i) if (out.nodes[i].parent < 0) out.roots.push_back((int)i); }
   else for (const Json& r : sc["nodes"].arr) out.roots.push_back(r.intOr(0));
+
+  // skins: joint node list + inverse bind matrices (MAT4 accessor, column-major like our mat4)
+  for (const Json& sk : doc["skins"].arr) {
+    Skin skin; skin.name = sk["name"].stringOr(""); skin.skeleton = sk["skeleton"].intOr(-1);
+    for (const Json& j : sk["joints"].arr) {
+      int ji = j.intOr(-1);
+      if (ji < 0 || ji >= (int)out.nodes.size()) { err = "skin joint out of range"; return false; }
+      skin.joints.push_back(ji);
+    }
+    if (skin.joints.size() > 255) { err = "skin with more than 255 joints"; return false; }
+    skin.inverseBind.assign(skin.joints.size(), mat4::identity());
+    if (sk.has("inverseBindMatrices")) {
+      Accessor ib;
+      if (!ctx.accessor(sk["inverseBindMatrices"].intOr(0), ib)) return false;
+      if (ib.count < skin.joints.size() || ib.comps != 16) { err = "bad inverseBindMatrices accessor"; return false; }
+      for (size_t j = 0; j < skin.joints.size(); ++j)
+        for (int c = 0; c < 16; ++c) (&skin.inverseBind[j].m[0][0])[c] = ib.readFloat(j, c);
+    }
+    out.skins.push_back(std::move(skin));
+  }
 
   // animations: node TRS channels only (no morph weights); tangents of CUBICSPLINE samplers dropped
   for (const Json& an : doc["animations"].arr) {

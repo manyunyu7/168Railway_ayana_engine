@@ -11,6 +11,10 @@ namespace eng {
 
 struct Vertex { vec3 pos; vec3 normal; vec2 uv; };   // 32 bytes, interleaved
 
+// Skinning influences of one vertex (glTF JOINTS_0 / WEIGHTS_0), parallel to Primitive::vertices.
+// `joints` index Skin::joints (not the node array); weights are normalised to sum 1 at parse time.
+struct VertexSkin { uint8_t joints[4]{0, 0, 0, 0}; float weights[4]{1, 0, 0, 0}; };   // 20 bytes
+
 // GPU texture formats an image may be stored in (EMOD v5). Compressed data is uploaded as-is with the
 // full mip chain; the runtime never encodes or decodes block formats.
 enum class TexFormat : uint8_t { RGBA8, ETC2_RGB, ETC2_RGBA, BC1, BC3, BC7 };
@@ -59,6 +63,7 @@ struct Material {
 struct Primitive {
   int material = -1;
   std::vector<Vertex> vertices;
+  std::vector<VertexSkin> skin;     // empty = not skinned; otherwise vertices.size() entries
   std::vector<uint32_t> indices;
   vec3 boundsMin, boundsMax;
 };
@@ -68,6 +73,7 @@ struct Mesh { std::string name; std::vector<Primitive> primitives; };
 struct Node {
   std::string name;
   int mesh = -1, parent = -1;
+  int skin = -1;                    // index into Model::skins for a skinned mesh node (glTF node.skin)
   std::vector<int> children;
   mat4 local;                       // TRS baked into a matrix
   vec3 translation{0, 0, 0}; quat rotation; vec3 scale{1, 1, 1};   // the same TRS split (animation targets replace
@@ -96,6 +102,16 @@ struct Animation {
   std::vector<AnimChannel> channels;
 };
 
+// glTF skins[]: the joint nodes a skinned mesh binds to, plus the inverse bind matrix of each.
+// A vertex influence j addresses joints[j]; the palette entry is world[joints[j]] * inverseBind[j]
+// (the skinned mesh node's own transform is ignored, as the glTF spec requires).
+struct Skin {
+  std::string name;
+  int skeleton = -1;                // common root node of the joints (-1 when the file does not say)
+  std::vector<int> joints;          // node indices
+  std::vector<mat4> inverseBind;    // same size as joints (identity when the accessor is absent)
+};
+
 struct Model {
   std::vector<Image> images;        // texture index == image index (samplers ignored for now)
   std::vector<Material> materials;
@@ -103,6 +119,7 @@ struct Model {
   std::vector<Node> nodes;
   std::vector<int> roots;
   std::vector<Animation> animations;
+  std::vector<Skin> skins;
   vec3 boundsMin, boundsMax;        // in model space, all nodes applied
 
   void computeBounds();

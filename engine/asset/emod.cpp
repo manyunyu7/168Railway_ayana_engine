@@ -91,6 +91,7 @@ bool saveEmod(const Model& m, const std::string& path, std::string& err) {
       w.put((uint32_t)p.vertices.size()); w.bytes(p.vertices.data(), p.vertices.size() * sizeof(Vertex));
       w.put((uint32_t)p.indices.size()); w.bytes(p.indices.data(), p.indices.size() * 4);
       w.put(p.boundsMin); w.put(p.boundsMax);
+      w.put((uint32_t)p.skin.size()); w.bytes(p.skin.data(), p.skin.size() * sizeof(VertexSkin));   // v8
     }
   }
   w.put((uint32_t)m.nodes.size());
@@ -100,6 +101,7 @@ bool saveEmod(const Model& m, const std::string& path, std::string& err) {
     w.put(n.local);
     w.put((uint16_t)n.extras.size()); for (const auto& [k, v] : n.extras) { w.str(k); w.str(v); }
     w.put(n.translation); w.put(n.rotation); w.put(n.scale);   // v7
+    w.put((int32_t)n.skin);   // v8
   }
   w.put((uint32_t)m.roots.size()); for (int r : m.roots) w.put((int32_t)r);
   w.put(m.boundsMin); w.put(m.boundsMax);
@@ -113,6 +115,12 @@ bool saveEmod(const Model& m, const std::string& path, std::string& err) {
     }
     w.put((uint32_t)a.channels.size());
     for (const AnimChannel& c : a.channels) { w.put((int32_t)c.sampler); w.put((int32_t)c.node); w.put((uint8_t)c.path); }
+  }
+  w.put((uint32_t)m.skins.size());   // v8
+  for (const Skin& sk : m.skins) {
+    w.str(sk.name); w.put((int32_t)sk.skeleton);
+    w.put((uint32_t)sk.joints.size()); for (int j : sk.joints) w.put((int32_t)j);
+    w.put((uint32_t)sk.inverseBind.size()); for (const mat4& ib : sk.inverseBind) w.put(ib);
   }
   return (bool)w.f;
 }
@@ -148,6 +156,11 @@ bool loadEmod(std::span<const uint8_t> bytes, Model& m, std::string& err) {
       p.vertices.resize(r.get<uint32_t>()); r.bytes(p.vertices.data(), p.vertices.size() * sizeof(Vertex));
       p.indices.resize(r.get<uint32_t>()); r.bytes(p.indices.data(), p.indices.size() * 4);
       p.boundsMin = r.get<vec3>(); p.boundsMax = r.get<vec3>();
+      if (ver >= 8) {
+        uint32_t ns = r.get<uint32_t>();
+        if (!r.ok || (ns && ns != p.vertices.size())) { err = "skin vertex count mismatch"; return false; }
+        p.skin.resize(ns); r.bytes(p.skin.data(), p.skin.size() * sizeof(VertexSkin));
+      }
       if (!r.ok) break;
     }
     if (!r.ok) break;
@@ -160,6 +173,7 @@ bool loadEmod(std::span<const uint8_t> bytes, Model& m, std::string& err) {
     if (ver >= 2) { uint16_t ne = r.get<uint16_t>(); for (uint16_t i = 0; i < ne && r.ok; ++i) { std::string k = r.str(); n.extras[k] = r.str(); } }
     if (ver >= 7) { n.translation = r.get<vec3>(); n.rotation = r.get<quat>(); n.scale = r.get<vec3>(); }
     else { n.translation = {n.local.m[3][0], n.local.m[3][1], n.local.m[3][2]}; }   // pre-v7: no clips, TRS unused
+    if (ver >= 8) n.skin = r.get<int32_t>();
     if (!r.ok) break;
   }
   m.roots.resize(r.get<uint32_t>()); for (int& x : m.roots) x = r.get<int32_t>();
@@ -177,6 +191,19 @@ bool loadEmod(std::span<const uint8_t> bytes, Model& m, std::string& err) {
       }
       a.channels.resize(r.get<uint32_t>());
       for (AnimChannel& c : a.channels) { c.sampler = r.get<int32_t>(); c.node = r.get<int32_t>(); c.path = (AnimPath)r.get<uint8_t>(); }
+      if (!r.ok) break;
+    }
+  }
+  if (ver >= 8) {
+    m.skins.resize(r.get<uint32_t>());
+    for (Skin& sk : m.skins) {
+      sk.name = r.str(); sk.skeleton = r.get<int32_t>();
+      uint32_t nj = r.get<uint32_t>();
+      if (!r.ok || nj > 255) { err = "bad skin"; return false; }
+      sk.joints.resize(nj); for (int& j : sk.joints) j = r.get<int32_t>();
+      uint32_t ni = r.get<uint32_t>();
+      if (!r.ok || ni > nj) { err = "bad skin"; return false; }
+      sk.inverseBind.resize(ni); for (mat4& ib : sk.inverseBind) ib = r.get<mat4>();
       if (!r.ok) break;
     }
   }
