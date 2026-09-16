@@ -31,7 +31,8 @@ struct GpuPrimitive { rhi::Mesh mesh; int material; AABB bounds; std::vector<vec
 struct GpuMesh { std::vector<GpuPrimitive> primitives; };
 
 struct GpuModel {
-  std::vector<rhi::Texture> textures;
+  std::vector<rhi::Texture> textures;   // acquired through the texture cache (engine/render/texture_cache.h): byte-identical
+                                        // atlases in different models are one GPU texture; replace entries via releaseTexture
   std::vector<GpuMesh> meshes;
   std::vector<Material> materials;
   std::vector<Node> nodes;

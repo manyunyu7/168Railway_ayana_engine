@@ -10,6 +10,7 @@
 #include "engine/app/compass.h"
 #include "engine/app/world_scene.h"
 #include "engine/core/orbit_camera.h"
+#include "engine/render/texture_cache.h"
 #include "engine/sim/sim_state.h"
 #include "engine/world/sun.h"
 #include <algorithm>
@@ -473,12 +474,15 @@ KEEP void eng_reset_imagery(int flat) {
 
 KEEP const char* eng_stats(void) {
   if (!g) return "{}";
-  char b[768];
+  char b[896];
   const Terrain::Stats& ts = g->scene.terrain().stats;
+  const TextureCacheStats tc = textureCacheStats();
   std::snprintf(b, sizeof b, "{\"fps\":%.1f,\"drawCalls\":%u,\"culled\":%u,\"buildMs\":%.0f,\"ready\":%s,\"decor\":%s,\"tilesPending\":%d,\"decorPending\":%zu,\"modelsRequested\":%d,\"frame\":%d,"
-                "\"terrain\":{\"near\":%d,\"far\":%d,\"patches\":%d,\"resident\":%d,\"requested\":%d,\"pendingJobs\":%d,\"trees\":%zu},\"summary\":\"%s\"}",
+                "\"terrain\":{\"near\":%d,\"far\":%d,\"patches\":%d,\"resident\":%d,\"requested\":%d,\"pendingJobs\":%d,\"trees\":%zu},"
+                "\"textures\":{\"unique\":%u,\"refs\":%u,\"mb\":%.1f,\"sharedMb\":%.1f},\"summary\":\"%s\"}",
                 g->fps, g->scene.renderer().drawCalls, g->scene.renderer().culled, g->scene.stats().buildMs, g->ready ? "true" : "false", g->decorDone ? "true" : "false",
                 g->tilesPending, g->decorPending.size(), g->modelsPending, g->frame, ts.nearTiles, ts.farTiles, ts.patches, ts.resident, ts.requested, ts.pendingJobs, g->scene.trees().stats.trees,
+                tc.entries, tc.references, tc.bytes / 1e6, tc.bytesShared / 1e6,
                 SimProcessEscapeShim(g->scene.stats().summary).c_str());
   return ret(b);
 }
@@ -694,10 +698,10 @@ KEEP int eng_texture_end(void) {
   if (!m || i >= (int)m->textures.size()) return 0;
   for (const MipLevel& l : g->incomingVar.mips) if (l.data.empty()) { std::fprintf(stderr, "[ayana] texture %d: missing mip level\n", i); return 0; }
   g->incoming.variants = {std::move(g->incomingVar)};
-  rhi::Texture t = uploadImage(g->incoming);
+  rhi::Texture t = acquireTexture(g->incoming);   // shared with any other model that streamed the same atlas
   g->incoming = {}; g->incomingVar = {};
   if (!t.id) return 0;
-  rhi::destroyTexture(m->textures[(size_t)i]); m->textures[(size_t)i] = t;
+  releaseTexture(m->textures[(size_t)i]); m->textures[(size_t)i] = t;
   if (i < (int)m->texturePending.size() && m->texturePending[(size_t)i]) { m->texturePending[(size_t)i] = 0; --m->texturesPending; }
   return (int)t.id;
 }
@@ -711,7 +715,7 @@ KEEP void eng_model_textures_unavailable(const char* slot) {
     const uint8_t px[4] = {0x9a, 0xa3, 0xac, 255};
     rhi::Texture t = rhi::createTexture(1, 1, rhi::Format::RGBA8, std::as_bytes(std::span(px)), false, true);
     if (!t.id) continue;
-    rhi::destroyTexture(m->textures[i]); m->textures[i] = t;
+    releaseTexture(m->textures[i]); m->textures[i] = t;
     m->texturePending[i] = 0; --m->texturesPending;
   }
 }

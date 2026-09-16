@@ -1,6 +1,7 @@
 #include "engine/render/model_renderer.h"
 #include "engine/render/animator.h"
 #include "engine/render/pbr_shader.h"
+#include "engine/render/texture_cache.h"
 #include <algorithm>
 #include <string>
 #include <cstdio>
@@ -36,7 +37,7 @@ rhi::Texture uploadImage(const Image& im) {
 
 void GpuModel::upload(const Model& m, bool keepGeometry) {
   for (const Image& im : m.images) {
-    textures.push_back(uploadImage(im));
+    textures.push_back(acquireTexture(im));
     texturePending.push_back(im.placeholder() ? 1 : 0);
     if (im.placeholder()) ++texturesPending;
   }
@@ -74,7 +75,7 @@ void GpuModel::upload(const Model& m, bool keepGeometry) {
 }
 
 void GpuModel::destroy() {
-  for (auto& t : textures) rhi::destroyTexture(t);
+  for (auto& t : textures) releaseTexture(t);
   for (auto& me : meshes) for (auto& p : me.primitives) rhi::destroyMesh(p.mesh);
   *this = {};
 }

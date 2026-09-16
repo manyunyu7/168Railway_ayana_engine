@@ -26,6 +26,9 @@ set_tests_properties(test_bridge PROPERTIES LABELS "node")
 # skipped without a display).
 engine_test(test_edit ../engine/api/engine_api.cpp ../engine/api/engine_api_hud.cpp ../engine/api/engine_api_edit.cpp ../engine/api/engine_api_markers.cpp ../engine/api/engine_api_avatar.cpp)
 
+engine_test(test_texture_cache)
+set_tests_properties(test_texture_cache PROPERTIES LABELS "gpu")
+
 # Golden image (needs a window/GPU): runs the viewer with ENG_CAPTURE and compares.
 engine_test(test_golden)
 set_tests_properties(test_golden PROPERTIES LABELS "gpu" DEPENDS viewer)

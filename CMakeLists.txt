@@ -22,6 +22,7 @@ add_library(engine STATIC
   engine/asset/gltf.cpp
   engine/asset/emod.cpp
   engine/render/model_renderer.cpp
+  engine/render/texture_cache.cpp
   engine/render/text.cpp
   engine/render/sky.cpp
 )
