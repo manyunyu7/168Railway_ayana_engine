@@ -41,11 +41,16 @@ public:
   bool iconicVisible() const { return iconicOn_; }
   void destroy();
 
+  // Turnout (wesel) blades: per point node two blades (the through leg's rail on the diverging side and the
+  // diverging leg's rail on the through side), each as a closed and an open mesh; draw() shows the closed one
+  // for the set leg and the open one (pulled 125 mm off the stock rail at the toe) for the other.
+  void setPointState(const std::string& nodeId, int setting);
+
   const std::vector<RailSample>& samples() const { return samples_; }   // every 12 m, for terrain carving
   const std::vector<RailChunk>& chunks() const { return chunks_; }
 
   struct BridgeInfo { std::string seg; BridgeShape shape; float span, height; };   // per host bridge segment
-  struct Stats { int chunks = 0; uint32_t tris = 0; int bridgeSegs = 0, tunnelSegs = 0, piers = 0, trussSegs = 0, viaductSegs = 0; int bedRings = 0, stripRings = 0; double buildMs = 0; std::vector<BridgeInfo> bridges; };
+  struct Stats { int chunks = 0; uint32_t tris = 0; int bridgeSegs = 0, tunnelSegs = 0, piers = 0, trussSegs = 0, viaductSegs = 0; int bedRings = 0, stripRings = 0, turnouts = 0, frogs = 0; double buildMs = 0; std::vector<BridgeInfo> bridges; };
   const Stats& stats() const { return stats_; }
 
   Material ballastMat, railMat, concreteMat, tunnelMat, steelMat;
@@ -64,6 +69,8 @@ public:
 private:
   void paintTexture();
   std::vector<RailChunk> chunks_;
+  struct TurnoutMesh { std::string nodeId; rhi::Mesh closed[2], open[2]; AABB bounds; int setting = 0; };
+  std::vector<TurnoutMesh> turnouts_;
   std::vector<RailSample> samples_;
   std::vector<std::vector<vec3>> centre_;      // per-segment centreline (scene, rail head + 0.5) for the iconic line
   mutable rhi::Mesh iconic_; mutable float iconicWidth_ = 0; mutable bool iconicOn_ = false;

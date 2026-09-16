@@ -87,23 +87,23 @@ int main(int argc, char** argv) {
   SignalVisuals signals; signals.build(graph, profile, world["trackside"]);
   PointVisuals points; points.build(graph, profile);
   double buildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-  std::printf("graph %zu nodes %zu segs %d points %.3f km | profile %d chains gmax %.1f permille | rails %d chunks %u tris %d piers, %d bridge segs (%d truss, %d viaduct), %d tunnel segs, %d bed rings / %d strip rings (%.1f ms) | %zu signals | total %.1f ms\n",
+  std::printf("graph %zu nodes %zu segs %d points %.3f km | profile %d chains gmax %.1f permille | rails %d chunks %u tris %d piers, %d bridge segs (%d truss, %d viaduct), %d tunnel segs, %d bed rings / %d strip rings, %d turnouts (%d frogs) (%.1f ms) | %zu signals | total %.1f ms\n",
               graph.nodes.size(), graph.segments.size(), graph.pointCount(), graph.totalLength() / 1000, profile.chainCount(),
-              profile.gmax() * 1000, rails.stats().chunks, rails.stats().tris, rails.stats().piers, rails.stats().bridgeSegs, rails.stats().trussSegs, rails.stats().viaductSegs, rails.stats().tunnelSegs, rails.stats().bedRings, rails.stats().stripRings, rails.stats().buildMs,
+              profile.gmax() * 1000, rails.stats().chunks, rails.stats().tris, rails.stats().piers, rails.stats().bridgeSegs, rails.stats().trussSegs, rails.stats().viaductSegs, rails.stats().tunnelSegs, rails.stats().bedRings, rails.stats().stripRings, rails.stats().turnouts, rails.stats().frogs, rails.stats().buildMs,
               signals.signals().size(), buildMs);
 
   for (const RailBuilder::BridgeInfo& b : rails.stats().bridges)
     if (b.shape != BridgeShape::Deck) std::printf("  bridge %s: %s, chain span %.0f m, deck %.1f m above ground\n", b.seg.c_str(), b.shape == BridgeShape::Truss ? "truss" : "viaduct", b.span, b.height);
   auto applySim = [&]() {
     for (const SimSignal& s : sim.state().signals) signals.setAspect(s.id, s.aspect);
-    for (const SimPoint& p : sim.state().points) points.setState(p.id, p.setting, !p.lockedBy.empty());
+    for (const SimPoint& p : sim.state().points) { points.setState(p.id, p.setting, !p.lockedBy.empty()); rails.setPointState(p.id, p.setting); }
   };
   if (useSim) applySim();
   else {   // demo aspects: cycle so every colour shows up
     int k = 0;
     for (const SignalInstance& s : signals.signals()) signals.setAspect(s.id, (Aspect)(k++ % 3));
     k = 0;
-    for (const PointInstance& p : points.points()) points.setState(p.nodeId, k % 2, (k / 2) % 3 == 0), ++k;
+    for (const PointInstance& p : points.points()) { points.setState(p.nodeId, k % 2, (k / 2) % 3 == 0); rails.setPointState(p.nodeId, k % 2); ++k; }
   }
 
   ModelRenderer renderer; renderer.init();
@@ -184,7 +184,11 @@ int main(int argc, char** argv) {
       }
     }
     else if (t == "krl") { cam.target = krlXf.transformPoint({0, 3, 0}); }
-    else if (t.rfind("point:", 0) == 0) { for (const PointInstance& p : points.points()) if (p.nodeId == t.substr(6)) cam.target = p.pos; }
+    else if (t.rfind("point:", 0) == 0) {   // point:<node>[:<d>[:<leg>]] — camera target d metres along leg 0/1 from the node
+      std::string rest = t.substr(6); std::string id = rest.substr(0, rest.find(':')); float d = 0; int leg = 0;
+      if (const char* c = std::strchr(rest.c_str(), ':')) { d = (float)std::atof(c + 1); if (const char* c2 = std::strchr(c + 1, ':')) leg = std::atoi(c2 + 1); }
+      for (const PointInstance& p : points.points()) if (p.nodeId == id) { cam.target = p.pos + p.legDir[leg & 1] * d; std::printf("point %s leg %d side %.0f\n", id.c_str(), leg, p.legSide[leg & 1]); }
+    }
     else { float x, z; if (std::sscanf(tg, "%f,%f", &x, &z) == 2) { cam.target.x = x; cam.target.z = z; } }
   }
 

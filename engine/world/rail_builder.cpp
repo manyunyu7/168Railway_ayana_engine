@@ -34,10 +34,15 @@ constexpr float uLatBalas(float lat) { return uLat(std::max(-1.795f, std::min(1.
 // is a wavy, dark, buried edge instead of a straight step, and parallel tracks within BADAN_MAX share one
 // bed (inner slopes cut at the shoulder, a flat crib strip between the shoulders — KAI double track sits at
 // 4.0–4.5 m centres, where two 3.59 m trapezoids would otherwise interpenetrate).
-constexpr float BAHU_LAT = 1.117f, BAHU_H = -0.243f, KAKI_LAT = 1.795f;
+constexpr float BAHU_LAT = 1.25f, BAHU_H = -0.205f, KAKI_LAT = 1.795f;   // shoulder heaped to ~sleeper top, 0.25 m past the sleeper end (engine tweak over 1.117 / -0.243)
 constexpr float SKIRT_LAT = 2.45f, SKIRT_H = BALAS_KAKI - 0.16f;   // plateau is BALAS_KAKI - 0.04: the skirt edge is buried
 constexpr float SKIRT_SHADE = 0.50f, KAKI_SHADE = 0.82f;           // dirt-stained edge
-constexpr float BADAN_MIN = 2.3f, BADAN_MAX = 6.0f;                // neighbour axis spacing counted as one bed (m)
+constexpr float BADAN_MIN = 1.0f, BADAN_MAX = 6.0f;                // neighbour axis spacing counted as one bed (m); below 1 m the rail beds overlap anyway
+// Turnout (wesel) parts from the graph geometry (PM 60/2012 figures: blade tip ~1 m past the node, open blade
+// >= 125 mm off the stock rail, check-rail flangeway 34-45 mm, 1:8..1:12 crossings): the blade heel is where the
+// legs' centrelines are HEEL_SPREAD apart, the frog nose where the inner rails cross (spread = gauge).
+constexpr float HEEL_SPREAD = 0.18f, BLADE_TIP_W = 0.012f, BLADE_OPEN = 0.125f, BLADE_STEP = 0.5f;
+constexpr float FROG_LEN = 3.2f, FROG_STEP = 0.4f, CHECK_HALF = 1.8f, CHECK_GAP = 0.045f;
 constexpr float OPEN_FADE = 12;   // metres before a portal / abutment over which the free section becomes the contained one
 constexpr float TRW_GELAP = 15, TRW_SHADE = 0.06f, TRW_MOUTH_SHADE = 0.2f;   // the shader has no shadows: the sun would light the lining, so the shade also kills the direct term   // lining brightness: at the portal plane -> fully dark this far inside
 constexpr size_t BALAS_N = 8;                                      // ring points: skirt foot shoulder rail | rail shoulder foot skirt
@@ -297,7 +302,9 @@ void profilBalasRing(const Pt& p, const RingCtx& c, PP* out, float* shade) {
 }
 // Crib strip between two shoulders (3 points, increasing lat). `nb` is the neighbour on side sgn.
 void profilStrip(float sgn, const Neighbour& nb, PP* out) {
-  float mine = sgn * BAHU_LAT, theirs = nb.lat - sgn * BAHU_LAT, mid = (mine + theirs) / 2;
+  float mine = sgn * BAHU_LAT, theirs = nb.lat - sgn * BAHU_LAT;
+  if (sgn > 0) theirs = std::max(theirs, mine + 0.3f); else theirs = std::min(theirs, mine - 0.3f);   // beds overlapping (points): keep a sliver, never fold
+  float mid = (mine + theirs) / 2;
   PP a{mine, BAHU_H, uLat(BAHU_LAT)}, m{mid, BAHU_H / 2 + (nb.dy + BAHU_H) / 2 - 0.02f, uLat(1.55f)}, b2{theirs, nb.dy + BAHU_H, uLat(BAHU_LAT)};
   if (sgn > 0) { out[0] = a; out[1] = m; out[2] = b2; } else { out[0] = b2; out[1] = m; out[2] = a; }
 }
@@ -460,6 +467,50 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
     }
   }
   std::map<int, double> inside = mouthDistances(g, TRW_GELAP + 60, true);
+
+  // Turnouts (wesel): legs [through, diverging], the side the diverging leg leaves on, the blade heel and the
+  // frog nose along the through leg — all from the graph's own curves. Each leg's blade rail (the through leg's
+  // rail on the diverging side, the diverging leg's rail on the through side) is cut back to the heel in the
+  // static rails mesh and rebuilt as a tapered blade (closed / open meshes) drawn by setting.
+  struct Turnout { int node; int leg[2]; float side, sHeel, sFrog; };
+  struct BladeCut { bool has = false; int end = 0; float latSign = 0; float sHeel = 0; };
+  std::vector<BladeCut> cut(g.segments.size());
+  std::vector<Turnout> turnouts;
+  auto legPt = [&](int si, int node, float d) {   // point d metres from `node` along segment si, tangent away from the node
+    const std::vector<Pt>& v = allPts[(size_t)si]; bool fromA = g.segments[(size_t)si].a == node; float L = v.back().s;
+    Pt q = titikDiS(v, fromA ? d : L - d);
+    if (!fromA) { q.tx = -q.tx; q.tz = -q.tz; }
+    q.s = d; return q;
+  };
+  for (size_t ni = 0; ni < g.nodes.size(); ++ni) {
+    const TrackNode& n = g.nodes[ni];
+    if (!n.isPoint() || n.legs[0] < 0 || n.legs[1] < 0) continue;
+    if (allPts[(size_t)n.legs[0]].size() < 2 || allPts[(size_t)n.legs[1]].size() < 2 || allPts[(size_t)n.facingSeg].size() < 2) continue;
+    Pt f = legPt(n.facingSeg, (int)ni, 0);
+    float best = -2; int through = 0;
+    for (int i = 0; i < 2; ++i) { Pt l = legPt(n.legs[i], (int)ni, 0); float c = -(l.tx * f.tx + l.tz * f.tz); if (c > best) { best = c; through = i; } }
+    Turnout t{(int)ni, {n.legs[through], n.legs[1 - through]}, 1, 0, -1};
+    float Lt = allPts[(size_t)t.leg[0]].back().s, Ld = allPts[(size_t)t.leg[1]].back().s, Lmax = std::min(Lt, Ld);
+    auto spread = [&](float d) {   // signed lateral offset of the diverging leg from the through leg at d metres
+      Pt a = legPt(t.leg[0], (int)ni, d), b2 = legPt(t.leg[1], (int)ni, d);
+      return (b2.x - a.x) * (-a.tz) + (b2.z - a.z) * a.tx;
+    };
+    t.side = spread(std::min(10.f, Lmax * 0.8f)) >= 0 ? 1.f : -1.f;
+    for (float d = 0.5f; d <= std::min(80.f, Lmax - 0.5f); d += 0.25f) {
+      float sp = std::fabs(spread(d));
+      if (t.sHeel <= 0 && sp >= HEEL_SPREAD) t.sHeel = d;
+      if (sp >= 2 * GAUGE_HALF) { t.sFrog = d; break; }
+    }
+    if (t.sHeel <= 0) t.sHeel = std::min(6.f, Lmax * 0.5f);
+    if (t.sHeel < 1.5f) continue;   // degenerate legs
+    for (int i = 0; i < 2; ++i) {
+      int si = t.leg[i]; bool fromA = g.segments[(size_t)si].a == (int)ni;
+      float bladeSide = i == 0 ? t.side : -t.side;   // in the away-from-node frame
+      cut[(size_t)si] = {true, fromA ? 0 : 1, bladeSide * (fromA ? 1.f : -1.f), t.sHeel};
+    }
+    turnouts.push_back(t);
+  }
+  stats_.turnouts = (int)turnouts.size();
   // Nearest parallel track on each side of a ring: another segment's ring within BADAN_MAX laterally,
   // |cos| >= 0.985 and within one ring spacing along the track (the along test also rejects this track's
   // own later rings on a tight curve).
@@ -598,8 +649,17 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
         segShade[i] = ctx[start + i].shade;
       }
       extrudeVar(b.ballast, run, rn, ringProf.data(), BALAS_N, TEX_LENGTH, true, ringShade.data(), false);
-      extrude(b.rails, run, rn, PROFIL_REL_KIRI, std::size(PROFIL_REL_KIRI), TEX_LENGTH, segShade.data());
-      extrude(b.rails, run, rn, PROFIL_REL_KANAN, std::size(PROFIL_REL_KANAN), TEX_LENGTH, segShade.data());
+      for (float rs : {-1.f, 1.f}) {   // left / right rail; the blade rail of a turnout leg starts at the heel
+        const PP* prof = rs < 0 ? PROFIL_REL_KIRI : PROFIL_REL_KANAN; size_t P = std::size(PROFIL_REL_KIRI);
+        const BladeCut& bc = cut[si];
+        if (!bc.has || bc.latSign != rs) { extrude(b.rails, run, rn, prof, P, TEX_LENGTH, segShade.data()); continue; }
+        float s0 = bc.end == 0 ? bc.sHeel : -1e9f, s1 = bc.end == 0 ? 1e9f : (float)L - bc.sHeel;   // kept range
+        std::vector<Pt> kept; std::vector<float> ks;
+        if (run[0].s < s0 && run[rn - 1].s > s0) { kept.push_back(titikDiS(pts, s0)); ks.push_back(ctx[start].shade); }
+        for (size_t i = 0; i < rn; ++i) if (run[i].s >= s0 && run[i].s <= s1) { kept.push_back(run[i]); ks.push_back(segShade[i]); }
+        if (run[0].s < s1 && run[rn - 1].s > s1) { kept.push_back(titikDiS(pts, s1)); ks.push_back(ctx[end].shade); }
+        if (kept.size() >= 2) extrude(b.rails, kept.data(), kept.size(), prof, P, TEX_LENGTH, ks.data());
+      }
       // crib strips to a parallel neighbour, built by the lower-index segment, in runs of consecutive rings
       for (float sgn : {-1.f, 1.f}) {
         size_t i = 0;
@@ -689,6 +749,67 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
     }
   }
 
+  // Turnout parts. Blades: 6-point rail section per ring, tip BLADE_TIP_W wide pressed against the stock rail
+  // (its own rail line shifted one head width toward the centre), full width at the heel; the open blade is a
+  // further BLADE_OPEN off at the toe. Frog: a block filling the V between the two inner rails past the nose.
+  // Check rails: a rail piece CHECK_GAP inside each outer running rail across the frog.
+  auto railBox = [](float lo, float hi, PP* out) {
+    out[0] = {lo, REL_TAPAK, U_REL_BADAN}; out[1] = {lo, 0, U_REL_BADAN}; out[2] = {lo, 0, U_REL_KEPALA0};
+    out[3] = {hi, 0, U_REL_KEPALA1}; out[4] = {hi, 0, U_REL_BADAN}; out[5] = {hi, REL_TAPAK, U_REL_BADAN};
+  };
+  for (const Turnout& t : turnouts) {
+    TurnoutMesh tm; tm.nodeId = g.nodes[(size_t)t.node].id; tm.setting = g.nodes[(size_t)t.node].setting;
+    // the graph's legs[] order is the setting index; map our [through, diverging] onto it
+    int legIdx[2] = {g.nodes[(size_t)t.node].legs[0] == t.leg[0] ? 0 : 1, g.nodes[(size_t)t.node].legs[0] == t.leg[1] ? 0 : 1};
+    std::vector<Pt> ring; std::vector<PP> prof;
+    for (int i = 0; i < 2; ++i) {
+      float sgn = i == 0 ? t.side : -t.side;   // the blade rail lies on the other leg's side
+      ring.clear();
+      int n = std::max(2, (int)std::ceil(t.sHeel / BLADE_STEP));
+      for (int k = 0; k <= n; ++k) ring.push_back(legPt(t.leg[i], t.node, t.sHeel * (float)k / (float)n));
+      for (int state = 0; state < 2; ++state) {   // 0 closed, 1 open
+        prof.resize(ring.size() * 6);
+        for (size_t k = 0; k < ring.size(); ++k) {
+          float tt = (float)k / (float)n, w = BLADE_TIP_W + (REL_L_LUAR - REL_L_DALAM - BLADE_TIP_W) * tt;
+          float shift = (REL_L_LUAR - REL_L_DALAM) * (1 - tt) + (state ? BLADE_OPEN * (1 - tt) : 0.f);
+          float outer = sgn * (REL_L_LUAR - shift), inner = outer - sgn * w;
+          railBox(std::min(outer, inner), std::max(outer, inner), &prof[k * 6]);
+        }
+        MeshBuilder mb;
+        extrudeVar(mb, ring.data(), ring.size(), prof.data(), 6, TEX_LENGTH, true, nullptr, false);
+        rhi::Mesh m = mb.upload(); tm.bounds.expand(mb.bounds);
+        (state ? tm.open : tm.closed)[legIdx[i]] = m;
+      }
+    }
+    turnouts_.push_back(std::move(tm));
+    if (t.sFrog <= 0) continue;
+    ++stats_.frogs;
+    Pt at = legPt(t.leg[0], t.node, t.sFrog);
+    Builders& b = cells[cellOf(at)];
+    {   // frog: between the through inner rail and the diverging inner rail, from the nose on
+      ring.clear(); prof.clear();
+      int n = (int)std::ceil(FROG_LEN / FROG_STEP);
+      float Lt = allPts[(size_t)t.leg[0]].back().s;
+      for (int k = 0; k <= n; ++k) {
+        float d = std::min(Lt - 0.1f, t.sFrog + FROG_LEN * (float)k / (float)n);
+        Pt a = legPt(t.leg[0], t.node, d), dv = legPt(t.leg[1], t.node, d);
+        float spread = (dv.x - a.x) * (-a.tz) + (dv.z - a.z) * a.tx;
+        float latT = t.side * GAUGE_HALF, latD = spread - t.side * GAUGE_HALF;
+        ring.push_back(a); PP box[6]; railBox(std::min(latT, latD), std::max(latT, latD), box); prof.insert(prof.end(), box, box + 6);
+      }
+      extrudeVar(b.rails, ring.data(), ring.size(), prof.data(), 6, TEX_LENGTH, true, nullptr, false);
+    }
+    for (int i = 0; i < 2; ++i) {   // check rails opposite the frog, inside the outer running rail of each leg
+      float outerSide = i == 0 ? -t.side : t.side;
+      float lo = outerSide * (REL_L_DALAM - CHECK_GAP), hi = lo - outerSide * (REL_L_LUAR - REL_L_DALAM);
+      PP box[6]; railBox(std::min(lo, hi), std::max(lo, hi), box);
+      ring.clear();
+      float Lg = allPts[(size_t)t.leg[i]].back().s;
+      for (float d = t.sFrog - CHECK_HALF; d <= t.sFrog + CHECK_HALF + 0.01f; d += 0.6f) ring.push_back(legPt(t.leg[i], t.node, std::max(0.5f, std::min(Lg - 0.1f, d))));
+      extrude(b.rails, ring.data(), ring.size(), box, 6, TEX_LENGTH);
+    }
+  }
+
   for (auto& [key, b] : cells) {
     RailChunk c; c.cx = key.first; c.cz = key.second;
     c.bounds.expand(b.ballast.bounds); c.bounds.expand(b.rails.bounds); c.bounds.expand(b.bridge.bounds); c.bounds.expand(b.tunnel.bounds); c.bounds.expand(b.truss.bounds);
@@ -714,6 +835,12 @@ void RailBuilder::draw(ModelRenderer& r, const Frustum* frustum, float refDist, 
     if (c.bridge.indexCount) r.drawMesh(c.bridge, concreteMat, {}, I);
     if (c.tunnel.indexCount) r.drawMesh(c.tunnel, tunnelMat, {}, I);
     if (c.truss.indexCount) r.drawMesh(c.truss, steelMat, {}, I);
+  }
+  for (const TurnoutMesh& t : turnouts_) {
+    if (frustum && !frustum->contains(t.bounds)) continue;
+    int set = t.setting == 1 ? 1 : 0;
+    if (t.closed[set].indexCount) r.drawMesh(t.closed[set], railMat, texture, I);
+    if (t.open[1 - set].indexCount) r.drawMesh(t.open[1 - set], railMat, texture, I);
   }
   // Iconic centreline with the BENANG_MUNCUL / BENANG_HILANG hysteresis (dunia3d.ts:4057-4063).
   iconicOn_ = always || refDist > (iconicOn_ ? 500.f : 700.f);
@@ -786,8 +913,14 @@ std::string RailBuilder::prepareAtlas(const std::string& ppkaRoot, const std::st
   return fs::exists(out, ec) ? out : "";
 }
 
+void RailBuilder::setPointState(const std::string& nodeId, int setting) {
+  for (TurnoutMesh& t : turnouts_) if (t.nodeId == nodeId) t.setting = setting;
+}
+
 void RailBuilder::destroy() {
   for (RailChunk& c : chunks_) { rhi::destroyMesh(c.ballast); rhi::destroyMesh(c.rails); rhi::destroyMesh(c.bridge); rhi::destroyMesh(c.tunnel); rhi::destroyMesh(c.truss); }
+  for (TurnoutMesh& t : turnouts_) for (int i = 0; i < 2; ++i) { rhi::destroyMesh(t.closed[i]); rhi::destroyMesh(t.open[i]); }
+  turnouts_.clear();
   chunks_.clear(); samples_.clear(); centre_.clear();
   rhi::destroyMesh(iconic_); iconic_ = {}; iconicWidth_ = 0; iconicOn_ = false;
   if (texture.id) { rhi::destroyTexture(texture); texture = {}; }

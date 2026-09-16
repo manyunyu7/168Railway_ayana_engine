@@ -98,7 +98,7 @@ bool WorldScene::buildStatic(const Json& world, const std::string& mapSlug, cons
   auto ground = [this](double wx, double wy) { return terrain_.groundHeight(wx, wy); };
   boards_.build(graph_, profile_, world, origin_, ground, fontPath);
   jpl_.build(graph_, world, origin_, ground);
-  if (!cityPath.empty()) city_.build(cityPath, origin_, graph_, ground);
+  if (!cityPath.empty()) city_.build(cityPath, origin_, graph_, ground, catalog_);
   stock_.init(catalog_); trains_.init(stock_);
   if (!fontPath.empty()) { meja_.setFont(fontPath); papan_.setFont(fontPath); }
   // camera height follows the ground at the station
@@ -144,7 +144,7 @@ void WorldScene::buildDecor(const Json& world, bool testGaris, const Json* summa
 
 void WorldScene::applyState(const SimState& st, double timeScale) {
   for (const SimSignal& s : st.signals) signals_.setAspect(s.id, s.aspect);
-  for (const SimPoint& p : st.points) points_.setState(p.id, p.setting, !p.lockedBy.empty());
+  for (const SimPoint& p : st.points) { points_.setState(p.id, p.setting, !p.lockedBy.empty()); rails_.setPointState(p.id, p.setting); }
   // lit number panel while a route from the signal takes a diverging leg (keretaVisual3d.ts ruteMasukBelok)
   for (const SignalInstance& sg : signals_.signals()) {
     bool belok = false;
