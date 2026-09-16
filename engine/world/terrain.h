@@ -49,6 +49,15 @@ namespace terrain {
 constexpr int DEM_Z = 13, DEM_Z_FAR = 10, TILE_Z = 14;
 constexpr float CARVE_INNER = 9, CARVE_OUTER = 60;            // UKIR_DALAM / UKIR_LUAR
 constexpr float MOUTH_INNER = 4.5f, MOUTH_OUTER = 13;            // corridor radii right at a tunnel mouth (engine addition, see groundHeight)
+// Tunnel cover (engine addition): along tunnel chords the ground is raised to >= rail + COVER_H (arch crown ~4.6 m
+// + 2 m of rock) within COVER_INNER, fading out at COVER_OUTER; the portal plane (RailSample portal markers)
+// gates carve vs. raise (step between PORTAL_IN0 and PORTAL_IN1 m inside), out to PORTAL_REACH from the mouth.
+constexpr float COVER_H = 6.6f, COVER_INNER = 6, COVER_OUTER = 16, PORTAL_REACH = 60;
+constexpr float PORTAL_IN0 = 2, PORTAL_IN1 = 5;   // the cutting-to-cover step lies this far INSIDE the mouth plane (inside the hole / collar)
+// Ground cells shrink to CELL_PORTAL within PORTAL_TIER_R of a mouth so the cutting-to-cover step is a short
+// cliff, and the cells right over the tube (HOLE_S0..HOLE_S1 m inside the plane, |lateral| <= HOLE_LAT) are left
+// out of the mesh; rail_builder's portal collar box roofs that hole.
+constexpr float CELL_PORTAL = 3, PORTAL_TIER_R = 40, HOLE_S0 = 1.0f, HOLE_S1 = 11, HOLE_LAT = 4.5f;
 constexpr float LOW_OUTER = 20, LOW_INNER = 8, LOW_MAX_DROP = 1.5f, LOW_IGNORE_DIFF = 4;   // RENDAH_*
 constexpr float BALLAST_FOOT = -0.580f;                      // BALAS_KAKI
 constexpr float PLATEAU_OFFSET = BALLAST_FOOT - 0.04f;       // plateau below the rail head
@@ -229,6 +238,10 @@ private:
   void addChord(vec3 a, vec3 b, float ba, float bb);
   bool nearestRail(float x, float z, Nearest& out) const;
   bool nearestDeck(float x, float z, float& d, float& y, float& b) const;
+  bool nearestTunnel(float x, float z, float& d, float& y) const;
+  float portalCarveWeight(float x, float z) const;   // 1 outside every nearby portal plane, 0 inside the hill
+  bool nearMouth(float x, float z, float r) const;
+  bool inPortalHole(float x, float z) const;         // ground cell centre over a tube right behind a portal
   float carveBase(const Nearest& n) const;
   void buildNearTile(NearTile& t);
   void buildFarTile(FarTile& t);
@@ -243,7 +256,9 @@ private:
   const rhi::Texture* textureOf(const Key& k) const;
 
   Dem dem_; SatImage sat_; WorldOrigin origin_;
-  std::unordered_map<int64_t, std::vector<Chord>> railGrid_, bridgeGrid_;
+  std::unordered_map<int64_t, std::vector<Chord>> railGrid_, bridgeGrid_, tunnelGrid_;
+  struct Mouth { float x, z, dx, dz; };        // scene position + unit direction into the hill
+  std::vector<Mouth> mouths_;
   std::unordered_map<int64_t, float> delta_;   // brush deltas keyed by grid cell
   std::vector<NearTile> near_;
   std::vector<FarTile> far_;

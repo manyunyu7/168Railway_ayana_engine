@@ -38,7 +38,7 @@ constexpr float BAHU_LAT = 1.117f, BAHU_H = -0.243f, KAKI_LAT = 1.795f;
 constexpr float SKIRT_LAT = 2.45f, SKIRT_H = BALAS_KAKI - 0.16f;   // plateau is BALAS_KAKI - 0.04: the skirt edge is buried
 constexpr float SKIRT_SHADE = 0.50f, KAKI_SHADE = 0.82f;           // dirt-stained edge
 constexpr float BADAN_MIN = 2.3f, BADAN_MAX = 6.0f;                // neighbour axis spacing counted as one bed (m)
-constexpr float TRW_GELAP = 40, TRW_SHADE = 0.08f;                 // full interior darkness this far past a portal
+constexpr float TRW_GELAP = 40, TRW_SHADE = 0.08f, TRW_MOUTH_SHADE = 0.55f;   // lining brightness: at the portal plane -> fully dark this far inside
 constexpr size_t BALAS_N = 8;                                      // ring points: skirt foot shoulder rail | rail shoulder foot skirt
 
 float smoothstep01(float t) { t = std::max(0.f, std::min(1.f, t)); return t * t * (3 - 2 * t); }
@@ -132,6 +132,65 @@ std::vector<Batang> rangkaBatang(float panjang, float latMin, float latMax, floa
     out.push_back({sisi[0], atas, s0, sisi[1], atas, s1, 0.14f});
   }
   return out;
+}
+
+// Portal headwall (engine addition): a masonry wall in the mouth plane around the portal ring, plus two wing
+// walls flaring out along the cutting. It hides the seam where the terrain steps from the cutting (rail level
+// outside) to the tunnel cover (crown + 2 m inside), which the 8 m ground cells cannot render as a cliff.
+constexpr float HW_MARGIN = 3.2f, HW_ABOVE = 2.2f, HW_THICK = 0.7f, HW_FRONT = 0.55f;   // wall face 0.55 m out from the mouth plane
+constexpr float WING_LEN = 6.5f, WING_OUT = 4.5f, WING_END_H = 1.6f, WING_THICK = 0.5f;
+constexpr float COLLAR_LEN = 13.5f, COLLAR_ROOF = 6.2f;   // cut-and-cover box behind the headwall roofing the terrain hole (Terrain HOLE_S1 + margin; roof just under COVER_H 6.6)
+void headwall(MeshBuilder& b, const Pt& p, float dir, const std::vector<PP>& arch, float latMin, float latMax) {
+  // arch: the portal profile (increasing lat, first/last at the floor). Frame: outer rectangle.
+  float nx = -p.tz, nz = p.tx;                       // lateral axis (profile lat)
+  float ox = p.tx * dir, oz = p.tz * dir;            // outward, away from the hill
+  float floorY = arch.front().h, top = 0;
+  for (const PP& q : arch) top = std::max(top, q.h);
+  top += HW_ABOVE;
+  floorY -= 1.2f;   // the frame's foot is buried below the cutting floor
+  float left = latMin + (DEK_TEPI - TRW_TEPI) - HW_MARGIN, right = latMax - (DEK_TEPI - TRW_TEPI) + HW_MARGIN;
+  float cLat = (latMin + latMax) / 2, cH = TRW_SPRING;   // ray centre for the radial mapping
+  auto world = [&](float lat, float h, float out) { return vec3{p.x + nx * lat + ox * out, p.y + h, p.z + nz * lat + oz * out}; };
+  // radial projection of an arch point onto the rectangle (from the arch centre)
+  auto onFrame = [&](const PP& q) {
+    float dl = q.lat - cLat, dh = q.h - cH;
+    float t = 1e30f;
+    if (dl < 0) t = std::min(t, (left - cLat) / dl); else if (dl > 0) t = std::min(t, (right - cLat) / dl);
+    if (dh < 0) t = std::min(t, (floorY - cH) / dh); else if (dh > 0) t = std::min(t, (top - cH) / dh);
+    if (t >= 1e30f) t = 1;
+    return PP{cLat + dl * t, cH + dh * t, 0};
+  };
+  const float f0 = HW_FRONT, f1 = HW_FRONT - HW_THICK;
+  for (size_t i = 0; i + 1 < arch.size(); ++i) {
+    const PP &a0 = arch[i], &a1 = arch[i + 1];
+    PP r0 = onFrame(a0), r1 = onFrame(a1);
+    b.quad(world(a0.lat, a0.h, f0), world(r0.lat, r0.h, f0), world(r1.lat, r1.h, f0), world(a1.lat, a1.h, f0));   // front face
+    b.quad(world(a1.lat, a1.h, f1), world(r1.lat, r1.h, f1), world(r0.lat, r0.h, f1), world(a0.lat, a0.h, f1));   // back face
+    b.quad(world(r0.lat, r0.h, f1), world(r1.lat, r1.h, f1), world(r1.lat, r1.h, f0), world(r0.lat, r0.h, f0));   // rim
+  }
+  // collar: a box from the wall back into the hill around the tube; its top sits at the cover height so the
+  // ground hole over the tube (Terrain::inPortalHole) is roofed and the cutting-to-cover cliff is enclosed
+  {
+    float o0 = f1, o1 = -COLLAR_LEN, bottom = floorY - 1.5f, roof = COLLAR_ROOF;
+    vec3 a0 = world(left, bottom, o0), a1 = world(right, bottom, o0), a2 = world(right, bottom, o1), a3 = world(left, bottom, o1);
+    vec3 t0 = world(left, roof, o0), t1 = world(right, roof, o0), t2 = world(right, roof, o1), t3 = world(left, roof, o1);
+    b.quad(t0, t1, t2, t3); b.quad(t3, t2, t1, t0);   // roof, both ways (seen from above and, through the hole, from below)
+    b.quad(a3, a2, t2, t3); b.quad(t3, t2, a2, a3);   // back
+    b.quad(a0, a3, t3, t0); b.quad(t0, t3, a3, a0);   // left
+    b.quad(a1, t1, t2, a2); b.quad(a2, t2, t1, a1);   // right
+  }
+  // wing walls: from the headwall's side edges out along the cutting, top sloping down
+  for (float sgn : {-1.f, 1.f}) {
+    float lat0 = sgn < 0 ? left : right, lat1 = lat0 + sgn * WING_OUT;
+    float o0 = f0, o1 = f0 + WING_LEN, h0 = top - 0.6f, h1 = WING_END_H, bottom = floorY - 1.0f;
+    for (float k : {0.f, 1.f}) {   // two faces, WING_THICK apart along the lateral axis
+      float lat0k = lat0 + sgn * k * WING_THICK, lat1k = lat1 + sgn * k * WING_THICK;
+      vec3 a = world(lat0k, bottom, o0), bb = world(lat1k, bottom, o1), c = world(lat1k, h1, o1), d = world(lat0k, h0, o0);
+      if ((sgn < 0) == (k == 0)) b.quad(a, bb, c, d); else b.quad(d, c, bb, a);
+    }
+    b.quad(world(lat0, h0, o0), world(lat1, h1, o1), world(lat1 + sgn * WING_THICK, h1, o1), world(lat0 + sgn * WING_THICK, h0, o0));   // top
+    b.quad(world(lat1, bottom, o1), world(lat1 + sgn * WING_THICK, bottom, o1), world(lat1 + sgn * WING_THICK, h1, o1), world(lat1, h1, o1));   // end
+  }
 }
 
 // Sample interpolated at chainage s (bangun3d.ts titikDiS).
@@ -426,7 +485,7 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
         c.jitter = c.skirt = seg.kind == RailKind::Ground;
         if (seg.kind == RailKind::Tunnel) {
           double d = std::min(iA + pts[i].s, iB + (L - pts[i].s));
-          c.shade = 1 + (TRW_SHADE - 1) * smoothstep01((float)(d / TRW_GELAP));
+          c.shade = TRW_MOUTH_SHADE + (TRW_SHADE - TRW_MOUTH_SHADE) * smoothstep01((float)(d / TRW_GELAP));
         }
       }
     }
@@ -460,22 +519,26 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
         jb = smoothstep01(t);
       }
       double wx, wy; o.toWorld({p.x, p.y, p.z}, wx, wy);
-      samples_.push_back({wx, wy, p.y, atGrade, w, jb});
+      RailSample rs{wx, wy, p.y, atGrade, w, jb};
+      rs.tunnel = seg.kind == RailKind::Tunnel;   // cover chords: Terrain raises the ground over the tube
+      samples_.push_back(rs);
     }
-    // Tunnel mouths: the first 12 m inside each portal are registered with weight 0 so the terrain's
-    // narrow mouth corridor (Terrain::groundHeight) opens a short cutting through the hill face
-    // instead of burying the portal ring (engine addition, not in the reference).
+    // Tunnel mouths (engine addition): a portal marker with the direction into the hill. Terrain uses the
+    // plane through it to keep the open-track cutting outside and the cover raise inside, and the
+    // headwall below hides the seam between them. The OSM mouth position itself is never moved.
     if (seg.kind == RailKind::Tunnel)
       for (int e = 0; e < 2; ++e) {
         int node = e ? seg.b : seg.a; bool more = false;
         for (int x : g.nodes[(size_t)node].segs) if (x != (int)si && g.segments[(size_t)x].kind == RailKind::Tunnel) more = true;
         if (more) continue;
-        for (int i = 0; i <= 3 && i < (int)pts.size(); ++i) {
-          const Pt& p = pts[e ? pts.size() - 1 - (size_t)i : (size_t)i];
-          double wx, wy; o.toWorld({p.x, p.y, p.z}, wx, wy);
-          samples_.push_back({wx, wy, p.y, true, 0.f, -1.f});
-        }
-        samples_.push_back({0, 0, 0, false, 0, -1});   // chain break
+        const Pt& p = pts[e ? pts.size() - 1 : 0];
+        double wx, wy; o.toWorld({p.x, p.y, p.z}, wx, wy);
+        RailSample rs{wx, wy, p.y, false, 0.f, -1.f};
+        float dir = e ? -1.f : 1.f;   // into the hill: along the tangent at the a-end, against it at the b-end
+        rs.portalDx = p.tx * dir; rs.portalDz = p.tz * dir;
+        samples_.push_back({0, 0, 0, false, 0, -1});   // chain break (the marker must not chord with anything)
+        samples_.push_back(rs);
+        samples_.push_back({0, 0, 0, false, 0, -1});
       }
 
     BridgeShape shape = BridgeShape::Deck;
@@ -580,6 +643,13 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
         ring[0].s = 0; ring[1].x += p.tx * 1.3f * dir; ring[1].z += p.tz * 1.3f * dir; ring[1].s = 1.3f;
         std::vector<PP> portal = profilTerowongan(pairs[si].latMin, pairs[si].latMax, BALAS_KAKI, false, 1.15f);
         extrude(cells[cellOf(p)].tunnel, ring, 2, portal.data(), portal.size(), TEX_LENGTH);
+        {   // cap between the portal ring and the tube in the mouth plane, so the annulus does not show the collar interior
+          std::vector<PP> tube = profilTerowongan(pairs[si].latMin, pairs[si].latMax, BALAS_KAKI, false, 1.f);
+          std::vector<PP> both = portal; both.insert(both.end(), tube.begin(), tube.end());
+          Pt cap[2] = {p, p}; cap[0].s = 0; cap[1].s = 0.01f; cap[1].x += p.tx * 0.01f * dir; cap[1].z += p.tz * 0.01f * dir;
+          extrudeVar(cells[cellOf(p)].tunnel, cap, 2, both.data(), portal.size(), TEX_LENGTH, true, nullptr, false);
+        }
+        headwall(cells[cellOf(p)].bridge, p, dir, portal, pairs[si].latMin, pairs[si].latMax);
       }
     }
   }

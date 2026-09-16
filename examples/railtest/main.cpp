@@ -166,8 +166,17 @@ int main(int argc, char** argv) {
           float d = (float)std::atof(c + 1);
           if (d >= 0) cam.distance = d;
           else { cam.distance = 12; cam.target = m + in * (-d + 12) + vec3{0, 2, 0}; }
+          if (const char* v = std::strchr(c + 1, ':')) {   // :out = look back toward the mouth, :top = plan view over the mouth
+            if (!std::strcmp(v + 1, "out")) { cam.target = m + in * (-d - 12) + vec3{0, 2, 0}; cam.yaw += PI; }
+            if (!std::strcmp(v + 1, "top")) { cam.target = m + in * 4; cam.pitch = 1.45f; cam.distance = std::max(20.f, std::fabs(d)); }
+          }
         }
         std::printf("target %s = seg %s mouth\n", t.c_str(), graph.segments[si].id.c_str());
+        if (haveTerrain) for (float d : {-6.f, -12.f}) {   // cross-section inside the hill: ground vs rail at lateral offsets
+          std::printf("  d %+3.0f m lateral:", d);
+          for (float l = -9; l <= 9; l += 3) { vec3 q = m - in * d + vec3{-in.z, 0, in.x} * l; double wx, wy; graph.origin().toWorld(q, wx, wy); std::printf(" %+.0f:%.1f", l, terrain.groundHeight(wx, wy) - m.y); }
+          std::printf("  (rel. rail)\n");
+        }
         if (haveTerrain) for (float d = -20; d <= 80; d += 10) {   // ground vs rail head along the approach (negative = inside)
           vec3 q = m - in * d; double wx, wy; graph.origin().toWorld(q, wx, wy);
           std::printf("  d %+4.0f m: ground %.1f raw %.1f rail %.1f\n", d, terrain.groundHeight(wx, wy), terrain.dem().heightScene(wx, wy), m.y);
@@ -224,7 +233,8 @@ int main(int argc, char** argv) {
     text.flush(w, h);
 
     if (frame++ == 0) rhi::checkErrors("first frame");
-    if (const char* cap = std::getenv("ENG_CAPTURE"); cap && frame == 30) {
+    static const int capFrame = std::getenv("ENG_CAPTURE_FRAME") ? std::atoi(std::getenv("ENG_CAPTURE_FRAME")) : 30;
+    if (const char* cap = std::getenv("ENG_CAPTURE"); cap && frame == capFrame) {
       rhi::captureFramebuffer(cap, w, h); std::printf("captured -> %s\n", cap); break;
     }
     win.swapBuffers();

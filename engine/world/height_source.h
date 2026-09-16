@@ -24,6 +24,13 @@ struct RailSample {
   // Bridge trough (§4.2, JBT_*): < 0 = not a bridge sample; otherwise the 0..1 weight of the ground
   // lowering under the deck (ramps to 0 over JBT_RAMP at the ends that meet the embankment).
   float bridgeBlend = -1;
+  // Tunnel cover: chords between two tunnel samples raise the ground to at least the arch crown + cover
+  // (Terrain::groundHeight), so a coarse DEM never pokes into the tube behind a portal.
+  bool tunnel = false;
+  // Portal marker (engine addition): non-zero = this sample sits on a tunnel mouth and (portalDx, portalDz) is the
+  // scene-space unit direction INTO the hill. The plane through it splits the carve (outside) from the cover
+  // raise (inside); rail_builder also builds the headwall there.
+  float portalDx = 0, portalDz = 0;
 };
 
 } // namespace eng

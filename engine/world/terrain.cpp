@@ -371,13 +371,19 @@ void Terrain::addChord(vec3 a, vec3 b, float ba, float bb) {
 }
 
 void Terrain::setRails(std::span<const RailSample> samples) {
-  railGrid_.clear(); bridgeGrid_.clear();
+  railGrid_.clear(); bridgeGrid_.clear(); tunnelGrid_.clear(); mouths_.clear();
+  for (const RailSample& m : samples)
+    if (m.portalDx != 0 || m.portalDz != 0) { vec3 a = origin_.toScene(m.wx, m.wy, m.railY); mouths_.push_back({a.x, a.z, m.portalDx, m.portalDz}); }
   for (size_t i = 1; i < samples.size(); ++i) {
     const RailSample &p = samples[i - 1], &q = samples[i];
     vec3 a = origin_.toScene(p.wx, p.wy, p.railY), b = origin_.toScene(q.wx, q.wy, q.railY);
     float dx = a.x - b.x, dz = a.z - b.z;
     if (dx * dx + dz * dz > CHORD_MAX * CHORD_MAX) continue;
     if (p.atGrade && q.atGrade) addChord(a, b, p.mouthBlend, q.mouthBlend);
+    if (p.tunnel && q.tunnel) {
+      int64_t k = cellKey((int)std::floor((a.x + b.x) * 0.5f / GRID_CELL), (int)std::floor((a.z + b.z) * 0.5f / GRID_CELL));
+      tunnelGrid_[k].push_back({a.x, a.z, a.y, b.x, b.z, b.y, 1, 1});
+    }
     if (p.bridgeBlend >= 0 && q.bridgeBlend >= 0) {   // deck bottom chord (medan3d.ts tambahJbtRuas)
       int64_t k = cellKey((int)std::floor((a.x + b.x) * 0.5f / GRID_CELL), (int)std::floor((a.z + b.z) * 0.5f / GRID_CELL));
       bridgeGrid_[k].push_back({a.x, a.z, a.y + DECK_BOTTOM, b.x, b.z, b.y + DECK_BOTTOM, p.bridgeBlend, q.bridgeBlend});
@@ -424,6 +430,54 @@ float Terrain::brushDelta(double wx, double wy) const {
   auto d = [&](int a, int b) { auto it = delta_.find(cellKey(a, b)); return it == delta_.end() ? 0.f : it->second; };
   float a = d(gx, gz) * (1 - sx) + d(gx + 1, gz) * sx, b = d(gx, gz + 1) * (1 - sx) + d(gx + 1, gz + 1) * sx;
   return a * (1 - sz) + b * sz;
+}
+
+bool Terrain::nearestTunnel(float x, float z, float& dOut, float& yOut) const {
+  if (tunnelGrid_.empty()) return false;
+  int cx = (int)std::floor(x / GRID_CELL), cz = (int)std::floor(z / GRID_CELL);
+  const int r = (int)std::ceil(COVER_OUTER / GRID_CELL);
+  float best = 1e30f;
+  for (int i = -r; i <= r; ++i)
+    for (int j = -r; j <= r; ++j) {
+      auto it = tunnelGrid_.find(cellKey(cx + i, cz + j));
+      if (it == tunnelGrid_.end()) continue;
+      for (const Chord& p : it->second) {
+        float dx = p.x2 - p.x, dz = p.z2 - p.z, L2 = dx * dx + dz * dz;
+        float t = L2 > 0 ? std::clamp(((x - p.x) * dx + (z - p.z) * dz) / L2, 0.f, 1.f) : 0.f;
+        float d = std::hypot(p.x + dx * t - x, p.z + dz * t - z);
+        if (d < best) { best = d; yOut = p.y + (p.y2 - p.y) * t; }
+      }
+    }
+  dOut = best;
+  return best < 1e30f;
+}
+
+// 1 = the point is outside (in front of) some nearby portal plane, so the open-track cutting applies; 0 = it is
+// behind every nearby portal, inside the hill, so the tunnel cover applies instead (step PORTAL_IN0..PORTAL_IN1 m inside).
+float Terrain::portalCarveWeight(float x, float z) const {
+  float w = 1e30f;
+  for (const Mouth& m : mouths_) {
+    float dx = x - m.x, dz = z - m.z;
+    if (dx * dx + dz * dz > PORTAL_REACH * PORTAL_REACH) continue;
+    float s = dx * m.dx + dz * m.dz;                       // > 0 inside the hill
+    float wm = smoothstep01(std::clamp((PORTAL_IN1 - s) / (PORTAL_IN1 - PORTAL_IN0), 0.f, 1.f));
+    w = w >= 1e30f ? wm : std::max(w, wm);                 // outside ANY portal -> cutting
+  }
+  return w >= 1e30f ? 1.f : w;
+}
+
+bool Terrain::nearMouth(float x, float z, float r) const {
+  for (const Mouth& m : mouths_) { float dx = x - m.x, dz = z - m.z; if (dx * dx + dz * dz <= r * r) return true; }
+  return false;
+}
+bool Terrain::inPortalHole(float x, float z) const {
+  for (const Mouth& m : mouths_) {
+    float dx = x - m.x, dz = z - m.z;
+    if (dx * dx + dz * dz > (HOLE_S1 + HOLE_LAT) * (HOLE_S1 + HOLE_LAT)) continue;
+    float s = dx * m.dx + dz * m.dz, lat = -dx * m.dz + dz * m.dx;
+    if (s >= HOLE_S0 && s <= HOLE_S1 && std::fabs(lat) <= HOLE_LAT) return true;
+  }
+  return false;
 }
 
 bool Terrain::nearestDeck(float x, float z, float& dOut, float& yOut, float& bOut) const {
@@ -494,8 +548,18 @@ float Terrain::groundHeight(double wx, double wy) const {
     float inner = MOUTH_INNER + (CARVE_INNER - MOUTH_INNER) * n.b, outer = MOUTH_OUTER + (CARVE_OUTER - MOUTH_OUTER) * n.b;
     if (n.d <= outer) {
       float t = n.d <= inner ? 1.f : 1 - (n.d - inner) / (outer - inner);
-      float w = smoothstep01(t);
+      float w = smoothstep01(t) * (mouths_.empty() ? 1.f : portalCarveWeight(x, z));   // never cut into the hill behind a portal
       h = h * (1 - w) + (carveBase(n) + PLATEAU_OFFSET) * w;
+    }
+  }
+  // Tunnel cover: behind the portal plane the ground is at least COVER_H over the rail, so a coarse DEM
+  // whose hillside climbs slowly cannot pass through the tube (the "landslide in the mouth").
+  float td, ty;
+  if (!tunnelGrid_.empty() && nearestTunnel(x, z, td, ty) && td <= COVER_OUTER) {
+    float floor = ty + COVER_H;
+    if (h < floor) {
+      float t = td <= COVER_INNER ? 1.f : 1 - (td - COVER_INNER) / (COVER_OUTER - COVER_INNER);
+      h += (floor - h) * smoothstep01(t) * (1 - portalCarveWeight(x, z));
     }
   }
   float jd, jy, jb;
@@ -514,16 +578,17 @@ bool Terrain::railInBox(double cx, double cy, double side, double margin) const 
   float z0 = (float)(cy - side / 2 - origin_.oz - margin), z1 = (float)(cy + side / 2 - origin_.oz + margin);
   int i0 = (int)std::floor(x0 / GRID_CELL) - 1, i1 = (int)std::floor(x1 / GRID_CELL) + 1;
   int j0 = (int)std::floor(z0 / GRID_CELL) - 1, j1 = (int)std::floor(z1 / GRID_CELL) + 1;
-  for (int j = j0; j <= j1; ++j)
-    for (int i = i0; i <= i1; ++i) {
-      auto it = railGrid_.find(cellKey(i, j));
-      if (it == railGrid_.end()) continue;
-      for (const Chord& p : it->second) {
-        if (std::max(p.x, p.x2) < x0 || std::min(p.x, p.x2) > x1) continue;
-        if (std::max(p.z, p.z2) < z0 || std::min(p.z, p.z2) > z1) continue;
-        return true;
+  for (const auto* grid : {&railGrid_, &tunnelGrid_})
+    for (int j = j0; j <= j1; ++j)
+      for (int i = i0; i <= i1; ++i) {
+        auto it = grid->find(cellKey(i, j));
+        if (it == grid->end()) continue;
+        for (const Chord& p : it->second) {
+          if (std::max(p.x, p.x2) < x0 || std::min(p.x, p.x2) > x1) continue;
+          if (std::max(p.z, p.z2) < z0 || std::min(p.z, p.z2) > z1) continue;
+          return true;
+        }
       }
-    }
   return false;
 }
 
@@ -558,7 +623,7 @@ void Terrain::buildNearTile(NearTile& nt) {
   const double cx = slippy::tileOriginX(tx, TILE_Z) + ts / 2, cy = slippy::tileOriginY(ty, TILE_Z) + ts / 2;
   const int K = BLOCKS_PER_TILE;
   const double bs = ts / K;
-  const float cellOf[3] = {CELL_NEAR, CELL_MID, CELL_FAR};
+  const float cellOf[4] = {CELL_NEAR, CELL_MID, CELL_FAR, CELL_PORTAL};
   const int R = (int)std::ceil(MID_MARGIN / bs), W = K + 2 * R;
 
   std::vector<uint8_t> core((size_t)W * W, 0);
@@ -577,6 +642,12 @@ void Terrain::buildNearTile(NearTile& nt) {
           if (core[(size_t)(bz + R + dj) * W + (bx + R + di)]) { near1 = true; break; }
       tier[(size_t)bz * K + bx] = near1 ? 1 : 2;
     }
+  if (!mouths_.empty())   // portal tier: fine cells around every tunnel mouth (block centre within its reach)
+    for (int bz = 0; bz < K; ++bz)
+      for (int bx = 0; bx < K; ++bx) {
+        vec3 c = origin_.toScene(cx - ts / 2 + (bx + 0.5) * bs, cy - ts / 2 + (bz + 0.5) * bs, 0);
+        if (nearMouth(c.x, c.z, PORTAL_TIER_R + (float)bs * 0.7072f)) tier[(size_t)bz * K + bx] = 3;
+      }
   auto cellsOf = [&](int b) { return std::max(1, (int)std::lround(bs / cellOf[tier[(size_t)b]])); };
 
   // texture source per block: (layer index, tile) of the finest resident detail layer containing the block centre
@@ -619,8 +690,13 @@ void Terrain::buildNearTile(NearTile& nt) {
           vec3 nrm = normalize(vec3{(h(i - 1, j) - h(i + 1, j)) / (float)(2 * cs), 1.f, (h(i, j - 1) - h(i, j + 1)) / (float)(2 * cs)});
           node(x0 + cs * i, z0 + cs * j, h(i, j), nrm, 0);
         }
+      const bool portal = tier[(size_t)b] == 3;
       for (int j = 0; j < n; ++j)
         for (int i = 0; i < n; ++i) {
+          if (portal) {   // leave the cells over the tube behind the portal out (the collar box roofs them)
+            vec3 c = origin_.toScene(cx + x0 + cs * (i + 0.5), cy + z0 + cs * (j + 0.5), 0);
+            if (inPortalHole(c.x, c.z)) continue;
+          }
           uint32_t a = base + (uint32_t)(j * (n + 1) + i);
           mb.triangle(a, a + n + 1, a + 1); mb.triangle(a + 1, a + n + 1, a + n + 2);
         }
