@@ -82,6 +82,14 @@ int main() {
   s.begin(); for (const mat4& p : places) s.r.draw(s.model, p); s.end();
   CHECK(differing(ref, grab()) < (size_t)(W * H) / 500);
 
+  // Pustaka kota memiliki banyak node/LOD: hanya node pilihan boleh tergambar.
+  Node duplicate = s.model.nodes[0]; duplicate.name = "LOD_yang_tidak_dipilih";
+  s.model.nodes.push_back(duplicate); s.model.world.push_back(mat4::translation({0,3,0}));
+  s.begin(); s.r.drawNodeInstanced(s.model, 0, 3, buf); s.end();
+  CHECK(s.r.drawCalls == 1);
+  CHECK(differing(ref, grab()) < (size_t)(W * H) / 500);
+  s.begin(); s.r.drawNodeInstanced(s.model, -1, 3, buf); s.r.drawNodeInstanced(s.model, 99, 3, buf); s.end();
+  CHECK(s.r.drawCalls == 0);
   rhi::destroyBuffer(buf); rhi::destroyBuffer(buf2);
   s.model.destroy(); s.r.shutdown();
   rhi::checkErrors("instancing");

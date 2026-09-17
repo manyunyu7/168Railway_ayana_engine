@@ -77,6 +77,8 @@ public:
   // time, so several users may instance the same model with their own buffers (trees, garis, hiasan).
   // `sortPoint`: where blended primitives sort against the other transparent draws (a representative instance).
   void drawInstanced(const GpuModel& model, const mat4& transform, uint32_t count, rhi::Buffer instances, vec3 sortPoint = {});
+  // Satu node pustaka; matriks instansi sudah memuat pose dunia × pose node.
+  void drawNodeInstanced(const GpuModel& model, int node, uint32_t count, rhi::Buffer instances);
   void flushTransparent();   // call after all draws of the frame
   unsigned drawCalls = 0, culled = 0;   // per-frame stats (reset in beginFrame)
   vec3 eye() const { return eye_; }     // camera position given to beginFrame

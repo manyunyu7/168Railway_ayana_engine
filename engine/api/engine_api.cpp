@@ -356,7 +356,7 @@ KEEP int eng_city_json(const uint8_t* bytes, int len) {
   FILE* f = std::fopen("/ayana-city.json", "wb");
   if (!f) return 0;
   std::fwrite(bytes, 1, (size_t)len, f); std::fclose(f);
-  if (g->ready) { auto ground = [](double wx, double wy) { return g->scene.groundHeight(wx, wy); }; g->scene.city().build("/ayana-city.json", g->scene.origin(), g->scene.graph(), ground); }
+  if (g->ready) { auto ground = [](double wx, double wy) { return g->scene.groundHeight(wx, wy); }; g->scene.city().build("/ayana-city.json", g->scene.origin(), g->scene.graph(), ground, g->scene.catalog()); }
   return 1;
 }
 

@@ -11,6 +11,7 @@ endfunction()
 
 engine_test(test_math)
 engine_test(test_json)
+engine_test(test_city)
 engine_test(test_gltf_emod)
 engine_test(test_skin)
 engine_test(test_track)
