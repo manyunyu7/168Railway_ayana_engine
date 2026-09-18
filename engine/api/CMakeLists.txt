@@ -22,7 +22,7 @@ set(AYANA_EXPORTS
   _eng_avatar_set_local _eng_avatar_local_json _eng_avatar_upsert _eng_avatar_remove _eng_avatar_gesture _eng_avatar_outfit _eng_avatar_screen)
 string(REPLACE ";" "," AYANA_EXPORTS_CSV "${AYANA_EXPORTS}")
 target_link_options(ayana PRIVATE
-  "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/font.efnt@/assets/font.efnt"
+  "SHELL:--preload-file ${ENG_ROOT}/assets/font.efnt@/assets/font.efnt"
   -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createAyana -sENVIRONMENT=web
   -sALLOW_MEMORY_GROWTH=1 -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sEXIT_RUNTIME=0 -sINVOKE_RUN=0
   -sEXPORTED_FUNCTIONS=${AYANA_EXPORTS_CSV}

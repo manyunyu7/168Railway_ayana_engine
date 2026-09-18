@@ -1,0 +1,23 @@
+name: ayana
+description: The Ayana engine (libayana.so) inside a Flutter Texture. Android only; see docs/FLUTTER.md.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: '>=3.10.0'
+
+dependencies:
+  ffi: ^2.1.0
+  flutter:
+    sdk: flutter
+
+flutter:
+  assets:
+    - assets/font.efnt
+    - assets/cc203.emod
+  plugin:
+    platforms:
+      android:
+        package: com.ayana.engine
+        pluginClass: AyanaPlugin

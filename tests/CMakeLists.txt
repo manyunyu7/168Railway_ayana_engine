@@ -5,7 +5,7 @@
 function(engine_test name)
   add_executable(${name} ${name}.cpp ${ARGN})
   target_link_libraries(${name} PRIVATE engine)
-  add_test(NAME ${name} COMMAND ${name} WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  add_test(NAME ${name} COMMAND ${name} WORKING_DIRECTORY ${ENG_ROOT})
   set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 endfunction()
 

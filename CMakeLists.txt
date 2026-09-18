@@ -3,6 +3,9 @@
 # CMake >= 3.25 of the *running* binary, which is independent of this minimum.
 cmake_minimum_required(VERSION 3.22)
 project(engine LANGUAGES CXX C)
+# This file is also add_subdirectory()'d (flutter/ayana/android for the Android build), so the repo root
+# is CMAKE_CURRENT_SOURCE_DIR, never CMAKE_SOURCE_DIR.
+set(ENG_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -38,8 +41,8 @@ if(NOT ANDROID)
   target_sources(engine PRIVATE engine/core/window.cpp)       # GLFW: desktop + the Emscripten port; Android owns EGL itself
 endif()
 # Repo root at compile time: SimProcess finds bridge/sim-bridge.ts and ../ppka-wannabe-2 from it.
-target_compile_definitions(engine PUBLIC ENG_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-target_include_directories(engine PUBLIC ${CMAKE_SOURCE_DIR})
+target_compile_definitions(engine PUBLIC ENG_SOURCE_DIR="${ENG_ROOT}")
+target_include_directories(engine PUBLIC ${ENG_ROOT})
 
 if(APPLE)
   find_package(glfw3 3.3 REQUIRED)
@@ -75,7 +78,7 @@ target_link_libraries(viewer PRIVATE engine)
 if(EMSCRIPTEN)
   # web build: viewer only for now. Only the font is preloaded; models are streamed at runtime with
   # fetchFile (web/index.html calls viewer_load(url); `.emod` files go to build/wasm/models, see web/build-models.sh).
-  target_link_options(viewer PRIVATE "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/font.efnt@/assets/font.efnt"
+  target_link_options(viewer PRIVATE "SHELL:--preload-file ${ENG_ROOT}/assets/font.efnt@/assets/font.efnt"
                       -sEXIT_RUNTIME=0 -sEXPORTED_FUNCTIONS=_main,_viewer_load,_viewer_fps,_viewer_bytes,_viewer_ready
                       -sEXPORTED_RUNTIME_METHODS=ccall,cwrap)
   configure_file(web/index.html ${CMAKE_BINARY_DIR}/index.html COPYONLY)
@@ -90,7 +93,7 @@ add_executable(convert tools/convert/main.cpp)
 target_link_libraries(convert PRIVATE engine)
 target_compile_options(convert PRIVATE -Wno-error -O2 -fno-sanitize=undefined)
 add_executable(fontgen tools/fontgen/main.cpp)
-target_include_directories(fontgen PRIVATE ${CMAKE_SOURCE_DIR})
+target_include_directories(fontgen PRIVATE ${ENG_ROOT})
 target_compile_options(fontgen PRIVATE -Wno-error -O2 -fno-sanitize=undefined)
 
 # ---- per-directory targets (each dir may carry its own CMakeLists.txt) ----

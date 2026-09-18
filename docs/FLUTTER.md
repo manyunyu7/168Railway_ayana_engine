@@ -1,8 +1,8 @@
 # Flutter / Android plan — the engine inside the 168Railway app
 
-Status: plan, 2026-09-18. Nothing on Android exists yet (PARITY.md row "GLES3 backend + Android EGL,
-Flutter `Texture` plugin" = ❌). This document is the order of work; each milestone ends with something
-visible on a real phone.
+Status: **M1 done on the Mac, 2026-09-18** (everything but the pixels — no phone was available, and no
+emulator: the disk cannot hold one). M2 onwards is still plan. Each milestone ends with something visible
+on a real phone; see "M1: what is proven" below for exactly where the line falls.
 
 ## Where we start from
 
@@ -100,11 +100,89 @@ skip loading `ayana.wasm`.
 
 | # | Work | Visible result |
 |---|---|---|
-| **M1** | Plugin skeleton: `flutter/ayana/` with `android/CMakeLists.txt` building the engine for arm64 (`ENG_GL_ES`, drop `window.cpp` / `sim_process.cpp` on Android, `-Werror` clean under NDK clang), `ayana_android.cpp` with EGL + render thread + queue, Kotlin `TextureRegistry` glue, `eng_init`/`eng_resize`/`eng_frame`. Font and the `ENG_SOURCE_DIR` path assumptions (`asset_catalog.cpp`, `text.cpp`) get an "bytes from the host" variant. Dev entry in the app: Profil → Aset PPKA → "Uji mesin 3D". | The engine's sky gradient + an `.emod` model (cc203) spinning in a Flutter `Texture` on Henry's phone, fps in a corner. |
+| **M1** ✅ | Plugin skeleton: `flutter/ayana/` with `android/CMakeLists.txt` building the engine for arm64 (`ENG_GL_ES`, drop `window.cpp` / `sim_process.cpp` on Android, `-Werror` clean under NDK clang), `ayana_android.cpp` with EGL + render thread + queue, Kotlin `TextureRegistry` glue, `eng_init`/`eng_resize`/`eng_frame`. Font and the `ENG_SOURCE_DIR` path assumptions (`asset_catalog.cpp`, `text.cpp`) get an "bytes from the host" variant. Dev entry in the app: Profil → Aset PPKA → "Uji mesin 3D". | The engine's sky gradient + an `.emod` model (cc203) spinning in a Flutter `Texture` on Henry's phone, fps in a corner. |
 | **M2** | World load from Dart: `eng_load_world` with a bundled Mojokerto save + summary + `model.json`; asset requests answered from `PpkaAsetService` / tile server; Android-target `.emod` uploaded; `GestureDetector` → orbit/zoom/compass. | Mojokerto terrain, rails, signals, station and trees on the phone, orbit by touch. No trains yet. |
 | **M3** | The bridge: `wadah=flutter`, snapshot proxy in `src/tiga-ayana/` (transport interface: Wasm `Module` vs Flutter), `AyanaView` under the existing `PpkaGamePage` with `transparentBackground`, per-frame batch through `callHandler`, replies as snapshots. Measure: ms per round trip, batch size, fps at 60 vs 30 Hz state. | The full PPKA meja layan on the phone: trains move in the native 3D under the DOM HUD, tap a signal → route, camera modes (kabin/samping/…), labels and bubbles anchored. |
 | **M4** | Hardening: lifecycle (pause/resume, EGL context loss, `onTrimMemory` → `eng_set_quality`), WebView crash rebuild keeping the world, DPR/quality tiers from the device, corridor prefetch of `.emod` when 3D is switched on, memory telemetry, disk cap on `pk-aset/`. | A 30-minute dinas on a 4 GB phone without a kill; Play internal test build. |
 | later | State extrapolation in the engine (vehicles carry `seg/s` + speed) so the state can go at 30 Hz; KTX2 transcoder in the plugin; iOS (Metal RHI, separate plan). | |
+
+## M1: what is proven, and what still waits for a phone
+
+Proven on the Mac, reproducible:
+
+```
+cmake --preset android-arm64 && cmake --build --preset android-arm64
+  -> build/android-arm64/libayana.so   (39 MB with debug info, 2.4 MB stripped)
+llvm-nm -D --defined-only libayana.so | grep ' T eng_' | wc -l   -> 104
+llvm-nm -u libayana.so | grep -iE 'glfw|fork'                    -> nothing
+ctest --preset mac-debug                                         -> 15/15 (test_host_queue is new)
+cd ~/Developer/168Railway/mobile && flutter build apk --debug --target-platform android-arm64
+unzip -l build/app/outputs/flutter-apk/app-debug.apk | grep libayana
+  -> lib/arm64-v8a/libayana.so + packages/ayana/assets/{cc203.emod,font.efnt}
+flutter analyze (plugin, and the two touched app files)           -> clean
+```
+
+What that means concretely:
+
+* `cmake_minimum_required` is **3.22** now (the CMake the Android SDK ships), and the root CMakeLists
+  uses `ENG_ROOT` instead of `CMAKE_SOURCE_DIR` because Gradle `add_subdirectory()`s it. Nothing needed
+  3.28; `CMakePresets.json` v6 only constrains the *running* binary, so the Mac presets are unaffected
+  and Gradle needs no `cmake.path` override.
+* On Android the engine drops `engine/core/window.cpp` (GLFW) and `engine/sim/sim_process.cpp` (fork),
+  and builds one extra target, `ayana` (SHARED) = the `eng_*` ABI + `engine/api/android/ayana_android.cpp`.
+  Visibility is hidden by default; `engine/api/eng_export.h` (`ENG_EXPORT`) replaced the per-file `KEEP`
+  macro and marks the exports for both Emscripten and the NDK. The NDK's clang produced no new warnings,
+  so `-Wall -Wextra -Werror` is untouched.
+* `engine/api/host/host_queue.h` is the platform-neutral half and compiles everywhere: `post` for writes,
+  `callInt` / `callFloat` / `callString` / `run` for blocking reads, the asset outbox that the engine's
+  `request(kind, path)` hook now writes into off Emscripten, a `FramePacer`, and a `shutdown()` that
+  releases every blocked caller instead of deadlocking. `tests/test_host_queue` exercises all of it
+  (ordering under 4 concurrent caller threads, values back, outbox drain, no deadlock after shutdown).
+* The font no longer needs a source tree: `eng_set_font(bytes, len)` installs the `.efnt` and both
+  readers (`TextRenderer`, the CPU board-atlas font) go through `engine/render/font_bytes.h`. The plugin
+  ships `assets/font.efnt` and hands it over before `eng_init`.
+* `eng_request_poll(kind, kindCap, path, pathCap)` is the C-side drain of the outbox; Dart uses the
+  `ayana_poll_request` wrapper (polled at 10 Hz — asset requests come in bursts after `eng_load_world`,
+  never per frame, so a `NativeCallable.listener` would buy nothing and put a Dart API in the C code).
+
+Still waiting for a phone (nothing of it is testable here):
+
+* that EGL picks a config and `eglMakeCurrent` succeeds on a Flutter `SurfaceTexture`;
+* that `eng_init` gets a live GLES 3.0 context and the clear colour reaches the `Texture` widget;
+* that `ayana_model_begin` accepts the ETC2 `.emod` on a real GPU.
+
+Note on the milestone's "spinning cc203": without `eng_load_world` the engine draws a clear colour only
+(`eng_frame` returns early until `eng_ready`), so the M1 page shows the clear + the fps counter and
+confirms the model entered the catalog. Geometry on screen arrives with M2's world load, which is one
+`eng_load_world` call away.
+
+### First run when a phone is plugged in
+
+1. `cd ~/Developer/168Railway/mobile && flutter devices` (USB debugging on).
+2. `flutter run --debug --target-platform android-arm64` — free ~2 GB first, the Gradle+NDK build needs it.
+3. In the app: Profil → **Aset PPKA** → **"Uji mesin 3D"**.
+4. Expect: a dark blue-grey `Texture` filling the page, "0 fps" turning into 55–60, and the line
+   "model cc203.emod masuk katalog" underneath.
+5. `adb logcat -s ayana` shows `attached <w>x<h> dpr=... engine=1`. `engine=0` or `eglCreateWindowSurface
+   failed` = the EGL path; `eng_init failed` = the GL context (check `ANDROID_PLATFORM`/GLES 3.0).
+6. Rotating/resizing goes through `AyanaPlugin.resize` → `setDefaultBufferSize` + `eng_resize`; leaving
+   the page calls `dispose` → `nativeDetach` (blocking, on the render thread) → `nativeStop` → join.
+
+## Shape of the code, as built
+
+```
+game-engine-experiment/
+├─ engine/api/host/host_queue.{h,cpp}   platform-neutral: render-thread queue + asset outbox + pacer
+├─ engine/api/android/ayana_android.cpp EGL + render thread + JNI (Java_com_ayana_engine_AyanaPlugin_*)
+│                                        + plain C for Dart FFI (ayana_*)
+├─ engine/api/eng_export.h              ENG_EXPORT: what stays visible in libayana.so / the wasm module
+├─ engine/render/font_bytes.{h,cpp}     the .efnt from the host instead of from a path
+└─ flutter/ayana/                       the plugin (path dependency of the app)
+   ├─ android/CMakeLists.txt            add_subdirectory(<repo root>) -> target `ayana`
+   ├─ android/src/main/kotlin/.../AyanaPlugin.kt   TextureRegistry -> SurfaceTexture -> Surface -> JNI
+   ├─ lib/ayana.dart                    FFI bindings, asset-request stream, AyanaView widget
+   └─ assets/{font.efnt, cc203.emod}    cc203 = convert --target android --max-texture 128 (2.6 MB)
+```
 
 The Mac stays the fast loop: everything in `engine/api/android/` except EGL is portable, and the
 snapshot proxy is testable in a desktop browser against the Wasm build (the proxy can wrap the
