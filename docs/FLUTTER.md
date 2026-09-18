@@ -1,7 +1,9 @@
 # Flutter / Android plan — the engine inside the 168Railway app
 
-Status: **M1 and M2 done on the Mac, 2026-09-18** (everything but the pixels — no phone was available,
-and no emulator: the disk cannot hold one). M3 onwards is still plan. Each milestone ends with something visible
+Status: **M1 and M2 run on a real phone, 2026-09-18** (Infinix Note 30, Helio G99 / Mali-G57,
+Android 14). M3 is started: the native and Dart halves are in, the page's half is a skeleton.
+The Mac is still the only machine here — no emulator, no adb — so everything below says which side
+of that line it was proven on. Each milestone ends with something visible
 on a real phone; see "M1: what is proven" below for exactly where the line falls.
 
 ## Where we start from
@@ -102,7 +104,7 @@ skip loading `ayana.wasm`.
 |---|---|---|
 | **M1** ✅ | Plugin skeleton: `flutter/ayana/` with `android/CMakeLists.txt` building the engine for arm64 (`ENG_GL_ES`, drop `window.cpp` / `sim_process.cpp` on Android, `-Werror` clean under NDK clang), `ayana_android.cpp` with EGL + render thread + queue, Kotlin `TextureRegistry` glue, `eng_init`/`eng_resize`/`eng_frame`. Font and the `ENG_SOURCE_DIR` path assumptions (`asset_catalog.cpp`, `text.cpp`) get an "bytes from the host" variant. Dev entry in the app: Profil → Aset PPKA → "Uji mesin 3D". | The engine's sky gradient + an `.emod` model (cc203) spinning in a Flutter `Texture` on Henry's phone, fps in a corner. |
 | **M2** ✅ | World load from Dart: `eng_load_world` with a bundled Mojokerto save + summary + `model.json`; asset requests answered from `PpkaAsetService` / tile server; Android-target `.emod` uploaded; `GestureDetector` → orbit/zoom/compass. | Mojokerto terrain, rails, signals, station and trees on the phone, orbit by touch. No trains yet. |
-| **M3** | The bridge: `wadah=flutter`, snapshot proxy in `src/tiga-ayana/` (transport interface: Wasm `Module` vs Flutter), `AyanaView` under the existing `PpkaGamePage` with `transparentBackground`, per-frame batch through `callHandler`, replies as snapshots. Measure: ms per round trip, batch size, fps at 60 vs 30 Hz state. | The full PPKA meja layan on the phone: trains move in the native 3D under the DOM HUD, tap a signal → route, camera modes (kabin/samping/…), labels and bubbles anchored. |
+| **M3** 🟡 | The bridge: `wadah=flutter`, snapshot proxy in `src/tiga-ayana/` (transport interface: Wasm `Module` vs Flutter), `AyanaView` under the existing `PpkaGamePage` with `transparentBackground`, per-frame batch through `callHandler`, replies as snapshots. Measure: ms per round trip, batch size, fps at 60 vs 30 Hz state. | The full PPKA meja layan on the phone: trains move in the native 3D under the DOM HUD, tap a signal → route, camera modes (kabin/samping/…), labels and bubbles anchored. |
 | **M4** | Hardening: lifecycle (pause/resume, EGL context loss, `onTrimMemory` → `eng_set_quality`), WebView crash rebuild keeping the world, DPR/quality tiers from the device, corridor prefetch of `.emod` when 3D is switched on, memory telemetry, disk cap on `pk-aset/`. | A 30-minute dinas on a 4 GB phone without a kill; Play internal test build. |
 | later | State extrapolation in the engine (vehicles carry `seg/s` + speed) so the state can go at 30 Hz; KTX2 transcoder in the plugin; iOS (Metal RHI, separate plan). | |
 
@@ -213,6 +215,86 @@ Still waiting for a phone: everything that needs a GPU and a network on the devi
 that the tile fetches and the ETC2 uploads keep up, and what the world actually looks like. The engine
 side of all of it is exercised on the Mac by `test_host_world`.
 
+## M2 on the phone: what it actually did
+
+Infinix Note 30 (Helio G99, Mali-G57), Android 14, 540x899 Texture:
+
+| | |
+|---|---|
+| world built | 1.7 s |
+| decor build | **11 213 ms** — 1 hiasan, 59 302 trees, render thread frozen, Texture frozen |
+| steady state | 62 fps |
+
+Three things came out of that and are fixed:
+
+* **The UI isolate must never wait on the render thread.** `ayana_ready` / `ayana_last_error` /
+  `ayana_stats` were blocking calls polled at 10 Hz; during the 9 s decor build the Dart isolate hung
+  with it and Android offered to kill the app. They are per-frame snapshots now, and only
+  `ayana_load_world` still waits.
+* **`SurfaceTexture` ignores the swap interval**, so the render thread is paced at 60 fps by the host's
+  `FramePacer` instead of by vsync.
+* **The decor build is sliced** (`eng_set_decor_budget`, below).
+
+### Decor in slices
+
+`eng_set_decor_budget(ms)` (0 = all at once, which is what the desktop tools and the tests want; the
+plugin installs 8 ms) spreads the tree work over frames, and a late vegetation model no longer throws
+the forest away. Measured by `tests/test_host_world`, which loads Mojokerto twice and times every slice
+of the render thread:
+
+```
+budget 0 ms: worst slice 159 ms (queue 157, draw 6), decor 162 ms, 350728 trees
+budget 8 ms: worst slice  49 ms (queue  48, draw 10), decor  71 ms, 350728 trees (streaming)
+```
+
+Same forest, a third of the stall, on a Mac. What is left in that 48 ms is **`eng_model_begin`** — the
+`.emod` parse plus a one-shot GPU upload — which is not sliced yet and is the obvious next step: on the
+phone that one is the 24 MB ETC2 station, and it is the largest remaining freeze.
+
+`eng_set_quality` and `eng_set_decor_budget` work **before `eng_init`** now (the value is remembered),
+because the tier has to be in force when the world is built — setting it afterwards does nothing until
+the next build. `AyanaView(quality: …)` installs both before the engine starts.
+
+## M3: where it stands
+
+The transport is "one message per frame in, one snapshot out". Three of its four pieces exist.
+
+**Native + Dart (done, `flutter test` 23/23, 34 `ayana_*` exported):**
+* `ayana_snapshot_enable` / `ayana_snapshot` / `ayana_snapshot_frame` — the render thread builds one
+  JSON string after each frame (`{frame, ready, camera, trains, signals, stations, stats}`); Dart copies
+  it out of a mutex and never waits. Off until a page asks for it.
+* `ayana_cmd(name, a, b, c, str)` + `ayana_pointer4` — one posted door for the ~25 player-facing
+  commands instead of forty wrappers. Unknown names are ignored, so an older engine cannot break a
+  newer page.
+* `AyanaBridge` (`flutter/ayana/lib/src/bridge.dart`) turns a batch into those calls and returns the
+  snapshot, with `AyanaLatency` recording p50/p95.
+
+**The page (`ppka-wannabe-2/src/tiga-ayana/mesin/`, skeleton done, wiring not):**
+* `mesin.ts` — the `Mesin` interface. Deliberately **not** the Emscripten module shape: no heap
+  pointers, strings stay strings. The editing ABI is not in it, because the surveyor tools are not
+  supported in the app in v1 and they are exactly what needs the dozens of synchronous reads a
+  snapshot cannot answer.
+* `wasm.ts` — `MesinWasm`, today's module; all the heap handling stops in this one file.
+* `flutter.ts` — `MesinFlutter`, the snapshot proxy. Writes pile into a per-frame batch, `frame()`
+  sends it once, reads answer from the previous reply, `pick`/`pickGround` become async, and a failed
+  send puts the commands back in the queue instead of dropping them.
+* `loopback.ts` + `uji-proxy.mts` — the proxy's semantics proven without a phone:
+  `npx tsx src/tiga-ayana/mesin/uji-proxy.mts` → **14 checks, 0 failures** (one send per frame, order
+  kept, snapshot one frame late, async pick, nothing lost on a broken bridge).
+* `bootParam.ts` takes `wadah=flutter`; `konstInti.diFlutter()`.
+
+**The app (done, opt-in):** a dev switch "Mesin 3D natif" on Aset PPKA (default off) makes
+`PpkaGamePage` send `wadah=flutter`, put `AyanaView` under a **transparent** WebView, and register the
+`ayana` JavaScript handler. With the switch off nothing about a normal dinas changes.
+
+**Not done, and the honest reason:** `duniaAyana.ts` (1 643 lines) and `hudAyana.ts` still call the
+Emscripten module directly in ~60 places, and `hudAyana` projects every HUD element with `eng_project`,
+which a snapshot cannot answer — it has to read the `signals` / `stations` arrays instead. Moving those
+onto `Mesin` is the rest of M3(a), and it is the part that needs the Playwright run in a desktop browser
+(`playtest/_cek-ayana*.mjs`, dev server on 5199) to prove the picture is unchanged. Until that lands,
+`wadah=flutter` reaches a page that still tries to load the wasm module, so the switch is for the next
+round, not this one.
+
 ### First run when a phone is plugged in
 
 1. `cd ~/Developer/168Railway/mobile && flutter devices` (USB debugging on).
@@ -226,7 +308,8 @@ side of all of it is exercised on the Mac by `test_host_world`.
    without them every model fails its slot and the world is rails and terrain with boxes for decor.
 5. `adb logcat -s ayana` shows `attached <w>x<h> dpr=... engine=1`. `engine=0` or `eglCreateWindowSurface
    failed` = the EGL path; `eng_init failed` = the GL context (check `ANDROID_PLATFORM`/GLES 3.0).
-6. Before that run, Henry must upload the two model directories (`web/build-models-android.sh --all`
+6. Mojokerto's Android models are on R2 already (`ayana/models-android[-hemat]`, gzip, uploaded
+   2026-09-18). For another map, Henry must upload the two model directories (`web/build-models-android.sh --all`
    then the `aws s3 sync` lines the script prints, or two entries in ppka-wannabe-2
    `tools/unggah-r2.mjs` next to `ayana`, **with `Content-Encoding: gzip`**). Nothing else is needed:
    the terrain index is bundled in the plugin and the tiles come from `tiles.168railway.com`.
