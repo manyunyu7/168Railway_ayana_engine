@@ -18,7 +18,19 @@ struct Reader {   // over a byte span (files are read whole; the web build gets 
   template <class T> T get() { T v{}; if (pos + sizeof v > buf.size()) { ok = false; pos = buf.size(); return v; } std::memcpy(&v, buf.data() + pos, sizeof v); pos += sizeof v; return v; }
   std::string str() { uint16_t n = get<uint16_t>(); std::string s(n, 0); bytes(s.data(), n); return s; }
   void bytes(void* p, size_t n) { if (pos + n > buf.size()) { ok = false; pos = buf.size(); return; } if (n) std::memcpy(p, buf.data() + pos, n); pos += n; }
+  // A u32 element count that the rest of the file has to be able to hold: `elem` is the smallest number
+  // of bytes one element costs on the wire. A corrupt or hostile header then fails here instead of
+  // asking the allocator for gigabytes (the file is already fully in memory, so this is exact, not a guess).
+  size_t count(size_t elem) {
+    uint32_t n = get<uint32_t>();
+    if (!ok) return 0;
+    size_t left = buf.size() - pos;
+    if (elem && (size_t)n > left / elem) { ok = false; pos = buf.size(); return 0; }
+    return n;
+  }
 };
+
+static size_t left(const Reader& r) { return r.buf.size() - r.pos; }   // bytes still unread
 
 bool readFile(const std::string& path, std::vector<uint8_t>& out) {
   std::ifstream f(path, std::ios::binary | std::ios::ate); if (!f) return false;
@@ -52,7 +64,11 @@ bool readImage(Reader& r, Image& im, uint32_t ver, std::string& err) {
   im.width = r.get<uint16_t>(); im.height = r.get<uint16_t>(); im.channels = r.get<uint8_t>();
   im.wrapS = r.get<uint8_t>(); im.wrapT = r.get<uint8_t>(); im.linear = r.get<uint8_t>() != 0;   // zero (= repeat, sRGB) before v4
   if (ver >= 6) im.source = r.get<int16_t>();
-  if (ver < 5) { im.pixels.resize((size_t)im.width * im.height * im.channels); r.bytes(im.pixels.data(), im.pixels.size()); return r.ok; }
+  if (ver < 5) {
+    size_t need = (size_t)im.width * im.height * im.channels;
+    if (need > left(r)) return false;
+    im.pixels.resize(need); r.bytes(im.pixels.data(), im.pixels.size()); return r.ok;
+  }
   im.variants.resize(r.get<uint8_t>());
   for (ImageVariant& v : im.variants) {
     v.format = (TexFormat)r.get<uint8_t>(); v.mips.resize(r.get<uint8_t>());
@@ -60,6 +76,7 @@ bool readImage(Reader& r, Image& im, uint32_t ver, std::string& err) {
     for (MipLevel& l : v.mips) {
       l.width = r.get<uint16_t>(); l.height = r.get<uint16_t>(); uint32_t n = r.get<uint32_t>();
       if (!r.ok || n != texLevelBytes(v.format, l.width, l.height)) { err = "bad mip level"; return false; }
+      if (n > left(r)) return false;
       l.data.resize(n); r.bytes(l.data.data(), n);
     }
   }
@@ -138,9 +155,9 @@ bool loadEmod(std::span<const uint8_t> bytes, Model& m, std::string& err) {
   uint32_t ver = r.get<uint32_t>();
   if (ver < 1 || ver > EMOD_VERSION) { err = "EMOD version " + std::to_string(ver) + " unsupported"; return false; }
   m = {};
-  m.images.resize(r.get<uint32_t>());
+  m.images.resize(r.count(10));
   for (Image& im : m.images) if (!readImage(r, im, ver, err)) { if (err.empty()) err = "truncated EMOD"; return false; }
-  m.materials.resize(r.get<uint32_t>());
+  m.materials.resize(r.count(40));
   for (Material& mt : m.materials) {
     mt.name = r.str(); mt.baseColor = r.get<vec4>(); mt.metallic = r.get<float>(); mt.roughness = r.get<float>(); mt.emissive = r.get<vec3>();
     mt.baseColorTex = r.get<int32_t>(); mt.metalRoughTex = r.get<int32_t>(); mt.normalTex = r.get<int32_t>();
@@ -148,27 +165,28 @@ bool loadEmod(std::span<const uint8_t> bytes, Model& m, std::string& err) {
     mt.alphaMode = (AlphaMode)r.get<uint8_t>(); mt.alphaCutoff = r.get<float>(); mt.doubleSided = r.get<uint8_t>() != 0;
     if (ver >= 3) mt.unlit = r.get<uint8_t>() != 0;
   }
-  m.meshes.resize(r.get<uint32_t>());
+  m.meshes.resize(r.count(6));
   for (Mesh& me : m.meshes) {
-    me.name = r.str(); me.primitives.resize(r.get<uint32_t>());
+    me.name = r.str(); me.primitives.resize(r.count(36));
     for (Primitive& p : me.primitives) {
       p.material = r.get<int32_t>();
-      p.vertices.resize(r.get<uint32_t>()); r.bytes(p.vertices.data(), p.vertices.size() * sizeof(Vertex));
-      p.indices.resize(r.get<uint32_t>()); r.bytes(p.indices.data(), p.indices.size() * 4);
+      p.vertices.resize(r.count(sizeof(Vertex))); r.bytes(p.vertices.data(), p.vertices.size() * sizeof(Vertex));
+      p.indices.resize(r.count(4)); r.bytes(p.indices.data(), p.indices.size() * 4);
       p.boundsMin = r.get<vec3>(); p.boundsMax = r.get<vec3>();
       if (ver >= 8) {
         uint32_t ns = r.get<uint32_t>();
         if (!r.ok || (ns && ns != p.vertices.size())) { err = "skin vertex count mismatch"; return false; }
+        if (ns > left(r) / sizeof(VertexSkin)) { err = "truncated EMOD"; return false; }
         p.skin.resize(ns); r.bytes(p.skin.data(), p.skin.size() * sizeof(VertexSkin));
       }
       if (!r.ok) break;
     }
     if (!r.ok) break;
   }
-  m.nodes.resize(r.get<uint32_t>());
+  m.nodes.resize(r.count(2 + 4 + 4 + 4 + 64));
   for (Node& n : m.nodes) {
     n.name = r.str(); n.mesh = r.get<int32_t>(); n.parent = r.get<int32_t>();
-    n.children.resize(r.get<uint32_t>()); for (int& c : n.children) c = r.get<int32_t>();
+    n.children.resize(r.count(4)); for (int& c : n.children) c = r.get<int32_t>();
     n.local = r.get<mat4>();
     if (ver >= 2) { uint16_t ne = r.get<uint16_t>(); for (uint16_t i = 0; i < ne && r.ok; ++i) { std::string k = r.str(); n.extras[k] = r.str(); } }
     if (ver >= 7) { n.translation = r.get<vec3>(); n.rotation = r.get<quat>(); n.scale = r.get<vec3>(); }
@@ -176,26 +194,28 @@ bool loadEmod(std::span<const uint8_t> bytes, Model& m, std::string& err) {
     if (ver >= 8) n.skin = r.get<int32_t>();
     if (!r.ok) break;
   }
-  m.roots.resize(r.get<uint32_t>()); for (int& x : m.roots) x = r.get<int32_t>();
+  m.roots.resize(r.count(4)); for (int& x : m.roots) x = r.get<int32_t>();
   m.boundsMin = r.get<vec3>(); m.boundsMax = r.get<vec3>();
   if (ver >= 7) {
-    m.animations.resize(r.get<uint32_t>());
+    m.animations.resize(r.count(2 + 4 + 4 + 4));
     for (Animation& a : m.animations) {
       a.name = r.str(); a.duration = r.get<float>();
-      a.samplers.resize(r.get<uint32_t>());
+      a.samplers.resize(r.count(1 + 1 + 4));
       for (AnimSampler& sm : a.samplers) {
         sm.comps = r.get<uint8_t>(); sm.step = r.get<uint8_t>() != 0; uint32_t n = r.get<uint32_t>();
         if (!r.ok || sm.comps == 0 || sm.comps > 4 || n > (1u << 24)) { err = "bad animation sampler"; return false; }
+        if ((size_t)n * 4 > left(r)) { err = "bad animation sampler"; return false; }
         sm.times.resize(n); r.bytes(sm.times.data(), n * 4);
+        if ((size_t)n * sm.comps * 4 > left(r)) { err = "bad animation sampler"; return false; }
         sm.values.resize((size_t)n * sm.comps); r.bytes(sm.values.data(), sm.values.size() * 4);
       }
-      a.channels.resize(r.get<uint32_t>());
+      a.channels.resize(r.count(4 + 4 + 1));
       for (AnimChannel& c : a.channels) { c.sampler = r.get<int32_t>(); c.node = r.get<int32_t>(); c.path = (AnimPath)r.get<uint8_t>(); }
       if (!r.ok) break;
     }
   }
   if (ver >= 8) {
-    m.skins.resize(r.get<uint32_t>());
+    m.skins.resize(r.count(2 + 4 + 4 + 4));
     for (Skin& sk : m.skins) {
       sk.name = r.str(); sk.skeleton = r.get<int32_t>();
       uint32_t nj = r.get<uint32_t>();

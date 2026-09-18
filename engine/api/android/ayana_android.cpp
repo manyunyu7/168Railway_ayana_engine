@@ -217,6 +217,81 @@ ENG_EXPORT int ayana_model_begin(const char* slot, const uint8_t* bytes, int len
   return queue().callInt([s, data] { return eng_model_begin(s.c_str(), data.data(), (int)data.size()); });
 }
 
+// ---- M2: the world and its assets ----
+// The four strings are big (the save ~60 KB, model.json ~600 KB): they are copied into std::string on
+// the heap and read on the render thread. Nothing ever goes near a stack buffer.
+ENG_EXPORT int ayana_load_world(const char* worldJson, const char* summaryJson, const char* mapSlug, const char* catalogJson) {
+  std::string w = worldJson ? worldJson : "", s = summaryJson ? summaryJson : "{}";
+  std::string m = mapSlug ? mapSlug : "", c = catalogJson ? catalogJson : "{}";
+  return queue().callInt([w, s, m, c] { return eng_load_world(w.c_str(), s.c_str(), m.c_str(), c.c_str()); });
+}
+
+ENG_EXPORT int ayana_terrain_index(const uint8_t* bytes, int len) {
+  std::vector<uint8_t> b(bytes, bytes + (len > 0 ? len : 0));
+  return queue().callInt([b] { return eng_terrain_index(b.empty() ? nullptr : b.data(), (int)b.size()); });
+}
+
+// RGBA8, tightly packed, row 0 = north (the same buffer the web adapter hands over from a canvas).
+ENG_EXPORT int ayana_terrain_tile_rgba(const char* dir, int z, int x, int y, int w, int h, const uint8_t* rgba) {
+  std::string d = dir ? dir : "";
+  size_t n = (size_t)(w > 0 ? w : 0) * (size_t)(h > 0 ? h : 0) * 4;
+  std::vector<uint8_t> b(rgba, rgba + n);
+  return queue().callInt([d, z, x, y, w, h, b] { return eng_terrain_tile_rgba(d.c_str(), z, x, y, w, h, b.data()); });
+}
+
+// The fetch_tiles binary form (dem: f32 grid, sat: EIMG), for a host that serves the baked tiles.
+ENG_EXPORT int ayana_terrain_tile(const char* dir, int z, int x, int y, const uint8_t* bytes, int len) {
+  std::string d = dir ? dir : "";
+  std::vector<uint8_t> b(bytes, bytes + (len > 0 ? len : 0));
+  return queue().callInt([d, z, x, y, b] { return eng_terrain_tile(d.c_str(), z, x, y, b.data(), (int)b.size()); });
+}
+
+ENG_EXPORT void ayana_terrain_tile_fail(const char* dir, int z, int x, int y) {
+  std::string d = dir ? dir : "";
+  queue().post([d, z, x, y] { eng_terrain_tile_fail(d.c_str(), z, x, y); });
+}
+
+ENG_EXPORT int ayana_city_json(const uint8_t* bytes, int len) {
+  std::vector<uint8_t> b(bytes, bytes + (len > 0 ? len : 0));
+  return queue().callInt([b] { return eng_city_json(b.empty() ? nullptr : b.data(), (int)b.size()); });
+}
+
+ENG_EXPORT void ayana_model_fail(const char* slot) {
+  std::string s = slot ? slot : "";
+  queue().post([s] { eng_model_fail(s.c_str()); });
+}
+
+// Android .emod files carry their textures (ETC2) inside, so a successful model needs nothing more;
+// this is here for the geometry-only web files and for a model whose textures could not be fetched.
+ENG_EXPORT void ayana_model_textures_unavailable(const char* slot) {
+  std::string s = slot ? slot : "";
+  queue().post([s] { eng_model_textures_unavailable(s.c_str()); });
+}
+
+// The per-frame simulation state (tens of KB of JSON from the WebView). Fire and forget: the render
+// thread picks up the newest one it has when it draws.
+ENG_EXPORT void ayana_set_state(const char* stepJson) {
+  std::string s = stepJson ? stepJson : "{}";
+  queue().post([s] { eng_set_state(s.c_str()); });
+}
+
+ENG_EXPORT void ayana_pointer(float x, float y, int button, int phase) {
+  queue().post([x, y, button, phase] { eng_pointer(x, y, button, phase); });
+}
+ENG_EXPORT void ayana_compass_click(float x, float y) { queue().post([x, y] { eng_compass_click(x, y); }); }
+ENG_EXPORT int ayana_camera_mode(int mode) { return queue().callInt([mode] { return eng_camera_mode(mode); }); }
+ENG_EXPORT int ayana_set_quality(int tier) { return queue().callInt([tier] { return eng_set_quality(tier); }); }
+ENG_EXPORT void ayana_set_sky_time(double sec) { queue().post([sec] { eng_set_sky_time(sec); }); }
+
+// The last failure message into a caller-owned buffer ("" when none).
+ENG_EXPORT int ayana_last_error(char* out, int cap) {
+  std::string s = queue().callString([] { const char* p = eng_last_error(); return std::string(p ? p : ""); });
+  if (!out || cap <= 0) return (int)s.size();
+  int n = (int)s.size() < cap - 1 ? (int)s.size() : cap - 1;
+  std::memcpy(out, s.data(), (size_t)n); out[n] = 0;
+  return n;
+}
+
 // The stats JSON into a caller-owned buffer (no ownership games across the FFI boundary).
 ENG_EXPORT int ayana_stats(char* out, int cap) {
   std::string s = queue().callString([] { const char* p = eng_stats(); return std::string(p ? p : "{}"); });

@@ -281,4 +281,32 @@ TEST_MAIN({
   CHECK(an2.animations[0].samplers[0].times == an.animations[0].samplers[0].times && an2.animations[0].samplers[0].values == an.animations[0].samplers[0].values);
   CHECK(an2.animations[1].samplers[0].step && an2.animations[1].channels[1].path == AnimPath::Scale && an2.animations[1].channels[1].node == 1);
   CHECK(an2.nodes[1].scale.x == an.nodes[1].scale.x && an2.nodes[0].translation.x == 5 && an2.nodes[1].rotation.w == an.nodes[1].rotation.w);
+
+  // ---- corrupt / hostile headers fail cleanly instead of allocating on a u32 count ----
+  // Every count in the format is bounded by "count x element size <= bytes left in the file", so a
+  // 4-billion image count in an 8-byte file is a parse error, not a 40 GB resize().
+  {
+    std::vector<uint8_t> bad{'E', 'M', 'O', 'D', 8, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF};
+    Model junk; std::string e;
+    CHECK(!loadEmod(bad, junk, e));            // images
+    CHECK(junk.images.empty() && !e.empty());
+    // the same count at every other level, by walking a real file and overwriting each u32 in turn
+    // with 0xFFFFFFF0: nothing may throw, allocate wildly or succeed.
+    std::vector<uint8_t> good;
+    { CHECK_MSG(saveEmod(an, path, err), err);
+      std::ifstream f(path, std::ios::binary);
+      good.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+      std::filesystem::remove(path); }
+    CHECK(good.size() > 64);
+    int parsed = 0, rejected = 0;
+    for (size_t off = 8; off + 4 <= good.size(); off += 4) {
+      std::vector<uint8_t> copy = good;
+      copy[off] = 0xF0; copy[off + 1] = 0xFF; copy[off + 2] = 0xFF; copy[off + 3] = 0xFF;
+      Model m2; std::string e2;
+      if (loadEmod(copy, m2, e2)) ++parsed; else ++rejected;
+      CHECK(m2.images.size() < 1000000 && m2.nodes.size() < 1000000 && m2.meshes.size() < 1000000);
+    }
+    CHECK(rejected > 0);
+    std::printf("corrupt u32 sweep: %d rejected, %d still parsed (bytes that are not counts)\n", rejected, parsed);
+  }
 })
