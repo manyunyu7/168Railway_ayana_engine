@@ -128,6 +128,7 @@ void RenderQueue::restart() {
   std::deque<Impl::Cmd*> orphans;
   {
     std::lock_guard lk(q->m);
+    if (!q->down) return;   // first life: what is queued was posted for THIS thread (quality, budget) — keep it
     q->down = false;
     orphans.swap(q->cmds);
     q->outbox.clear();

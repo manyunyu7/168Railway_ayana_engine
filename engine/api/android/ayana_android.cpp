@@ -428,7 +428,13 @@ ENG_EXPORT int ayana_snapshot(char* out, int cap) {
 
 ENG_EXPORT int ayana_decor_streaming(void) { return host().decorStreaming.load(std::memory_order_relaxed) ? 1 : 0; }
 
-ENG_EXPORT int ayana_set_quality(int tier) { queue().post([tier] { eng_set_quality(tier); }); return tier < 0 ? 0 : tier > 4 ? 4 : tier; }
+// Settings the host sends BEFORE the render thread exists (AyanaView.start: quality, decor budget) are applied
+// directly — there is no other thread to race with, and the queue would either hold them (first life) or drop
+// them (second life, still shut down). Once the thread runs they go through the queue like everything else.
+ENG_EXPORT int ayana_set_quality(int tier) {
+  if (!host().running.load()) eng_set_quality(tier); else queue().post([tier] { eng_set_quality(tier); });
+  return tier < 0 ? 0 : tier > 4 ? 4 : tier;
+}
 ENG_EXPORT void ayana_set_sky_time(double sec) { queue().post([sec] { eng_set_sky_time(sec); }); }
 
 // The last failure message into a caller-owned buffer ("" when none). Snapshot, at most 16 frames old.
