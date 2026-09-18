@@ -28,6 +28,10 @@ set_tests_properties(test_bridge PROPERTIES LABELS "node")
 # skipped without a display).
 engine_test(test_edit ../engine/api/engine_api.cpp ../engine/api/engine_api_hud.cpp ../engine/api/engine_api_edit.cpp ../engine/api/engine_api_markers.cpp ../engine/api/engine_api_avatar.cpp)
 
+# The host queue driving the real ABI on a real world (Mojokerto): needs a GL window and the terrain assets.
+engine_test(test_host_world ../engine/api/engine_api.cpp ../engine/api/engine_api_hud.cpp ../engine/api/engine_api_edit.cpp ../engine/api/engine_api_markers.cpp ../engine/api/engine_api_avatar.cpp)
+set_tests_properties(test_host_world PROPERTIES LABELS "gpu")
+
 engine_test(test_texture_cache)
 set_tests_properties(test_texture_cache PROPERTIES LABELS "gpu")
 engine_test(test_instancing)
