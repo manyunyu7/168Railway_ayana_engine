@@ -69,6 +69,17 @@ int main() {
   q.run([] { CHECK(false); });
   CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(1));
 
+  // restart = a second render thread (the page was left and visited again): calls work once more and the
+  // outbox of the old life is gone
+  q.pushRequest("model", "stale");
+  q.restart();
+  CHECK(!q.isShutdown());
+  CHECK(q.pendingRequests() == 0);
+  std::thread again([&] { for (int i = 0; i < 50; ++i) q.waitPump(20); });
+  CHECK(q.callInt([] { return 9; }, -1) == 9);
+  q.shutdown();
+  again.join();
+
   // the frame pacer: a stall is clamped, a target fps leaves a budget
   FramePacer pacer(60);
   pacer.tick();

@@ -44,6 +44,11 @@ public:
   size_t pendingRequests() const;
 
   void shutdown();                 // wakes the render thread and releases every blocked caller
+  // Arms the queue again for a NEW render thread (Android: the Texture is disposed when the page is left
+  // and created again on the next visit). Anything still queued from the old life is dropped, the outbox
+  // too (its requests belong to a world that no longer exists). Without this, every call after the first
+  // shutdown returned its fallback for good: eng_load_world "failed" with an empty error on the second visit.
+  void restart();
   bool isShutdown() const;
 
 private:

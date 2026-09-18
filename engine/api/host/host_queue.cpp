@@ -123,6 +123,18 @@ void RenderQueue::shutdown() {
   for (Impl::Cmd* c : orphans) if (!c->blocking) delete c;   // blocking ones live on their caller's stack
 }
 
+void RenderQueue::restart() {
+  Impl* q = impl_;
+  std::deque<Impl::Cmd*> orphans;
+  {
+    std::lock_guard lk(q->m);
+    q->down = false;
+    orphans.swap(q->cmds);
+    q->outbox.clear();
+  }
+  for (Impl::Cmd* c : orphans) if (!c->blocking) delete c;
+}
+
 bool RenderQueue::isShutdown() const {
   const Impl* q = impl_;
   std::lock_guard lk(q->m);

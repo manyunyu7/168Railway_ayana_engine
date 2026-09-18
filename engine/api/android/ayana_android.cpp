@@ -125,6 +125,7 @@ void renderLoop() {
 void startThread() {
   Host& H = host();
   if (H.running.exchange(true)) return;
+  queue().restart();        // the previous loop shut the queue down on its way out (second visit to the page)
   H.thread = std::thread(renderLoop);
 }
 
