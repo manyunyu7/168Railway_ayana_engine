@@ -8,6 +8,7 @@
 //    Used for models, city JSON and a bundled terrain index. Returning null means "not available".
 //  * the tile servers, for DEM and satellite imagery, straight over HttpClient with a small pool.
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -57,6 +58,8 @@ class AyanaWorldLoader {
   final AyanaEngineSink _engine;
 
   AyanaTerrainIndex? _index;
+  Map<String, dynamic>? _world;   // the save `load()` carried: the terrain index is built from it
+  String _map = '';
   StreamSubscription<AyanaAssetRequest>? _sub;
   int _answered = 0, _failed = 0, _inFlight = 0;
   final StreamController<AyanaLoadProgress> _progress = StreamController<AyanaLoadProgress>.broadcast();
@@ -74,6 +77,14 @@ class AyanaWorldLoader {
   }) async {
     _sub ??= _engine.assetRequests.listen(_answer);
     _answered = _failed = 0;
+    _map = map;
+    _index = null;
+    try {
+      final dynamic j = jsonDecode(worldJson);
+      _world = j is Map<String, dynamic> ? j : null;
+    } catch (_) {
+      _world = null;   // the engine will reject it too, and say so in lastError
+    }
     return _engine.loadWorld(worldJson: worldJson, summaryJson: summaryJson, map: map, catalogJson: catalogJson);
   }
 
@@ -126,14 +137,29 @@ class AyanaWorldLoader {
   Future<void> _terrain(String path) async {
     final TileRef? ref = TileRef.parse(path);
     if (ref == null) {
-      // `<map>/index.json`: bundled or cached by the host. Without it the world is flat, not broken.
-      final Uint8List? bytes = await resolve('terrain', path, assetPathFor('terrain', path));
+      // `<map>/index.json`. The host may have a fetch_tiles file (the dev page bundles one), but the
+      // CDN almost never does, so the normal case is to BUILD the index from the save — same rule as
+      // the web's indeksMedan.ts. Only if neither works is the world flat, which is not an error.
+      Uint8List? bytes;
+      try {
+        bytes = await resolve('terrain', path, assetPathFor('terrain', path));
+        if (bytes != null) _index = AyanaTerrainIndex.parse(bytes);
+      } catch (_) {
+        bytes = null;   // a stale or corrupt file must not beat the synthesised index
+      }
+      if (bytes == null) {
+        final Map<String, dynamic>? world = _world;
+        final AyanaTerrainIndex? dibuat = world == null ? null : AyanaTerrainIndex.fromWorld(_map, world);
+        if (dibuat != null) {
+          _index = dibuat;
+          bytes = dibuat.bytes;
+        }
+      }
       if (bytes == null) {
         _engine.terrainIndex(null);
         _failed++;
         return;
       }
-      _index = AyanaTerrainIndex.parse(bytes);
       _engine.terrainIndex(bytes);
       _answered++;
       return;

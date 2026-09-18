@@ -175,6 +175,45 @@ void main() {
       expect(c.tiles.single.x, 3326);
     });
 
+    test('synthesised from the save, it matches what fetch_tiles wrote', () {
+      // The CDN has no ayana/terrain/<map>/index.json, so this is the path a phone really takes.
+      // It must agree with the fetch_tiles output field for field in everything the engine reads.
+      final Map<String, dynamic> world =
+          jsonDecode(File('test/fixtures/mojokerto_world.json').readAsStringSync()) as Map<String, dynamic>;
+      final AyanaTerrainIndex dibuat = AyanaTerrainIndex.fromWorld('mojokerto', world)!;
+      final Map<String, dynamic> emas =
+          jsonDecode(File('test/fixtures/mojokerto_index.json').readAsStringSync()) as Map<String, dynamic>;
+
+      expect(dibuat.map, emas['map']);
+      for (final double v in <double>[0, 1, 2, 3]) {
+        expect((dibuat.bbox()[v.toInt()] as num).toDouble(),
+            closeTo(((emas['bbox'] as List<dynamic>)[v.toInt()] as num).toDouble(), 1e-6));
+      }
+      void samakan(List<AyanaTerrainLayer> kita, List<dynamic> emasLapis, String apa) {
+        expect(kita.length, emasLapis.length, reason: '$apa: jumlah lapis');
+        for (int i = 0; i < kita.length; i++) {
+          final AyanaTerrainLayer a = kita[i];
+          final Map<String, dynamic> b = emasLapis[i] as Map<String, dynamic>;
+          expect(<Object>[a.dir, a.zoom, a.tx0, a.ty0, a.nx, a.ny, a.px],
+              <Object>[b['dir'], b['zoom'], b['tx0'], b['ty0'], b['nx'], b['ny'], b['px']],
+              reason: '$apa[$i]');
+          expect(a.present, b['present'], reason: '$apa[$i].present');
+        }
+      }
+      samakan(dibuat.dem, emas['dem'] as List<dynamic>, 'dem');
+      samakan(dibuat.sat, emas['sat'] as List<dynamic>, 'sat');
+
+      // dan bytes-nya memang JSON indeks yang bisa dibaca ulang
+      final AyanaTerrainIndex ulang = AyanaTerrainIndex.parse(dibuat.bytes);
+      expect(ulang.sat.length, dibuat.sat.length);
+      expect(ulang.satLayer(0)!.px, 512);
+    });
+
+    test('a save without rail nodes has no index to build', () {
+      expect(AyanaTerrainIndex.fromWorld('kosong', <String, dynamic>{}), isNull);
+      expect(AyanaTerrainIndex.fromWorld('kosong', <String, dynamic>{'graph': <String, dynamic>{'nodes': <dynamic>[]}}), isNull);
+    });
+
     test('rubbish bytes are a FormatException, not a crash', () {
       expect(() => AyanaTerrainIndex.parse(Uint8List.fromList(utf8.encode('[1,2]'))), throwsFormatException);
     });
@@ -296,7 +335,24 @@ void main() {
       expect(loader.index!.map, 'mojokerto');
     });
 
-    test('a missing index is not fatal: the engine is told there is no terrain', () async {
+    test('no index file on the CDN: one is built from the save that load_world carried', () async {
+      // The real phone path — R2 has no ayana/terrain/<map>/index.json and never will.
+      await loader.load(
+        worldJson: File('test/fixtures/mojokerto_world.json').readAsStringSync(),
+        summaryJson: '{}',
+        map: 'mojokerto',
+        catalogJson: '{}',
+      );
+      engine.calls.clear();
+      await loader.answer(const AyanaAssetRequest('terrain', 'mojokerto/index.json'));
+      expect(engine.calls.single, startsWith('terrainIndex('));
+      expect(engine.calls.single, isNot('terrainIndex(0)'));
+      expect(loader.index!.map, 'mojokerto');
+      expect(loader.index!.satLayer(0)!.zoom, 14);
+      expect(loader.index!.dem.first.zoom, 13);
+    });
+
+    test('no index and no usable save: the engine is told there is no terrain (flat, not broken)', () async {
       await loader.answer(const AyanaAssetRequest('terrain', 'mojokerto/index.json'));
       expect(engine.calls.single, 'terrainIndex(0)');
     });
