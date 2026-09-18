@@ -96,7 +96,13 @@ struct Host {
   float dpr = 1;
   std::vector<uint8_t> font;              // handed over before eng_init (eng_set_font)
   std::mutex fontMutex;
-  std::string stats;                      // render thread writes, ayana_stats copies under the queue
+  // Snapshots the render thread refreshes every frame so Dart NEVER waits on it for a read: the
+  // loader polled ready/lastError at 10 Hz through blocking calls, and while the decor build held the
+  // render thread for 9 s the UI isolate hung with it -> "168 Railway isn't responding".
+  std::atomic<bool> ready{false};
+  std::mutex infoMutex;
+  std::string lastError, stats;
+  int frame = 0;
 };
 Host& host() { static Host h; return h; }
 
@@ -111,6 +117,12 @@ void renderLoop() {
     if (H.engineUp.load(std::memory_order_relaxed)) {
       eng_frame(dt);
       H.gl.swap();
+      H.ready.store(eng_ready() != 0, std::memory_order_relaxed);
+      if ((H.frame++ & 15) == 0) {
+        const char* e = eng_last_error(); const char* st = eng_stats();
+        std::lock_guard<std::mutex> lk(H.infoMutex);
+        H.lastError = e ? e : ""; H.stats = st ? st : "{}";
+      }
       float inst = dt > 0 ? 1.f / dt : 0.f;
       H.fps.store(H.fps.load() * 0.9f + inst * 0.1f, std::memory_order_relaxed);
     } else {
@@ -122,6 +134,7 @@ void renderLoop() {
     if (ms > 0) queue().waitPump(ms);
   }
   if (H.engineUp.exchange(false)) eng_shutdown();
+  H.ready.store(false);
   H.gl.destroy();
   queue().shutdown();   // releases anyone blocked on a call; later calls return their fallback
 }
@@ -157,15 +170,18 @@ void startThread() {
   Host& H = host();
   if (H.running.exchange(true)) return;
   pipeStdioToLogcat();
+  if (H.thread.joinable()) H.thread.join();   // the previous loop (see stopThread) — normally long gone
   queue().restart();        // the previous loop shut the queue down on its way out (second visit to the page)
   H.thread = std::thread(renderLoop);
 }
 
+// Asks the loop to end and returns AT ONCE: stop runs on the platform thread when the page is left, and
+// joining there while the render thread is inside a long build (decor: seconds) was an ANR. The join
+// moves to the next startThread, by which time the loop has finished.
 void stopThread() {
   Host& H = host();
   if (!H.running.exchange(false)) return;
   queue().post([] {});      // wake the loop out of waitPump
-  if (H.thread.joinable()) H.thread.join();
 }
 
 // Attach/resize/detach all run ON the render thread (EGL is bound there), so they go through the queue.
@@ -210,8 +226,10 @@ JNIEXPORT void JNICALL Java_com_ayana_engine_AyanaPlugin_nativeResize(JNIEnv*, j
   });
 }
 
+// Posted, not awaited (platform thread, same ANR reasoning as stopThread): the ANativeWindow reference
+// we hold keeps the buffer queue alive until dropSurface runs, so Kotlin may release its Surface first.
 JNIEXPORT void JNICALL Java_com_ayana_engine_AyanaPlugin_nativeDetach(JNIEnv*, jclass) {
-  queue().run([] { host().gl.dropSurface(); });
+  queue().post([] { host().gl.dropSurface(); });
 }
 
 JNIEXPORT void JNICALL Java_com_ayana_engine_AyanaPlugin_nativeStop(JNIEnv*, jclass) { stopThread(); }
@@ -229,10 +247,7 @@ ENG_EXPORT void ayana_set_target_fps(float fps) { queue().post([fps] { host().pa
 
 ENG_EXPORT void ayana_shutdown(void) { stopThread(); }
 
-ENG_EXPORT int ayana_ready(void) {
-  if (!host().engineUp.load()) return 0;
-  return queue().callInt([] { return eng_ready(); });
-}
+ENG_EXPORT int ayana_ready(void) { return host().ready.load(std::memory_order_relaxed) ? 1 : 0; }
 
 ENG_EXPORT float ayana_fps(void) { return host().fps.load(std::memory_order_relaxed); }
 
@@ -243,16 +258,21 @@ ENG_EXPORT void ayana_set_view(float distance, float yaw, float pitch) {
 }
 ENG_EXPORT void ayana_set_theme(int dark) { queue().post([dark] { eng_set_theme(dark); }); }
 
-// `bytes` is copied: Dart frees its buffer as soon as this returns.
+// `bytes` is copied: Dart frees its buffer as soon as this returns. Fire and forget, like every asset
+// answer below: the render thread parses / uploads when it gets to it (a station model plus its
+// textures took seconds on the phone), and a rejected file shows up in ayana_last_error, not here.
 ENG_EXPORT int ayana_model_begin(const char* slot, const uint8_t* bytes, int len) {
   std::string s = slot ? slot : "";
   std::vector<uint8_t> data(bytes, bytes + (len > 0 ? len : 0));
-  return queue().callInt([s, data] { return eng_model_begin(s.c_str(), data.data(), (int)data.size()); });
+  queue().post([s, data] { eng_model_begin(s.c_str(), data.data(), (int)data.size()); });
+  return 1;
 }
 
 // ---- M2: the world and its assets ----
 // The four strings are big (the save ~60 KB, model.json ~600 KB): they are copied into std::string on
-// the heap and read on the render thread. Nothing ever goes near a stack buffer.
+// the heap and read on the render thread. Nothing ever goes near a stack buffer. This is the ONE call
+// that still blocks the caller (about 1.3 s on a Helio G99): the loader wants the verdict before it
+// starts answering asset requests.
 ENG_EXPORT int ayana_load_world(const char* worldJson, const char* summaryJson, const char* mapSlug, const char* catalogJson) {
   std::string w = worldJson ? worldJson : "", s = summaryJson ? summaryJson : "{}";
   std::string m = mapSlug ? mapSlug : "", c = catalogJson ? catalogJson : "{}";
@@ -261,7 +281,8 @@ ENG_EXPORT int ayana_load_world(const char* worldJson, const char* summaryJson, 
 
 ENG_EXPORT int ayana_terrain_index(const uint8_t* bytes, int len) {
   std::vector<uint8_t> b(bytes, bytes + (len > 0 ? len : 0));
-  return queue().callInt([b] { return eng_terrain_index(b.empty() ? nullptr : b.data(), (int)b.size()); });
+  queue().post([b] { eng_terrain_index(b.empty() ? nullptr : b.data(), (int)b.size()); });
+  return 1;
 }
 
 // RGBA8, tightly packed, row 0 = north (the same buffer the web adapter hands over from a canvas).
@@ -269,14 +290,16 @@ ENG_EXPORT int ayana_terrain_tile_rgba(const char* dir, int z, int x, int y, int
   std::string d = dir ? dir : "";
   size_t n = (size_t)(w > 0 ? w : 0) * (size_t)(h > 0 ? h : 0) * 4;
   std::vector<uint8_t> b(rgba, rgba + n);
-  return queue().callInt([d, z, x, y, w, h, b] { return eng_terrain_tile_rgba(d.c_str(), z, x, y, w, h, b.data()); });
+  queue().post([d, z, x, y, w, h, b] { eng_terrain_tile_rgba(d.c_str(), z, x, y, w, h, b.data()); });
+  return 1;
 }
 
 // The fetch_tiles binary form (dem: f32 grid, sat: EIMG), for a host that serves the baked tiles.
 ENG_EXPORT int ayana_terrain_tile(const char* dir, int z, int x, int y, const uint8_t* bytes, int len) {
   std::string d = dir ? dir : "";
   std::vector<uint8_t> b(bytes, bytes + (len > 0 ? len : 0));
-  return queue().callInt([d, z, x, y, b] { return eng_terrain_tile(d.c_str(), z, x, y, b.data(), (int)b.size()); });
+  queue().post([d, z, x, y, b] { eng_terrain_tile(d.c_str(), z, x, y, b.data(), (int)b.size()); });
+  return 1;
 }
 
 ENG_EXPORT void ayana_terrain_tile_fail(const char* dir, int z, int x, int y) {
@@ -286,7 +309,8 @@ ENG_EXPORT void ayana_terrain_tile_fail(const char* dir, int z, int x, int y) {
 
 ENG_EXPORT int ayana_city_json(const uint8_t* bytes, int len) {
   std::vector<uint8_t> b(bytes, bytes + (len > 0 ? len : 0));
-  return queue().callInt([b] { return eng_city_json(b.empty() ? nullptr : b.data(), (int)b.size()); });
+  queue().post([b] { eng_city_json(b.empty() ? nullptr : b.data(), (int)b.size()); });
+  return 1;
 }
 
 ENG_EXPORT void ayana_model_fail(const char* slot) {
@@ -312,22 +336,24 @@ ENG_EXPORT void ayana_pointer(float x, float y, int button, int phase) {
   queue().post([x, y, button, phase] { eng_pointer(x, y, button, phase); });
 }
 ENG_EXPORT void ayana_compass_click(float x, float y) { queue().post([x, y] { eng_compass_click(x, y); }); }
-ENG_EXPORT int ayana_camera_mode(int mode) { return queue().callInt([mode] { return eng_camera_mode(mode); }); }
-ENG_EXPORT int ayana_set_quality(int tier) { return queue().callInt([tier] { return eng_set_quality(tier); }); }
+// Both answer with the value they asked for (clamped as the engine clamps); the engine applies it at its
+// next pump. A train mode without a train stays put in the engine — eng_camera_json tells, not this.
+ENG_EXPORT int ayana_camera_mode(int mode) { queue().post([mode] { eng_camera_mode(mode); }); return mode < 0 ? 0 : mode > 6 ? 6 : mode; }
+ENG_EXPORT int ayana_set_quality(int tier) { queue().post([tier] { eng_set_quality(tier); }); return tier < 0 ? 0 : tier > 4 ? 4 : tier; }
 ENG_EXPORT void ayana_set_sky_time(double sec) { queue().post([sec] { eng_set_sky_time(sec); }); }
 
-// The last failure message into a caller-owned buffer ("" when none).
+// The last failure message into a caller-owned buffer ("" when none). Snapshot, at most 16 frames old.
 ENG_EXPORT int ayana_last_error(char* out, int cap) {
-  std::string s = queue().callString([] { const char* p = eng_last_error(); return std::string(p ? p : ""); });
+  std::string s; { Host& H = host(); std::lock_guard<std::mutex> lk(H.infoMutex); s = H.lastError; }
   if (!out || cap <= 0) return (int)s.size();
   int n = (int)s.size() < cap - 1 ? (int)s.size() : cap - 1;
   std::memcpy(out, s.data(), (size_t)n); out[n] = 0;
   return n;
 }
 
-// The stats JSON into a caller-owned buffer (no ownership games across the FFI boundary).
+// The stats JSON into a caller-owned buffer (no ownership games across the FFI boundary). Snapshot too.
 ENG_EXPORT int ayana_stats(char* out, int cap) {
-  std::string s = queue().callString([] { const char* p = eng_stats(); return std::string(p ? p : "{}"); });
+  std::string s; { Host& H = host(); std::lock_guard<std::mutex> lk(H.infoMutex); s = H.stats; if (s.empty()) s = "{}"; }
   if (!out || cap <= 0) return (int)s.size();
   int n = (int)s.size() < cap - 1 ? (int)s.size() : cap - 1;
   std::memcpy(out, s.data(), (size_t)n); out[n] = 0;
