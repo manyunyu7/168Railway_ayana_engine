@@ -73,6 +73,25 @@ class FakeTiles implements AyanaTileFetcher {
   void close() {}
 }
 
+// The bridge's view of the engine: records commands, answers with a canned snapshot.
+class FakeCommands implements AyanaCommandSink {
+  final List<String> calls = <String>[];
+  bool snapOn = false;
+  String snap = '{"frame":1,"ready":1}';
+
+  @override
+  void setState(String stepJson) => calls.add('state(${stepJson.length})');
+  @override
+  void pointer(double x, double y, int button, int phase) => calls.add('pointer($x,$y,$button,$phase)');
+  @override
+  void command(String name, double a, double b, double c, String s) =>
+      calls.add('$name($a,$b,$c${s.isEmpty ? '' : ',$s'})');
+  @override
+  void snapshotEnable(bool on) => snapOn = on;
+  @override
+  String snapshot() => snap;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -188,6 +207,62 @@ void main() {
       expect(looksGzipped(plain), isFalse);
       expect(maybeGunzip(gz), plain);
       expect(identical(maybeGunzip(plain), plain), isTrue);
+    });
+  });
+
+  group('bridge', () {
+    test('a batch becomes engine calls, in order, and the snapshot comes back', () {
+      final FakeCommands e = FakeCommands();
+      final AyanaBridge b = AyanaBridge(engine: e);
+      final String reply = b.handleBatch(<Map<String, dynamic>>[
+        <String, dynamic>{'c': 'state', 's': '{"clock":25200,"trains":[]}'},
+        <String, dynamic>{'c': 'orbit', 'a': 12.0, 'b': -3.0},
+        <String, dynamic>{'c': 'zoom', 'a': 1.5},
+        <String, dynamic>{'c': 'pointer', 'a': 100.0, 'b': 200.0, 'd': 0, 'e': 1},
+        <String, dynamic>{'c': 'follow_train', 's': 'KA-123'},
+        <String, dynamic>{'c': 'camera_mode', 'a': 3},
+      ]);
+      expect(e.snapOn, isTrue);
+      expect(e.calls, <String>[
+        'state(27)',
+        'orbit(12.0,-3.0,0.0)',
+        'zoom(1.5,0.0,0.0)',
+        'pointer(100.0,200.0,0,1)',
+        'follow_train(0.0,0.0,0.0,KA-123)',
+        'camera_mode(3.0,0.0,0.0)',
+      ]);
+      expect(reply, '{"frame":1,"ready":1}');
+      expect(b.latency.count, 1);
+    });
+
+    test('a batch as JSON text works too, and rubbish entries are skipped', () {
+      final FakeCommands e = FakeCommands();
+      final AyanaBridge b = AyanaBridge(engine: e);
+      b.handleBatch('[{"c":"zoom","a":2},{"nope":1},{"c":""},3,"x"]');
+      expect(e.calls, <String>['zoom(2.0,0.0,0.0)']);
+      b.handleBatch(null);
+      b.handleBatch('');
+      expect(e.calls.length, 1);
+    });
+
+    test('latency percentiles are reported', () {
+      final AyanaLatency l = AyanaLatency(window: 5);
+      for (final double ms in <double>[1, 2, 3, 4, 5, 6, 7]) {
+        l.add(ms);
+      }
+      expect(l.count, 7);
+      expect(l.p50, 5); // the window kept 3..7
+      expect(l.p95, 7);
+      expect(AyanaLatency().p50, 0);
+    });
+
+    test('disable turns the snapshot off', () {
+      final FakeCommands e = FakeCommands();
+      final AyanaBridge b = AyanaBridge(engine: e);
+      b.handleBatch(const <dynamic>[]);
+      expect(e.snapOn, isTrue);
+      b.disable();
+      expect(e.snapOn, isFalse);
     });
   });
 

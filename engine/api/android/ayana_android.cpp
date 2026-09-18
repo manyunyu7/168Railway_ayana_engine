@@ -103,6 +103,14 @@ struct Host {
   std::mutex infoMutex;
   std::string lastError, stats;
   int frame = 0;
+  // The per-frame snapshot the WebView bridge reads (M3): everything the DOM overlays need, built on
+  // the render thread right after the frame and handed over as ONE JSON string, so a batch reply is a
+  // single copy and Dart never blocks. Off until the bridge asks for it — building it costs a few
+  // hundred microseconds of JSON per frame.
+  std::atomic<bool> snapshotOn{false};
+  std::mutex snapMutex;
+  std::string snapshot{"{}"};
+  std::atomic<int> snapshotFrame{0};
 };
 Host& host() { static Host h; return h; }
 
@@ -123,6 +131,21 @@ void renderLoop() {
         const char* e = eng_last_error(); const char* st = eng_stats();
         std::lock_guard<std::mutex> lk(H.infoMutex);
         H.lastError = e ? e : ""; H.stats = st ? st : "{}";
+      }
+      if (H.snapshotOn.load(std::memory_order_relaxed)) {
+        auto part = [](const char* p) { return p && *p ? p : "null"; };
+        std::string s;
+        s.reserve(16384);
+        s += "{\"frame\":"; s += std::to_string(H.frame);
+        s += ",\"ready\":"; s += eng_ready() ? "1" : "0";
+        s += ",\"camera\":"; s += part(eng_camera_json());
+        s += ",\"trains\":"; s += part(eng_train_screen());
+        s += ",\"signals\":"; s += part(eng_signal_screen());
+        s += ",\"stations\":"; s += part(eng_station_screen());
+        s += ",\"stats\":"; s += part(eng_stats());
+        s += "}";
+        { std::lock_guard<std::mutex> lk(H.snapMutex); H.snapshot.swap(s); }
+        H.snapshotFrame.store(H.frame, std::memory_order_relaxed);
       }
       float inst = dt > 0 ? 1.f / dt : 0.f;
       H.fps.store(H.fps.load() * 0.9f + inst * 0.1f, std::memory_order_relaxed);
@@ -343,6 +366,66 @@ ENG_EXPORT int ayana_camera_mode(int mode) { queue().post([mode] { eng_camera_mo
 // Both are safe before eng_init (the engine remembers the value): the plugin posts them the moment the
 // page opens, so the tree scatter is already budgeted and the tier already set when the world is built.
 ENG_EXPORT void ayana_set_decor_budget(int ms) { queue().post([ms] { eng_set_decor_budget(ms); }); }
+// One posted command by name, so the batch coming out of the WebView does not need forty wrappers.
+// Everything here is fire-and-forget: the batch is what the sim already decided, and the reply the
+// caller gets is the snapshot from the previous frame, exactly like the web's one-frame-late labels.
+// Unknown names are ignored on purpose — an older engine must not break a newer page.
+ENG_EXPORT void ayana_cmd(const char* name, double a, double b, double c, const char* str) {
+  if (!name) return;
+  std::string n = name, s = str ? str : "";
+  queue().post([n, a, b, c, s] {
+    const char* k = n.c_str();
+    auto is = [&](const char* w) { return std::strcmp(k, w) == 0; };
+    if (is("orbit")) eng_orbit((float)a, (float)b);
+    else if (is("zoom")) eng_zoom((float)a);
+    else if (is("set_view")) eng_set_view((float)a, (float)b, (float)c);
+    else if (is("look_at")) eng_look_at(a, b);
+    else if (is("compass_click")) eng_compass_click((float)a, (float)b);
+    else if (is("compass_glide")) eng_compass_glide((float)a, (float)b, (int)c);
+    else if (is("compass_settings")) eng_compass_settings((int)a, (float)b, (int)c);
+    else if (is("camera_mode")) eng_camera_mode((int)a);
+    else if (is("follow_train")) eng_follow_train(s.c_str());
+    else if (is("cycle_subject")) eng_cycle_subject((int)a);
+    else if (is("telescope")) eng_telescope((int)a);
+    else if (is("side_flip")) eng_side_flip();
+    else if (is("set_rig_param")) eng_set_rig_param((float)a);
+    else if (is("key")) eng_key(s.c_str(), (int)a);
+    else if (is("hover")) eng_hover(s.c_str());
+    else if (is("set_layer")) eng_set_layer(s.c_str(), (int)a);
+    else if (is("set_quality")) eng_set_quality((int)a);
+    else if (is("set_tree_radius")) eng_set_tree_radius((float)a);
+    else if (is("set_tree_density")) eng_set_tree_density((float)a);
+    else if (is("set_sky_time")) eng_set_sky_time(a);
+    else if (is("set_theme")) eng_set_theme((int)a);
+    else if (is("set_paused")) eng_set_paused((int)a);
+    else if (is("reset_imagery")) eng_reset_imagery((int)a);
+    else if (is("set_preview")) eng_set_preview(s.c_str());
+    else if (is("set_panel")) eng_set_panel(s.c_str());
+  });
+}
+
+// eng_pointer needs four arguments, so it gets its own door rather than a fudged one above.
+ENG_EXPORT void ayana_pointer4(float x, float y, int button, int phase) {
+  queue().post([x, y, button, phase] { eng_pointer(x, y, button, phase); });
+}
+
+// The M3 bridge: turn the per-frame snapshot on, and read the latest one. Never blocks — the string
+// returned is at most one frame old, which is exactly what the DOM labels already tolerate on the web.
+ENG_EXPORT void ayana_snapshot_enable(int on) { host().snapshotOn.store(on != 0, std::memory_order_relaxed); }
+
+ENG_EXPORT int ayana_snapshot_frame(void) { return host().snapshotFrame.load(std::memory_order_relaxed); }
+
+// Copies the snapshot into a caller-owned buffer; returns the number of bytes written, or the size
+// needed (negative) when the buffer is too small, so Dart can grow its buffer once and keep it.
+ENG_EXPORT int ayana_snapshot(char* out, int cap) {
+  std::lock_guard<std::mutex> lk(host().snapMutex);
+  const std::string& s = host().snapshot;
+  if (!out || cap <= (int)s.size()) return -(int)s.size() - 1;
+  std::memcpy(out, s.data(), s.size());
+  out[s.size()] = 0;
+  return (int)s.size();
+}
+
 ENG_EXPORT int ayana_decor_streaming(void) { return host().decorStreaming.load(std::memory_order_relaxed) ? 1 : 0; }
 
 ENG_EXPORT int ayana_set_quality(int tier) { queue().post([tier] { eng_set_quality(tier); }); return tier < 0 ? 0 : tier > 4 ? 4 : tier; }

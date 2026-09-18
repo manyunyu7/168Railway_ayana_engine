@@ -18,6 +18,7 @@ import 'src/asset_request.dart';
 import 'src/engine_sink.dart';
 
 export 'src/asset_request.dart';
+export 'src/bridge.dart';
 export 'src/engine_sink.dart';
 export 'src/terrain_index.dart';
 export 'src/tile_urls.dart' show AyanaModelVariant, TileRef, TileComposition, SubTile, demUrls, satUrls, satComposition, modelFileName, assetPathFor, kTileBase;
@@ -63,9 +64,13 @@ typedef _IntRetIntC = Int32 Function(Int32);
 typedef _IntRetInt = int Function(int);
 typedef _DoubleArgC = Void Function(Double);
 typedef _DoubleArg = void Function(double);
+typedef _CmdC = Void Function(Pointer<Utf8>, Double, Double, Double, Pointer<Utf8>);
+typedef _Cmd = void Function(Pointer<Utf8>, double, double, double, Pointer<Utf8>);
+typedef _SnapshotC = Int32 Function(Pointer<Utf8>, Int32);
+typedef _Snapshot = int Function(Pointer<Utf8>, int);
 
 /// The engine, one per process (the C ABI is a single global instance).
-class Ayana implements AyanaEngineSink {
+class Ayana implements AyanaEngineSink, AyanaCommandSink {
   Ayana._();
   static final Ayana instance = Ayana._();
 
@@ -104,13 +109,17 @@ class Ayana implements AyanaEngineSink {
   late final _StrArg _modelFailFn = _l.lookupFunction<_StrArgC, _StrArg>('ayana_model_fail');
   late final _StrArg _texUnavailFn = _l.lookupFunction<_StrArgC, _StrArg>('ayana_model_textures_unavailable');
   late final _StrArg _setStateFn = _l.lookupFunction<_StrArgC, _StrArg>('ayana_set_state');
-  late final _PointerFn _pointerFn = _l.lookupFunction<_PointerC, _PointerFn>('ayana_pointer');
   late final _Float2 _compassClickFn = _l.lookupFunction<_Float2C, _Float2>('ayana_compass_click');
   late final _IntRetInt _cameraModeFn = _l.lookupFunction<_IntRetIntC, _IntRetInt>('ayana_camera_mode');
   late final _IntArg _setDecorBudgetFn = _l.lookupFunction<_IntArgC, _IntArg>('ayana_set_decor_budget');
   late final _RetInt _decorStreamingFn = _l.lookupFunction<_RetIntC, _RetInt>('ayana_decor_streaming');
   late final _IntRetInt _setQualityFn = _l.lookupFunction<_IntRetIntC, _IntRetInt>('ayana_set_quality');
   late final _DoubleArg _setSkyTimeFn = _l.lookupFunction<_DoubleArgC, _DoubleArg>('ayana_set_sky_time');
+  late final _Cmd _cmdFn = _l.lookupFunction<_CmdC, _Cmd>('ayana_cmd');
+  late final _PointerFn _pointer4Fn = _l.lookupFunction<_PointerC, _PointerFn>('ayana_pointer4');
+  late final _IntArg _snapEnableFn = _l.lookupFunction<_IntArgC, _IntArg>('ayana_snapshot_enable');
+  late final _Snapshot _snapshotFn = _l.lookupFunction<_SnapshotC, _Snapshot>('ayana_snapshot');
+  late final _RetInt _snapFrameFn = _l.lookupFunction<_RetIntC, _RetInt>('ayana_snapshot_frame');
   late final _Stats _lastErrorFn = _l.lookupFunction<_StatsC, _Stats>('ayana_last_error');
 
   // ---- M2: the world ----
@@ -166,9 +175,53 @@ class Ayana implements AyanaEngineSink {
   void modelTexturesUnavailable(String slot) => _withStr(slot, _texUnavailFn);
 
   /// The bridge's per-frame `step` object. Fire and forget.
+  @override
   void setState(String stepJson) => _withStr(stepJson, _setStateFn);
 
-  void pointer(double x, double y, int button, int phase) => _pointerFn(x, y, button, phase);
+  @override
+  void pointer(double x, double y, int button, int phase) => _pointer4Fn(x, y, button, phase);
+
+  /// One engine command by name (see ayana_cmd in engine/api/android/ayana_android.cpp). Posted, never
+  /// blocking; an unknown name is ignored by the engine rather than throwing.
+  @override
+  void command(String name, double a, double b, double c, String s) {
+    final Pointer<Utf8> n = name.toNativeUtf8();
+    final Pointer<Utf8> str = s.toNativeUtf8();
+    try {
+      _cmdFn(n, a, b, c, str);
+    } finally {
+      malloc.free(n);
+      malloc.free(str);
+    }
+  }
+
+  /// Turns the per-frame snapshot on (M3 bridge). Off by default: it costs JSON per frame.
+  @override
+  void snapshotEnable(bool on) => _snapEnableFn(on ? 1 : 0);
+
+  int get snapshotFrame => _snapFrameFn();
+
+  // The buffer is kept and grown, not reallocated per frame: this runs 60 times a second.
+  Pointer<Utf8>? _snapBuf;
+  int _snapCap = 0;
+
+  /// The engine's latest snapshot JSON ({frame, ready, camera, trains, signals, stations, stats}).
+  /// At most one frame old, and it never waits on the render thread.
+  @override
+  String snapshot() {
+    if (_snapBuf == null) {
+      _snapCap = 64 * 1024;
+      _snapBuf = malloc.allocate<Uint8>(_snapCap).cast<Utf8>();
+    }
+    int n = _snapshotFn(_snapBuf!, _snapCap);
+    if (n < 0) {
+      malloc.free(_snapBuf!);
+      _snapCap = (-n + 1) * 2;
+      _snapBuf = malloc.allocate<Uint8>(_snapCap).cast<Utf8>();
+      n = _snapshotFn(_snapBuf!, _snapCap);
+    }
+    return n <= 0 ? '{}' : _snapBuf!.toDartString(length: n);
+  }
   void compassClick(double x, double y) => _compassClickFn(x, y);
   int cameraMode(int mode) => _cameraModeFn(mode);
   int setQuality(int tier) => _setQualityFn(tier);

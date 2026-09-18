@@ -4,6 +4,16 @@ import 'dart:typed_data';
 
 import 'asset_request.dart';
 
+/// What the M3 bridge needs from the engine: post a command, hand over the frame's state, read the
+/// latest snapshot. Separate from AyanaEngineSink so a test can drive the batch handling alone.
+abstract class AyanaCommandSink {
+  void setState(String stepJson);
+  void pointer(double x, double y, int button, int phase);
+  void command(String name, double a, double b, double c, String s);
+  void snapshotEnable(bool on);
+  String snapshot();
+}
+
 abstract class AyanaEngineSink {
   Stream<AyanaAssetRequest> get assetRequests;
   bool get ready;
