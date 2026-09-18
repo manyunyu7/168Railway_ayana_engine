@@ -16,12 +16,8 @@
 #include <cmath>
 #include <string>
 #include <vector>
-#ifdef __EMSCRIPTEN__
-#include <emscripten.h>
-#define KEEP EMSCRIPTEN_KEEPALIVE
-#else
-#define KEEP
-#endif
+#include "engine/api/eng_export.h"
+#define KEEP ENG_EXPORT
 
 using namespace eng;
 

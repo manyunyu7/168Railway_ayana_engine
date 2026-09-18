@@ -30,6 +30,13 @@
 extern "C" {
 #endif
 
+// Bitmap font bytes from the host (assets/font.efnt). Optional on desktop/web where the file is
+// reachable by path; required on Android, where nothing is. Call before eng_init. Null/0 clears it.
+void eng_set_font(const uint8_t* bytes, int len);
+// Threaded hosts only (Android): drains one pending asset request written by the engine's request()
+// hook into `kind`/`path` (the Wasm host gets them through Module.onAssetRequest instead).
+// Returns 1 when one was written, 0 when the queue is empty.
+int eng_request_poll(char* kind, int kindCap, char* path, int pathCap);
 int eng_init(int width, int height, float dpr);
 void eng_resize(int width, int height, float dpr);
 void eng_shutdown(void);

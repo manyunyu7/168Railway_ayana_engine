@@ -1,7 +1,7 @@
 #include "engine/render/text.h"
+#include "engine/render/font_bytes.h"
 #include <cmath>
 #include <cstring>
-#include <fstream>
 
 namespace eng {
 
@@ -25,20 +25,24 @@ void main() {
 })";
 
 bool TextRenderer::load(const std::string& path, std::string& err) {
-  std::ifstream f(path, std::ios::binary);
-  if (!f) { err = "cannot open " + path; return false; }
-  auto get = [&](auto& v) { f.read((char*)&v, sizeof v); };
-  char magic[4]; f.read(magic, 4); uint32_t ver; get(ver);
-  if (std::memcmp(magic, "EFNT", 4) != 0 || ver != 1) { err = "bad EFNT"; return false; }
-  uint16_t w, h; get(w); get(h); atlasW_ = w; atlasH_ = h;
+  std::vector<uint8_t> buf;
+  if (!readFontFile(path, buf)) { err = "cannot open " + path; return false; }
+  size_t at = 0;
+  bool ok = true;
+  auto take = [&](void* dst, size_t n) { if (at + n > buf.size()) { ok = false; return; } std::memcpy(dst, buf.data() + at, n); at += n; };
+  auto get = [&](auto& v) { take(&v, sizeof v); };
+  char magic[4]; take(magic, 4); uint32_t ver = 0; get(ver);
+  if (!ok || std::memcmp(magic, "EFNT", 4) != 0 || ver != 1) { err = "bad EFNT"; return false; }
+  uint16_t w = 0, h = 0; get(w); get(h); atlasW_ = w; atlasH_ = h;
   get(pixelHeight_); get(ascent_); get(descent_); get(lineGap_);
-  uint32_t n; get(n);
-  for (uint32_t i = 0; i < n; ++i) {
-    uint32_t cp; uint16_t x0, y0, x1, y1; Glyph g; get(cp); get(x0); get(y0); get(x1); get(y1); get(g.xoff); get(g.yoff); get(g.xadvance);
+  uint32_t n = 0; get(n);
+  if (!ok) { err = "truncated EFNT"; return false; }
+  for (uint32_t i = 0; i < n && ok; ++i) {
+    uint32_t cp = 0; uint16_t x0, y0, x1, y1; Glyph g; get(cp); get(x0); get(y0); get(x1); get(y1); get(g.xoff); get(g.yoff); get(g.xadvance);
     g.x0 = x0; g.y0 = y0; g.x1 = x1; g.y1 = y1; glyphs_[cp] = g;
   }
-  std::vector<uint8_t> atlas((size_t)w * h); f.read((char*)atlas.data(), (std::streamsize)atlas.size());
-  if (!f) { err = "truncated EFNT"; return false; }
+  std::vector<uint8_t> atlas((size_t)w * h); take(atlas.data(), atlas.size());
+  if (!ok) { err = "truncated EFNT"; return false; }
   atlas_ = rhi::createTexture(w, h, rhi::Format::R8, std::as_bytes(std::span(atlas)), false);
   prog_ = rhi::createProgram(VS, FS);
   uScreen_ = rhi::uniformLocation(prog_, "uScreen");

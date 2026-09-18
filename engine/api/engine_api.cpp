@@ -2,6 +2,7 @@
 // thread), so no locking. Native builds compile this too (the GL context then has to exist already), which
 // keeps the ABI honest and lets it be unit-tested without a browser.
 #include "engine/api/engine_api.h"
+#include "engine/api/host/host_queue.h"
 #include "engine/api/engine_api_edit.h"
 #include "engine/api/engine_api_avatar.h"
 #include "engine/api/engine_api_markers.h"
@@ -10,6 +11,7 @@
 #include "engine/app/compass.h"
 #include "engine/app/world_scene.h"
 #include "engine/core/orbit_camera.h"
+#include "engine/render/font_bytes.h"
 #include "engine/render/texture_cache.h"
 #include "engine/sim/sim_state.h"
 #include "engine/world/sun.h"
@@ -74,7 +76,8 @@ void request(const char* kind, const std::string& path) {
 #ifdef __EMSCRIPTEN__
   api_request(kind, path.c_str());
 #else
-  std::printf("[ayana] request %s %s\n", kind, path.c_str());
+  // Native hosts (Android, tests): the outgoing queue the host drains (engine/api/host/host_queue.h).
+  host::queue().pushRequest(kind ? kind : "", path);
 #endif
 }
 
@@ -240,11 +243,26 @@ static std::string SimProcessEscapeShim(const std::string& s) {
 
 extern "C" {
 
-#ifdef __EMSCRIPTEN__
-#define KEEP EMSCRIPTEN_KEEPALIVE
-#else
-#define KEEP
-#endif
+#include "engine/api/eng_export.h"
+#define KEEP ENG_EXPORT
+
+// The bitmap font as bytes: Android has no readable assets/font.efnt path, so the host hands the file
+// over before eng_init (the boards and the HUD then never touch the filesystem). Null/0 clears it.
+KEEP void eng_set_font(const uint8_t* bytes, int len) { setFontBytes(bytes, len); }
+
+// Outgoing asset requests for a threaded host: 1 + writes the pair into `kind`/`path` (NUL-terminated,
+// truncated to the given capacities), 0 when the queue is empty. See engine/api/host/host_queue.h.
+KEEP int eng_request_poll(char* kind, int kindCap, char* path, int pathCap) {
+  host::AssetRequest r;
+  if (!host::queue().popRequest(r)) return 0;
+  auto copy = [](char* dst, int cap, const std::string& src) {
+    if (!dst || cap <= 0) return;
+    int n = (int)src.size() < cap - 1 ? (int)src.size() : cap - 1;
+    std::memcpy(dst, src.data(), (size_t)n); dst[n] = 0;
+  };
+  copy(kind, kindCap, r.kind); copy(path, pathCap, r.path);
+  return 1;
+}
 
 KEEP int eng_init(int width, int height, float dpr) {
   if (!g) g = new Api();

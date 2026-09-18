@@ -9,6 +9,7 @@ function(engine_test name)
   set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 endfunction()
 
+engine_test(test_host_queue)   # engine/api/host: the render-thread command queue (no GL)
 engine_test(test_math)
 engine_test(test_json)
 engine_test(test_city)

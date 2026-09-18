@@ -1,4 +1,5 @@
 #include "engine/world/board_visual.h"
+#include "engine/render/font_bytes.h"
 #include "engine/render/mesh_builder.h"
 #include <cmath>
 #include <cstdio>
@@ -43,16 +44,19 @@ struct Font {
   std::map<uint32_t, Glyph> glyphs; std::vector<uint8_t> px; int w = 0, h = 0;
   float pixelHeight = 28, ascent = 22, descent = -5;
   bool load(const std::string& path) {
-    std::ifstream f(path, std::ios::binary); if (!f) return false;
-    auto get = [&](auto& v) { f.read((char*)&v, sizeof v); };
-    char magic[4]; f.read(magic, 4); uint32_t ver; get(ver);
-    if (std::memcmp(magic, "EFNT", 4) != 0 || ver != 1) return false;
-    uint16_t aw, ah; get(aw); get(ah); w = aw; h = ah; float lineGap;
+    std::vector<uint8_t> buf;
+    if (!readFontFile(path, buf)) return false;
+    size_t at = 0; bool ok = true;
+    auto take = [&](void* dst, size_t n) { if (at + n > buf.size()) { ok = false; return; } std::memcpy(dst, buf.data() + at, n); at += n; };
+    auto get = [&](auto& v) { take(&v, sizeof v); };
+    char magic[4]; take(magic, 4); uint32_t ver = 0; get(ver);
+    if (!ok || std::memcmp(magic, "EFNT", 4) != 0 || ver != 1) return false;
+    uint16_t aw = 0, ah = 0; get(aw); get(ah); w = aw; h = ah; float lineGap = 0;
     get(pixelHeight); get(ascent); get(descent); get(lineGap);
-    uint32_t n; get(n);
-    for (uint32_t i = 0; i < n; ++i) { uint32_t cp; Glyph g; get(cp); get(g.x0); get(g.y0); get(g.x1); get(g.y1); get(g.xoff); get(g.yoff); get(g.xadvance); glyphs[cp] = g; }
-    px.resize((size_t)w * h); f.read((char*)px.data(), (std::streamsize)px.size());
-    return (bool)f;
+    uint32_t n = 0; get(n);
+    for (uint32_t i = 0; i < n && ok; ++i) { uint32_t cp = 0; Glyph g; get(cp); get(g.x0); get(g.y0); get(g.x1); get(g.y1); get(g.xoff); get(g.yoff); get(g.xadvance); glyphs[cp] = g; }
+    px.resize((size_t)w * h); take(px.data(), px.size());
+    return ok;
   }
   float measure(const std::string& s, float scale) const { float x = 0; for (unsigned char c : s) if (auto it = glyphs.find(c); it != glyphs.end()) x += it->second.xadvance * scale; return x; }
   float sample(float x, float y) const {   // bilinear, coverage 0..1

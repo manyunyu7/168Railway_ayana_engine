@@ -1,4 +1,7 @@
-cmake_minimum_required(VERSION 3.28)
+# 3.22 = the CMake the Android SDK ships, so Gradle can configure this same file. Nothing here needs
+# more (CMAKE_CXX_SCAN_FOR_MODULES is simply ignored by older CMake); CMakePresets.json v6 asks for
+# CMake >= 3.25 of the *running* binary, which is independent of this minimum.
+cmake_minimum_required(VERSION 3.22)
 project(engine LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,23 +14,28 @@ enable_testing()
 # ---- engine library ----
 file(GLOB ENGINE_WORLD_SRC CONFIGURE_DEPENDS engine/world/*.cpp)
 file(GLOB ENGINE_APP_SRC CONFIGURE_DEPENDS engine/app/*.cpp)   # world scene + cameras shared by the native app and the web C ABI
+file(GLOB ENGINE_HOST_SRC CONFIGURE_DEPENDS engine/api/host/*.cpp)   # render-thread queue: platform-neutral, every platform
 add_library(engine STATIC
   ${ENGINE_WORLD_SRC}
   ${ENGINE_APP_SRC}
+  ${ENGINE_HOST_SRC}
   engine/sim/sim_state.cpp
   engine/rhi/rhi_gl.cpp
-  engine/core/window.cpp
   engine/core/fetch.cpp
   engine/core/json.cpp
   engine/asset/gltf.cpp
   engine/asset/emod.cpp
   engine/render/model_renderer.cpp
   engine/render/texture_cache.cpp
+  engine/render/font_bytes.cpp
   engine/render/text.cpp
   engine/render/sky.cpp
 )
-if(NOT EMSCRIPTEN)
-  target_sources(engine PRIVATE engine/sim/sim_process.cpp)   # fork/pipes: native only
+if(NOT EMSCRIPTEN AND NOT ANDROID)
+  target_sources(engine PRIVATE engine/sim/sim_process.cpp)   # fork/pipes: desktop only
+endif()
+if(NOT ANDROID)
+  target_sources(engine PRIVATE engine/core/window.cpp)       # GLFW: desktop + the Emscripten port; Android owns EGL itself
 endif()
 # Repo root at compile time: SimProcess finds bridge/sim-bridge.ts and ../ppka-wannabe-2 from it.
 target_compile_definitions(engine PUBLIC ENG_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -46,6 +54,17 @@ elseif(EMSCRIPTEN)
 elseif(ANDROID)
   target_link_libraries(engine PUBLIC GLESv3 EGL log android)
   target_compile_definitions(engine PUBLIC ENG_GL_ES=1)
+endif()
+
+if(ANDROID)
+  # libayana.so = engine + the C ABI + the EGL/JNI host. No examples, tools or tests here: they all need
+  # GLFW, fork() or a desktop GL. flutter/ayana/android/CMakeLists.txt add_subdirectory()s this file.
+  file(GLOB ENGINE_API_SRC CONFIGURE_DEPENDS engine/api/engine_api*.cpp)
+  add_library(ayana SHARED ${ENGINE_API_SRC} engine/api/android/ayana_android.cpp)
+  target_link_libraries(ayana PRIVATE engine)
+  # Everything is hidden but the eng_* / ayana_* entry points (engine/api/eng_export.h).
+  set_target_properties(ayana PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+  return()
 endif()
 
 # ---- examples ----
