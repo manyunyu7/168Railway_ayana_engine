@@ -40,6 +40,19 @@ static bool parseTile(const std::string& rel, std::string& dir, int& z, int& x, 
   return std::sscanf(file.c_str(), "%d_%d_%d.bin", &z, &x, &y) == 3;
 }
 
+// One full load. `budgetMs` = eng_set_decor_budget: 0 builds the decor in one go (the old behaviour),
+// 8 spreads the tree scatter over frames. The numbers the phone cares about come back in `out`.
+struct Run {
+  int budgetMs = 0;
+  double worstFrameMs = 0, worstPumpMs = 0, worstDrawMs = 0, totalMs = 0;
+  int frames = 0, framesOverBudget = 0, tiles = 0, models = 0, resident = 0, patches = 0, trees = 0;
+  std::string summary, lastError;
+  bool ready = false;
+};
+
+static void runOnce(const std::string& root, const std::string& terrain, const std::string& worldJson,
+                    const std::string& catalog, Run& out);
+
 int main() {
   std::setvbuf(stdout, nullptr, _IOLBF, 0);   // progress shows up even through a pipe
   const std::string root = ENG_SOURCE_DIR;
@@ -54,14 +67,54 @@ int main() {
   Window win;
   if (!win.open(640, 400, "test_host_world")) { std::printf("SKIP: no GL window\n"); return test::SKIP; }
 
+  // Two loads of the same world: all-at-once, then with the 8 ms decor budget a phone uses. The world
+  // has to come out the same; only the worst stall on the render thread may differ.
+  Run all, sliced;
+  all.budgetMs = 0;
+  runOnce(root, terrain, worldJson, catalog, all);
+  sliced.budgetMs = 8;
+  runOnce(root, terrain, worldJson, catalog, sliced);
+
+  for (const Run* r : {&all, &sliced}) {
+    CHECK_MSG(r->ready, "eng_ready after the host answered everything");
+    CHECK_MSG(r->lastError.empty(), "eng_last_error: " + r->lastError);
+    CHECK_MSG(r->tiles > 20, "terrain tiles answered: " + std::to_string(r->tiles));
+    CHECK_MSG(r->models > 0, "decor models answered");
+    CHECK(r->resident > 0 && r->patches > 0);
+    CHECK_MSG(r->summary.find("km track") != std::string::npos, "summary: " + r->summary);
+    std::printf("budget %d ms: frames %d, tiles %d, models %d, resident %d, patches %d, trees %d\n"
+                "  worst slice %.0f ms (queue %.0f, draw %.0f), total %.0f ms\n  %s\n",
+                r->budgetMs, r->frames, r->tiles, r->models, r->resident, r->patches, r->trees,
+                r->worstFrameMs, r->worstPumpMs, r->worstDrawMs, r->totalMs, r->summary.c_str());
+  }
+  // The same world, both ways: the budget must not cost trees, only spread them out.
+  CHECK_MSG(sliced.trees >= all.trees * 9 / 10, "trees sliced " + std::to_string(sliced.trees) + " vs all " + std::to_string(all.trees));
+  // The point of the exercise: no single slice may sit on the render thread for anything like the
+  // unbudgeted decor build. A cell is never split, so the budget is a floor, not a hard ceiling —
+  // allow 4x it plus the GL work of one frame.
+  // The remaining long slice is eng_model_begin (parse + one-shot GPU upload of a model), which is not
+  // sliced yet — that is the next step. What must be true is that the decor build no longer dominates.
+  CHECK_MSG(sliced.worstFrameMs < 0.7 * all.worstFrameMs,
+            "worst slice " + std::to_string(sliced.worstFrameMs) + " ms vs " + std::to_string(all.worstFrameMs) + " unbudgeted");
+
+  std::printf("%s: %d checks, %d failures\n", __FILE__, test::checks, test::failures);
+  return test::failures ? 1 : 0;
+}
+
+static void runOnce(const std::string& root, const std::string& terrain, const std::string& worldJson,
+                    const std::string& catalog, Run& out) {
   host::RenderQueue& q = host::queue();   // the same queue engine_api.cpp's request() hook writes into
   std::atomic<bool> hostDone{false};
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
   std::atomic<int> answered{0}, failed{0}, models{0};
   std::string ready, stats, lastError;
+  const int budgetMs = out.budgetMs;
 
   // ---- the "Dart side": never calls eng_* directly, only through the queue ----
   std::thread hostThread([&] {
+    // Both knobs before eng_init, the way the plugin posts them when the page opens.
+    q.post([budgetMs] { eng_set_decor_budget(budgetMs); });
+    q.post([] { eng_set_quality(2); });
     CHECK(q.callInt([&] { return eng_init(640, 400, 1); }) == 1);
     CHECK(q.callInt([&] { return eng_ready(); }) == 0);
     // The big strings live on the heap and are read on the render thread; nothing is copied to a stack.
@@ -115,7 +168,6 @@ int main() {
     q.post([] { eng_camera_mode(0); });
     q.post([] { eng_orbit(20, 10); });
     q.post([] { eng_zoom(-1); });
-    q.post([] { eng_set_quality(1); });
     q.post([] { eng_set_sky_time(9 * 3600); });
     q.post([] { eng_pointer(320, 200, 0, 0); });
     CHECK(q.callInt([] { return eng_set_state("{\"clock\":25200,\"trains\":[]}"); }) == 1);
@@ -126,33 +178,56 @@ int main() {
   });
 
   // ---- the render thread: the only one touching GL ----
+  // Every iteration is timed the way a phone frame is: whatever the queue runs (asset answers, and the
+  // decor build they trigger) plus the draw. `worstFrameMs` is the longest the Texture would be frozen.
+  const auto tStart = std::chrono::steady_clock::now();
   int frames = 0;
   while (!hostDone.load()) {
+    auto t0 = std::chrono::steady_clock::now();
     q.pump();
+    auto t1 = std::chrono::steady_clock::now();
     eng_frame(0.016f);
-    if (++frames % 100000 == 0) std::printf("  frame %d, tiles %d, models %d\n", frames, answered.load(), models.load());
+    auto t2 = std::chrono::steady_clock::now();
+    double pumpMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    double drawMs = std::chrono::duration<double, std::milli>(t2 - t1).count();
+    double ms = pumpMs + drawMs;
+    if (pumpMs > out.worstPumpMs) out.worstPumpMs = pumpMs;
+    if (drawMs > out.worstDrawMs) out.worstDrawMs = drawMs;
+    if (ms > out.worstFrameMs) out.worstFrameMs = ms;
+    if (budgetMs > 0 && ms > budgetMs) ++out.framesOverBudget;
+    ++frames;
     if (std::chrono::steady_clock::now() > deadline) { CHECK_MSG(false, "timed out waiting for the host thread"); break; }
   }
   q.pump();
+  // Drain the rest of the tree scatter the same way the render thread does between frames.
+  while (eng_decor_streaming() && std::chrono::steady_clock::now() < deadline) {
+    auto t0 = std::chrono::steady_clock::now();
+    eng_frame(0.016f);
+    double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    if (ms > out.worstFrameMs) out.worstFrameMs = ms;
+    if (budgetMs > 0 && ms > budgetMs) ++out.framesOverBudget;
+    ++frames;
+  }
+  out.totalMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStart).count();
   if (!hostDone.load()) q.shutdown();   // release the host thread from any blocking call
   hostThread.join();
 
-  CHECK_MSG(ready == "1", "eng_ready after the host answered everything");
-  CHECK_MSG(lastError.empty(), "eng_last_error: " + lastError);
-  CHECK_MSG(answered.load() > 20, "terrain tiles answered: " + std::to_string(answered.load()));
-  CHECK_MSG(models.load() > 0, "decor models answered");
+  // The trees keep arriving after the host stopped asking, so read the stats once more here.
+  stats = eng_stats();
   std::string err;
   Json st = Json::parse(stats, &err);
   CHECK_MSG(err.empty(), "stats: " + err);
-  CHECK(st["terrain"]["resident"].intOr(0) > 0);
-  CHECK(st["terrain"]["patches"].intOr(0) > 0);
   CHECK(st["decor"].boolOr(false));
-  CHECK_MSG(st["summary"].stringOr("").find("km track") != std::string::npos, "summary: " + st["summary"].stringOr(""));
-  std::printf("frames %d, tiles %d (%d failed), models %d, resident %d, patches %d\n%s\n",
-              frames, answered.load(), failed.load(), models.load(),
-              st["terrain"]["resident"].intOr(0), st["terrain"]["patches"].intOr(0), st["summary"].stringOr("").c_str());
+  out.ready = ready == "1";
+  out.lastError = lastError;
+  out.tiles = answered.load();
+  out.models = models.load();
+  out.frames = frames;
+  out.resident = st["terrain"]["resident"].intOr(0);
+  out.patches = st["terrain"]["patches"].intOr(0);
+  out.trees = st["terrain"]["trees"].intOr(0);
+  out.summary = st["summary"].stringOr("");
 
   eng_shutdown();   // the host thread is gone: main IS the render thread, so call it directly
-  std::printf("%s: %d checks, %d failures\n", __FILE__, test::checks, test::failures);
-  return test::failures ? 1 : 0;
+  q.restart();      // the next run gets a live queue (the Android host does the same on re-attach)
 }

@@ -99,7 +99,7 @@ struct Host {
   // Snapshots the render thread refreshes every frame so Dart NEVER waits on it for a read: the
   // loader polled ready/lastError at 10 Hz through blocking calls, and while the decor build held the
   // render thread for 9 s the UI isolate hung with it -> "168 Railway isn't responding".
-  std::atomic<bool> ready{false};
+  std::atomic<bool> ready{false}, decorStreaming{false};
   std::mutex infoMutex;
   std::string lastError, stats;
   int frame = 0;
@@ -118,6 +118,7 @@ void renderLoop() {
       eng_frame(dt);
       H.gl.swap();
       H.ready.store(eng_ready() != 0, std::memory_order_relaxed);
+      H.decorStreaming.store(eng_decor_streaming() != 0, std::memory_order_relaxed);
       if ((H.frame++ & 15) == 0) {
         const char* e = eng_last_error(); const char* st = eng_stats();
         std::lock_guard<std::mutex> lk(H.infoMutex);
@@ -339,6 +340,11 @@ ENG_EXPORT void ayana_compass_click(float x, float y) { queue().post([x, y] { en
 // Both answer with the value they asked for (clamped as the engine clamps); the engine applies it at its
 // next pump. A train mode without a train stays put in the engine — eng_camera_json tells, not this.
 ENG_EXPORT int ayana_camera_mode(int mode) { queue().post([mode] { eng_camera_mode(mode); }); return mode < 0 ? 0 : mode > 6 ? 6 : mode; }
+// Both are safe before eng_init (the engine remembers the value): the plugin posts them the moment the
+// page opens, so the tree scatter is already budgeted and the tier already set when the world is built.
+ENG_EXPORT void ayana_set_decor_budget(int ms) { queue().post([ms] { eng_set_decor_budget(ms); }); }
+ENG_EXPORT int ayana_decor_streaming(void) { return host().decorStreaming.load(std::memory_order_relaxed) ? 1 : 0; }
+
 ENG_EXPORT int ayana_set_quality(int tier) { queue().post([tier] { eng_set_quality(tier); }); return tier < 0 ? 0 : tier > 4 ? 4 : tier; }
 ENG_EXPORT void ayana_set_sky_time(double sec) { queue().post([sec] { eng_set_sky_time(sec); }); }
 

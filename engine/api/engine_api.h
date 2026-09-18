@@ -69,6 +69,10 @@ const char* eng_stats(void);         // JSON: fps, drawCalls, buildMs, summary, 
 // Quality tier (dunia3dKonst.ts TINGKAT_MUTU): 0 penuh .. 4 minimum -> tree draw radius 3200/2600/2000/1400/900 m and
 // clouds off from tier 2 (the dpr cap is the host's: eng_resize). Returns the tier in effect.
 int eng_set_quality(int tier);
+// Per-frame budget (ms) for decor work the engine is allowed to spread over frames — today the tree
+// scatter. 0 (the default) does it in one go. Set it before eng_load_world; callable before eng_init.
+void eng_set_decor_budget(int ms);
+int eng_decor_streaming(void);   // 1 while trees are still arriving in slices
 void eng_set_tree_radius(float metres);   // overrides the tier's radius (touch screens: JARAK_SENTUH rVeg)
 void eng_set_tree_density(float k);       // `Kerapatan pohon` 0..16 (RAPAT_BAKU 2): every cell re-scattered
 // Sky time: seconds since 00:00 to pin the sun (the `Siang tetap` choice = 12 h at 58 deg elevation is what the host

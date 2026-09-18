@@ -107,6 +107,8 @@ class Ayana implements AyanaEngineSink {
   late final _PointerFn _pointerFn = _l.lookupFunction<_PointerC, _PointerFn>('ayana_pointer');
   late final _Float2 _compassClickFn = _l.lookupFunction<_Float2C, _Float2>('ayana_compass_click');
   late final _IntRetInt _cameraModeFn = _l.lookupFunction<_IntRetIntC, _IntRetInt>('ayana_camera_mode');
+  late final _IntArg _setDecorBudgetFn = _l.lookupFunction<_IntArgC, _IntArg>('ayana_set_decor_budget');
+  late final _RetInt _decorStreamingFn = _l.lookupFunction<_RetIntC, _RetInt>('ayana_decor_streaming');
   late final _IntRetInt _setQualityFn = _l.lookupFunction<_IntRetIntC, _IntRetInt>('ayana_set_quality');
   late final _DoubleArg _setSkyTimeFn = _l.lookupFunction<_DoubleArgC, _DoubleArg>('ayana_set_sky_time');
   late final _Stats _lastErrorFn = _l.lookupFunction<_StatsC, _Stats>('ayana_last_error');
@@ -170,6 +172,14 @@ class Ayana implements AyanaEngineSink {
   void compassClick(double x, double y) => _compassClickFn(x, y);
   int cameraMode(int mode) => _cameraModeFn(mode);
   int setQuality(int tier) => _setQualityFn(tier);
+
+  /// How long the render thread may spend per frame scattering trees (0 = all at once). Set before
+  /// the world loads; 8 ms is what [start] installs, and it is the difference between a Texture that
+  /// keeps drawing while the forest arrives and one frozen for ten seconds on a mid-range phone.
+  void setDecorBudget(int ms) => _setDecorBudgetFn(ms);
+
+  /// True while trees are still arriving in slices (the world is otherwise complete).
+  bool get decorStreaming => _decorStreamingFn() != 0;
   void setSkyTime(double seconds) => _setSkyTimeFn(seconds);
 
   /// The engine's last failure message, "" when none.
@@ -207,9 +217,13 @@ class Ayana implements AyanaEngineSink {
 
   /// Creates the texture, hands its Surface to the engine and starts the render thread.
   /// The font must be installed *before* this: the engine loads it inside eng_init.
-  Future<int> start({required int width, required int height, double dpr = 1.0}) async {
+  Future<int> start({required int width, required int height, double dpr = 1.0, int quality = 2}) async {
     if (_textureId != null) return _textureId!;
     await setFont(await rootBundle.load('packages/ayana/assets/font.efnt'));
+    // Both are remembered by the engine until eng_init runs on the render thread, so they are already
+    // in force when the world is built — which is the only moment they matter.
+    setDecorBudget(8);
+    setQuality(quality);
     final int id = await _channel.invokeMethod<int>('create', <String, dynamic>{
       'width': width,
       'height': height,
@@ -304,10 +318,14 @@ class Ayana implements AyanaEngineSink {
 
 /// The engine as a widget: a `Texture` sized to its box, orbit/zoom by touch, fps in a corner.
 class AyanaView extends StatefulWidget {
-  const AyanaView({super.key, this.showFps = true, this.onReady, this.maxDpr = 1.5});
+  const AyanaView({super.key, this.showFps = true, this.onReady, this.maxDpr = 1.5, this.quality = 2});
 
   final bool showFps;
   final VoidCallback? onReady;
+
+  /// Quality tier (0 best .. 4 cheapest), installed BEFORE the world is built — the tree draw radius
+  /// and the clouds come from it, and setting it afterwards does nothing until the next build.
+  final int quality;
 
   /// Cap on the device pixel ratio the Texture is allocated at. Phones report 2.5–3.5; drawing a 1080×1797
   /// world on a mid-range GPU ran at 29 fps, while the web's `hemat` tier caps at 1.1. 1.5 is a quarter of the
@@ -341,7 +359,7 @@ class _AyanaViewState extends State<AyanaView> with WidgetsBindingObserver {
       _size = size;
       _dpr = dpr;
       try {
-        final int id = await Ayana.instance.start(width: w, height: h, dpr: dpr);
+        final int id = await Ayana.instance.start(width: w, height: h, dpr: dpr, quality: widget.quality);
         if (!mounted) return;
         setState(() => _textureId = id);
         _hud = Timer.periodic(const Duration(milliseconds: 500), (_) {

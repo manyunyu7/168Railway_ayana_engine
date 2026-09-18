@@ -37,10 +37,14 @@ public:
 
   // Scatters trees. terrain must be loaded with rails registered; exclude = scene-space footprints
   // (xz used) such as station buildings. Tree models = catalog `objek` entries with kategori 'vegetasi'.
-  void build(const Terrain& terrain, AssetCatalog& catalog, std::span<const AABB> exclude = {});
+  // `budgetMs` > 0 scatters only what fits in that many milliseconds and leaves the rest to update():
+  // the world draws (without those trees) between the slices instead of freezing for seconds on a phone.
+  void build(const Terrain& terrain, AssetCatalog& catalog, std::span<const AABB> exclude = {}, double budgetMs = 0);
   // Follows the streamed imagery: cells whose finest resident tile changed are re-scattered, at most
-  // `maxCells` per call (0 = all). Cheap when nothing changed (imageryVersion check).
-  void update(const Terrain& terrain, int maxCells = 48);
+  // `maxCells` per call (0 = all) and at most `budgetMs` of work (0 = no time limit; a cell is never
+  // split, so one slow cell may overshoot). Cheap when nothing changed (imageryVersion check).
+  void update(const Terrain& terrain, int maxCells = 48, double budgetMs = 0);
+  bool scattering() const { return scanning_ || enumerating_; }   // true while cells are still being found or filled
   void draw(ModelRenderer& r, vec3 eye, const Frustum* frustum = nullptr);
   void destroy();
   Stats stats;
@@ -71,6 +75,10 @@ private:
   int maskAt(double wx, double wy) const;
   void dirtyCellsUnder(const Stamp& st, const WorldOrigin& org);
   unsigned version_ = 0; size_t scan_ = 0; bool scanning_ = false;
+  // Finding which cells can hold trees is itself a few thousand rail-proximity tests — 50 ms on a Mac,
+  // a second on a phone — so it runs in slices too, from this cursor, before any scattering starts.
+  bool enumerating_ = false; int encx_ = 0, encz_ = 0, enc0x_ = 0, enc1x_ = 0, enc1z_ = 0;
+  void enumerateCells(const Terrain& terrain, double budgetMs);
 };
 
 } // namespace eng

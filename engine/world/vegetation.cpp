@@ -17,42 +17,84 @@ double acak(double x, double z, double k) {
 }
 } // namespace
 
-void Vegetation::build(const Terrain& terrain, AssetCatalog& catalog, std::span<const AABB> exclude) {
+void Vegetation::build(const Terrain& terrain, AssetCatalog& catalog, std::span<const AABB> exclude, double budgetMs) {
   auto t0 = std::chrono::steady_clock::now();
-  destroy();
-  exclude_.assign(exclude.begin(), exclude.end());
+  // Which models the catalog can give us today. buildDecor is called again every time a late vegetation
+  // model lands, so the usual case is "the same cells, one more model" — throwing the whole forest away
+  // and re-scattering it from scratch each time is what made the decor build cost seconds on a phone.
+  std::vector<GpuModel*> want;
   for (const std::string& id : catalog.idsByCategory("vegetasi")) {
     GpuModel* m = catalog.model(id);
     if (!m) continue;
     vec3 sz = m->bounds.max - m->bounds.min;
     if (sz.y <= 0) continue;
-    vec3 c = m->bounds.center();
-    ModelSlot slot{m, {}, {}, {}};
-    slot.norm = mat4::scale({1 / sz.y, 1 / sz.y, 1 / sz.y}) * mat4::translation({-c.x, -m->bounds.min.y, -c.z});   // unit height, trunk at origin
-    slot.instances = rhi::createDynamicBuffer((size_t)INSTANCE_CAP * sizeof(mat4));
-    models_.push_back(slot);
+    want.push_back(m);
   }
+  bool sameModels = want.size() == models_.size();
+  for (size_t i = 0; sameModels && i < want.size(); ++i) sameModels = models_[i].model == want[i];
+  size_t keptTrees = stats.trees;
+  if (!sameModels) {
+    for (ModelSlot& m : models_) rhi::destroyBuffer(m.instances);
+    models_.clear();
+    for (GpuModel* m : want) {
+      vec3 sz = m->bounds.max - m->bounds.min, c = m->bounds.center();
+      ModelSlot slot{m, {}, {}, {}};
+      slot.norm = mat4::scale({1 / sz.y, 1 / sz.y, 1 / sz.y}) * mat4::translation({-c.x, -m->bounds.min.y, -c.z});   // unit height, trunk at origin
+      slot.instances = rhi::createDynamicBuffer((size_t)INSTANCE_CAP * sizeof(mat4));
+      models_.push_back(slot);
+    }
+  }
+  exclude_.assign(exclude.begin(), exclude.end());
+  pendingDirty_.clear();
   stats = {};
   stats.models = (int)models_.size();
-  if (models_.empty()) return;
+  if (models_.empty()) { cells_.clear(); scanning_ = enumerating_ = false; scan_ = 0; return; }
 
-  const WorldOrigin& org = terrain.origin();
-  const SatImage& sat = terrain.sat();
-  if (sat.layers.empty()) return;
-  const SatLayer& nearL = sat.layers[0];
-  // cell range: the near satellite layer's extent, in scene space; only cells within reach of the rails
-  double sx0 = nearL.ts * nearL.tx0 - slippy::CIRCUMFERENCE / 2 - org.ox, sz0 = nearL.ts * nearL.ty0 - slippy::CIRCUMFERENCE / 2 - org.oz;
-  double sx1 = sx0 + nearL.ts * nearL.nx, sz1 = sz0 + nearL.ts * nearL.ny;
-  int c0x = (int)std::floor(sx0 / CELL), c1x = (int)std::floor(sx1 / CELL), c0z = (int)std::floor(sz0 / CELL), c1z = (int)std::floor(sz1 / CELL);
-  for (int cz = c0z; cz <= c1z; ++cz)
-    for (int cx = c0x; cx <= c1x; ++cx) {
-      double x0 = cx * (double)CELL, z0 = cz * (double)CELL;
-      if (!terrain.railInBox(x0 + CELL / 2 + org.ox, z0 + CELL / 2 + org.oz, CELL, SCATTER_MARGIN)) continue;
-      cells_.push_back({cx, cz, -2, {}, {}});
-    }
+  if (cells_.empty()) {   // first build: work out which cells can hold trees at all, in slices
+    const WorldOrigin& org = terrain.origin();
+    const SatImage& sat = terrain.sat();
+    if (sat.layers.empty()) return;
+    const SatLayer& nearL = sat.layers[0];
+    // cell range: the near satellite layer's extent, in scene space; only cells within reach of the rails
+    double sx0 = nearL.ts * nearL.tx0 - slippy::CIRCUMFERENCE / 2 - org.ox, sz0 = nearL.ts * nearL.ty0 - slippy::CIRCUMFERENCE / 2 - org.oz;
+    double sx1 = sx0 + nearL.ts * nearL.nx, sz1 = sz0 + nearL.ts * nearL.ny;
+    enc0x_ = (int)std::floor(sx0 / CELL); enc1x_ = (int)std::floor(sx1 / CELL);
+    encz_ = (int)std::floor(sz0 / CELL); enc1z_ = (int)std::floor(sz1 / CELL);
+    encx_ = enc0x_;
+    enumerating_ = true;
+    enumerateCells(terrain, budgetMs);
+  } else {
+    // Keep the trees that are standing (they are drawn while the new ones arrive) but mark every cell
+    // for a re-scatter, because the footprints or the model set may have changed.
+    for (Cell& c : cells_) c.key = -2;
+    stats.trees = keptTrees;
+  }
+  scan_ = 0;
   version_ = terrain.imageryVersion() - 1;   // force a full pass
-  update(terrain, 0);
+  update(terrain, 0, budgetMs);
   stats.buildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
+// One slice of the cell search. Stops when the budget is spent; the next update() picks the cursor up.
+void Vegetation::enumerateCells(const Terrain& terrain, double budgetMs) {
+  if (!enumerating_) return;
+  const WorldOrigin& org = terrain.origin();
+  const auto t0 = std::chrono::steady_clock::now();
+  int since = 0;
+  for (; encz_ <= enc1z_; ++encz_, encx_ = enc0x_) {
+    for (; encx_ <= enc1x_; ++encx_) {
+      double x0 = encx_ * (double)CELL, z0 = encz_ * (double)CELL;
+      if (terrain.railInBox(x0 + CELL / 2 + org.ox, z0 + CELL / 2 + org.oz, CELL, SCATTER_MARGIN))
+        cells_.push_back({encx_, encz_, -2, {}, {}});
+      // the clock is only read every 64 cells: reading it is comparable to the test itself
+      if (budgetMs > 0 && ++since >= 64) {
+        since = 0;
+        if (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() >= budgetMs) return;
+      }
+    }
+  }
+  enumerating_ = false;
+  scan_ = 0;
 }
 
 // Scatters one 192 m cell from the finest resident imagery (vegetasi.ts sebarSel); no imagery = no trees.
@@ -134,18 +176,22 @@ void Vegetation::setDensity(float k) {
   scan_ = 0; scanning_ = true;
 }
 
-void Vegetation::update(const Terrain& terrain, int maxCells) {
-  if (models_.empty() || cells_.empty()) return;
+void Vegetation::update(const Terrain& terrain, int maxCells, double budgetMs) {
+  if (models_.empty()) return;
+  if (enumerating_) { enumerateCells(terrain, budgetMs); if (enumerating_) return; }   // a slice at a time, then scatter
+  if (cells_.empty()) return;
   if (terrain.imageryVersion() != version_) { version_ = terrain.imageryVersion(); scan_ = 0; scanning_ = true; }
   if (!scanning_) return;
   const WorldOrigin& org = terrain.origin();
   if (!pendingDirty_.empty()) { for (const Stamp& s : pendingDirty_) dirtyCellsUnder(s, org); pendingDirty_.clear(); }
   int done = 0;
+  const auto t0 = std::chrono::steady_clock::now();
   for (; scan_ < cells_.size(); ++scan_) {
     Cell& c = cells_[scan_];
     int64_t key = terrain.imageryKeyAt((c.cx + 0.5) * CELL + org.ox, (c.cz + 0.5) * CELL + org.oz);
     if (key == c.key) continue;
     if (maxCells > 0 && done >= maxCells) break;
+    if (budgetMs > 0 && done > 0 && std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() >= budgetMs) break;
     stats.trees -= c.trees.size();
     if (key < 0) { c.trees.clear(); c.bounds = {}; } else scatter(terrain, c);
     c.key = key;
@@ -197,7 +243,7 @@ void Vegetation::draw(ModelRenderer& r, vec3 eye, const Frustum* frustum) {
 
 void Vegetation::destroy() {
   for (ModelSlot& m : models_) rhi::destroyBuffer(m.instances);
-  models_.clear(); cells_.clear(); exclude_.clear(); scanning_ = false; scan_ = 0; pendingDirty_.clear();
+  models_.clear(); cells_.clear(); exclude_.clear(); scanning_ = false; enumerating_ = false; scan_ = 0; pendingDirty_.clear();
 }
 
 } // namespace eng

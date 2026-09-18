@@ -69,7 +69,7 @@ bool WorldScene::loadTerrain(const std::string& terrainDir, const std::string& m
 void WorldScene::updateStreaming(vec3 centre, float dt) {
   if (!built_) return;
   terrain_.update(centre, dt);
-  if (decor_) trees_.update(terrain_);
+  if (decor_) trees_.update(terrain_, decorBudgetMs > 0 ? 0 : 48, decorBudgetMs);
 }
 
 void WorldScene::primeStreaming(vec3 centre) {
@@ -117,29 +117,41 @@ bool WorldScene::buildStatic(const Json& world, const std::string& mapSlug, cons
 // hiasan objects (spec §5.4): position on carved ground, yaw = rot degrees; hiasan.garis (spec §3.5) spline
 // objects; trees from the satellite green mask, kept out of the hiasan footprints (§4.4).
 void WorldScene::buildDecor(const Json& world, bool testGaris, const Json* summary) {
-  auto t0 = std::chrono::steady_clock::now();
+  using clock = std::chrono::steady_clock;
+  auto t0 = clock::now();
+  auto since = [](clock::time_point t) { return std::chrono::duration<double, std::milli>(clock::now() - t).count(); };
   scenery_.clear();
   worldForEdit_ = &world;
   { const Json& objs = world["hiasan"]["objek"]; for (size_t i = 0; i < objs.size(); ++i) hiasanPlace((int)i, objs[i]); }   // missing / not streamed yet = skipped
+  double msHiasan = since(t0);
   auto ground = [this](double wx, double wy) { return terrain_.groundHeight(wx, wy); };
+  auto t1 = clock::now();
   {
     Json hiasan = world["hiasan"];
     if (testGaris && summary) injectTestGaris(hiasan, *summary, stationScene_, origin_, nullptr);
     garis_.destroy();
     garis_.build(hiasan, catalog_, origin_, ground);
   }
+  double msGaris = since(t1);
+  auto t2 = clock::now();
   buildWalkCollider();
   scanMeja(world);
   scanPapan(world);
+  double msWalk = since(t2);
   std::vector<AABB> footprints;
   for (const Placed& p : scenery_) footprints.push_back(p.bounds);
-  trees_.build(terrain_, catalog_, footprints);
+  auto t3 = clock::now();
+  trees_.build(terrain_, catalog_, footprints, decorBudgetMs);
   { Json none; vegMask(const_cast<Json&>(world), world["vegMask"].isArray() ? world["vegMask"] : none); }   // player brush mask from the save
+  double msTrees = since(t3);
   stock_.forget();
   decor_ = true;
-  double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-  char m[200];
-  std::snprintf(m, sizeof m, "; decor %.0f ms: %zu hiasan (%zu meja), %zu garis/%zu tiles, %zu trees, walk %zu tris (%.0f ms)", ms, scenery_.size(), meja_.count(), garis_.stats.lines, garis_.stats.tiles, trees_.stats.trees, walk_.triangles(), walk_.stats.buildMs);
+  double ms = since(t0);
+  // The phase breakdown is here because it is the one log line that reaches a phone's logcat.
+  char m[320];
+  std::snprintf(m, sizeof m, "; decor %.0f ms: %zu hiasan (%zu meja) %.0f ms, %zu garis/%zu tiles %.0f ms, %zu trees %.0f ms%s, walk %zu tris %.0f ms",
+                ms, scenery_.size(), meja_.count(), msHiasan, garis_.stats.lines, garis_.stats.tiles, msGaris,
+                trees_.stats.trees, msTrees, trees_.scattering() ? " (streaming)" : "", walk_.triangles(), msWalk);
   stats_.summary += m;
 }
 

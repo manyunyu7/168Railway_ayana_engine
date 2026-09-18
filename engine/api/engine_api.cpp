@@ -70,6 +70,11 @@ struct Api {
   std::string strBuf, lastError;
 };
 Api* g = nullptr;
+// eng_set_quality / eng_set_decor_budget may arrive before eng_init (the Android host posts them from
+// Dart as soon as the page opens): the tier is remembered here and applied when the Api appears, and
+// applyQuality() is called again at world build time so a tier set before eng_load_world still counts.
+int g_pendingQuality = -1;
+double g_pendingDecorBudgetMs = -1;
 void setError(const std::string& e);
 
 void request(const char* kind, const std::string& path) {
@@ -276,6 +281,8 @@ KEEP int eng_init(int width, int height, float dpr) {
   if (ctx <= 0) { std::fprintf(stderr, "[ayana] WebGL2 context failed (%d)\n", (int)ctx); return 0; }
   emscripten_webgl_make_context_current(ctx);
 #endif
+  if (g_pendingQuality >= 0) { int t = g_pendingQuality; g_pendingQuality = -1; eng_set_quality(t); }
+  if (g_pendingDecorBudgetMs >= 0) { g->scene.decorBudgetMs = g_pendingDecorBudgetMs; g_pendingDecorBudgetMs = -1; }
   rhi::init();
   rhi::setAnisotropy(8);
   g->scene.initGpu();
@@ -474,12 +481,26 @@ static void applyGroundColors() {
 }
 static const float kTreeRadius[] = {3200, 2600, 2000, 1400, 900};   // TINGKAT_MUTU rVeg
 KEEP int eng_set_quality(int tier) {
-  if (!g) return 0;
-  g->quality = std::clamp(tier, 0, 4);
+  int t = std::clamp(tier, 0, 4);
+  if (!g) { g_pendingQuality = t; return t; }   // before eng_init: remembered, applied there
+  g->quality = t;
   g->scene.trees().viewRadius = kTreeRadius[g->quality];
   g->qualityClouds = g->quality < 2;   // TINGKAT_MUTU awan
   return g->quality;
 }
+
+// How long the render thread may spend per frame on decor work that can be spread out (the tree
+// scatter). 0 = all at once, which is what the desktop tools and the tests want. A phone sets ~8 ms:
+// Mojokerto's scatter froze the render thread for seconds on a Mali-G57, and the world can perfectly
+// well be drawn without its trees while they arrive. Callable before eng_init.
+KEEP void eng_set_decor_budget(int ms) {
+  double v = ms < 0 ? 0 : (double)ms;
+  if (!g) { g_pendingDecorBudgetMs = v; return; }
+  g->scene.decorBudgetMs = v;
+}
+
+// 1 while trees are still being scattered in slices (the world draws, just with fewer trees).
+KEEP int eng_decor_streaming(void) { return g && g->scene.decorStreaming() ? 1 : 0; }
 KEEP void eng_set_tree_radius(float metres) { if (g && metres > 0) g->scene.trees().viewRadius = metres; }
 KEEP void eng_set_tree_density(float k) { if (g) g->scene.trees().setDensity(k); }
 KEEP void eng_set_sky_time(double sec) { if (g) g->skyTime = sec; }

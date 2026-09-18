@@ -71,6 +71,12 @@ public:
   // Decor part: hiasan objects, garis, trees. Needs catalog_ loaded (models are looked up here). Re-runnable
   // (the web build calls it again once streamed models arrived).
   void buildDecor(const Json& world, bool testGaris, const Json* summary);
+  // Per-frame time budget for the work that can be spread out (the tree scatter, today). 0 = do it all
+  // at once, which is what the desktop tools and the tests want; a phone sets ~8 ms so the 60 000-tree
+  // scatter of a map like Mojokerto streams in over a second of drawn frames instead of freezing the
+  // render thread for ten. See eng_set_decor_budget.
+  double decorBudgetMs = 0;
+  bool decorStreaming() const { return trees_.scattering(); }
   void applyState(const SimState& st, double timeScale);
   // In-world meja board (station GLB `mejalayan` quads): the schematic layout from the bridge `panel` command.
   // The board redraws from the state given to applyState (nearest board within 45 m, <= every 120 ms).
