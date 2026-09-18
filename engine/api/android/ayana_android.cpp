@@ -16,8 +16,10 @@
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <jni.h>
+#include <unistd.h>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -88,7 +90,9 @@ struct Host {
   std::atomic<bool> engineUp{false};
   std::atomic<float> fps{0};
   Gl gl;                                  // render thread only
-  eng::host::FramePacer pacer;
+  // 60 by default: a SurfaceTexture producer is NOT vsync-throttled (eglSwapInterval is ignored), so a free
+  // running loop drew an empty world at 140 fps on a Helio G99 and starved the UI thread once the world was in.
+  eng::host::FramePacer pacer{60};
   float dpr = 1;
   std::vector<uint8_t> font;              // handed over before eng_init (eng_set_font)
   std::mutex fontMutex;
@@ -122,9 +126,37 @@ void renderLoop() {
   queue().shutdown();   // releases anyone blocked on a call; later calls return their fallback
 }
 
+// The engine reports with printf/fprintf ("[ayana] world built in ...", "terrain index: bad sat layer", GL
+// failures). Android drops a process's stdout, so the first start pipes both streams into logcat (tag
+// ayana) through a small reader thread. Once per process; the fds stay redirected for good.
+void pipeStdioToLogcat() {
+  static bool done = false;
+  if (done) return;
+  done = true;
+  int fds[2];
+  if (pipe(fds) != 0) return;
+  setvbuf(stdout, nullptr, _IOLBF, 0);
+  setvbuf(stderr, nullptr, _IONBF, 0);
+  dup2(fds[1], 1);
+  dup2(fds[1], 2);
+  int rd = fds[0];
+  std::thread([rd] {
+    std::string line; char buf[512];
+    for (;;) {
+      ssize_t n = read(rd, buf, sizeof buf);
+      if (n <= 0) break;
+      for (ssize_t i = 0; i < n; ++i) {
+        if (buf[i] == '\n') { if (!line.empty()) LOGI("%s", line.c_str()); line.clear(); }
+        else line.push_back(buf[i]);
+      }
+    }
+  }).detach();
+}
+
 void startThread() {
   Host& H = host();
   if (H.running.exchange(true)) return;
+  pipeStdioToLogcat();
   queue().restart();        // the previous loop shut the queue down on its way out (second visit to the page)
   H.thread = std::thread(renderLoop);
 }

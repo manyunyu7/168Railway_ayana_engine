@@ -7,6 +7,7 @@
 //    the engine's render-thread queue (engine/api/host/host_queue.h): Dart never calls an eng_* symbol,
 //    because the C ABI assumes a single caller and that caller is the render thread.
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ffi' hide Size;
 
 import 'package:ffi/ffi.dart';
@@ -303,10 +304,15 @@ class Ayana implements AyanaEngineSink {
 
 /// The engine as a widget: a `Texture` sized to its box, orbit/zoom by touch, fps in a corner.
 class AyanaView extends StatefulWidget {
-  const AyanaView({super.key, this.showFps = true, this.onReady});
+  const AyanaView({super.key, this.showFps = true, this.onReady, this.maxDpr = 1.5});
 
   final bool showFps;
   final VoidCallback? onReady;
+
+  /// Cap on the device pixel ratio the Texture is allocated at. Phones report 2.5–3.5; drawing a 1080×1797
+  /// world on a mid-range GPU ran at 29 fps, while the web's `hemat` tier caps at 1.1. 1.5 is a quarter of the
+  /// pixels of dpr 3 and still sharp on a 6" screen; Flutter scales the Texture to the box.
+  final double maxDpr;
 
   @override
   State<AyanaView> createState() => _AyanaViewState();
@@ -318,6 +324,7 @@ class _AyanaViewState extends State<AyanaView> with WidgetsBindingObserver {
   Size _size = Size.zero;
   double _dpr = 1;
   double _fps = 0;
+  double _scalePrev = 1;
   Timer? _hud;
 
   @override
@@ -353,7 +360,7 @@ class _AyanaViewState extends State<AyanaView> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final double dpr = MediaQuery.of(context).devicePixelRatio;
+    final double dpr = math.min(MediaQuery.of(context).devicePixelRatio, widget.maxDpr);
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints c) {
         final Size size = Size(c.maxWidth, c.maxHeight);
@@ -370,15 +377,24 @@ class _AyanaViewState extends State<AyanaView> with WidgetsBindingObserver {
         return Stack(
           fit: StackFit.expand,
           children: <Widget>[
+            // Touch, as the web adapter's sentuhAyana.ts: one finger orbits (eng_orbit wants css/logical px —
+            // multiplying by dpr made a 3x phone spin three times faster than the desktop), a pinch zooms by the
+            // RATIO between two updates (d.scale is cumulative since the gesture began, so feeding it straight
+            // in compounds every update and runs away), a double tap flies the focus to that ground point.
             GestureDetector(
               behavior: HitTestBehavior.opaque,
+              onScaleStart: (_) => _scalePrev = 1,
               onScaleUpdate: (ScaleUpdateDetails d) {
                 if (d.pointerCount > 1) {
-                  Ayana.instance.zoom((1 - d.scale) * 2);
+                  final double ratio = d.scale / _scalePrev;
+                  _scalePrev = d.scale;
+                  if (ratio > 0) Ayana.instance.zoom(math.log(ratio) / math.log(1 / 0.9));   // distance *= 0.9^steps
                 } else {
-                  Ayana.instance.orbit(d.focalPointDelta.dx * dpr, d.focalPointDelta.dy * dpr);
+                  Ayana.instance.orbit(d.focalPointDelta.dx, d.focalPointDelta.dy);
                 }
               },
+              onDoubleTapDown: (TapDownDetails d) =>
+                  Ayana.instance.compassClick(d.localPosition.dx, d.localPosition.dy),
               child: Texture(textureId: _textureId!),
             ),
             if (widget.showFps)
