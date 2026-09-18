@@ -269,7 +269,7 @@ The transport is "one message per frame in, one snapshot out". Three of its four
 * `AyanaBridge` (`flutter/ayana/lib/src/bridge.dart`) turns a batch into those calls and returns the
   snapshot, with `AyanaLatency` recording p50/p95.
 
-**The page (`ppka-wannabe-2/src/tiga-ayana/mesin/`, skeleton done, wiring not):**
+**The page (`ppka-wannabe-2/src/tiga-ayana/mesin/`, done):**
 * `mesin.ts` — the `Mesin` interface. Deliberately **not** the Emscripten module shape: no heap
   pointers, strings stay strings. The editing ABI is not in it, because the surveyor tools are not
   supported in the app in v1 and they are exactly what needs the dozens of synchronous reads a
@@ -278,22 +278,47 @@ The transport is "one message per frame in, one snapshot out". Three of its four
 * `flutter.ts` — `MesinFlutter`, the snapshot proxy. Writes pile into a per-frame batch, `frame()`
   sends it once, reads answer from the previous reply, `pick`/`pickGround` become async, and a failed
   send puts the commands back in the queue instead of dropping them.
-* `loopback.ts` + `uji-proxy.mts` — the proxy's semantics proven without a phone:
-  `npx tsx src/tiga-ayana/mesin/uji-proxy.mts` → **14 checks, 0 failures** (one send per frame, order
-  kept, snapshot one frame late, async pick, nothing lost on a broken bridge).
+* `loopback.ts` + `uji-proxy.mts` — `npx tsx src/tiga-ayana/mesin/uji-proxy.mts` → **14 checks, 0
+  failures** (one send per frame, order kept, snapshot one frame late, async pick, nothing lost on a
+  broken bridge, `load_world` carried in the batch).
 * `bootParam.ts` takes `wadah=flutter`; `konstInti.diFlutter()`.
+
+**`duniaAyana` / `hudAyana` moved onto it.** Nothing a *player* touches calls the Emscripten module
+any more: init, world load, `set_panel`, per-frame `set_state` / `frame`, the whole camera and input
+surface, every setting, and the reads (`stats`, `camera_json`, `train_screen`, `signal_screen`,
+`station_screen`) which now come from the snapshot. `hudAyana` draws its signal plates from the
+snapshot's `signals` array and the station boards from `stations` instead of calling `eng_project`
+per element; `gelembungAyana` and `mejaApungAyana` read `camera` the same way. What is still on the
+raw module is exactly what is wasm-only by design: the surveyor tools, the asset serving, `eng_project`
+(it writes into the heap) and the avatar ABI — and `wadah=flutter` does not wire any of them.
+
+**Proven in a desktop browser, no phone** (`npx vite --port 5199`, then the Playwright script
+`playtest/_cek-mesin-transport.mjs`, which is local like the other `_cek-*`): the world loads, then the
+snapshot proxy is wrapped **around the live wasm module** (loopback) and a few seconds are allowed to
+pass.
+
+```
+WASM   jenis wasm,    siap, 60 fps, 6 sinyal tampak, pick(468,346) = signal:t765
+PROXY  jenis flutter, siap, 60 fps, 6 sinyal tampak, pick(468,346) = signal:t765
+       jembatan: 240 batch / 240 perintah, round trip 1.5 ms (max 10.2 ms)
+world built in 71 ms: 34.7 km track, 16 points, 18 signals ...     errors: tidak ada
+```
+
+The existing smoke tests are clean on the wasm path after the move: `_cek-ayana.mjs` (27 MB loaded,
+click a signal → route `t765`, camera glide 6948 m, 346 k trees, 60 fps), `_cek-ayana-label.mjs`, and
+`_cek-hud-ayana.mjs` (2 anchored plates, plate click → route `t768`, station bubble → fly-to, floating
+desk).
 
 **The app (done, opt-in):** a dev switch "Mesin 3D natif" on Aset PPKA (default off) makes
 `PpkaGamePage` send `wadah=flutter`, put `AyanaView` under a **transparent** WebView, and register the
-`ayana` JavaScript handler. With the switch off nothing about a normal dinas changes.
+`ayana` JavaScript handler. The page sends `load_world` in the batch (it owns the save); `AyanaBridge`
+hands it to the engine and starts an `AyanaWorldLoader` whose resolver is `PpkaAsetService` — the same
+disk cache the WebView uses. With the switch off nothing about a normal dinas changes.
 
-**Not done, and the honest reason:** `duniaAyana.ts` (1 643 lines) and `hudAyana.ts` still call the
-Emscripten module directly in ~60 places, and `hudAyana` projects every HUD element with `eng_project`,
-which a snapshot cannot answer — it has to read the `signals` / `stations` arrays instead. Moving those
-onto `Mesin` is the rest of M3(a), and it is the part that needs the Playwright run in a desktop browser
-(`playtest/_cek-ayana*.mjs`, dev server on 5199) to prove the picture is unchanged. Until that lands,
-`wadah=flutter` reaches a page that still tries to load the wasm module, so the switch is for the next
-round, not this one.
+**Still awaiting a phone:** that the transparent WebView really composites over the `Texture`, what
+`callHandler` costs at 60 Hz on the device (the Mac loopback is 1.5 ms, which is a floor, not a
+prediction), and whether 30 Hz state + engine extrapolation turns out to be needed. The p50/p95 of the
+round trip is logged every 300 frames under the `ayana` tag.
 
 ### First run when a phone is plugged in
 

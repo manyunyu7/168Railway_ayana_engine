@@ -256,6 +256,16 @@ void main() {
       expect(AyanaLatency().p50, 0);
     });
 
+    test('load_world without a resolver is refused, not half-done', () {
+      final FakeCommands e = FakeCommands();
+      final AyanaBridge b = AyanaBridge(engine: e);
+      b.handleBatch(<Map<String, dynamic>>[
+        <String, dynamic>{'c': 'load_world', 's': '{"w":1}', 's2': '{}', 's3': 'mojokerto', 's4': '{}'},
+      ]);
+      expect(b.loader, isNull);
+      expect(e.calls, isEmpty);
+    });
+
     test('disable turns the snapshot off', () {
       final FakeCommands e = FakeCommands();
       final AyanaBridge b = AyanaBridge(engine: e);

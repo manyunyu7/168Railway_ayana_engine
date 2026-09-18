@@ -10,7 +10,10 @@
 // Nothing here blocks: `ayana_cmd` and `ayana_set_state` post to the render thread, `ayana_snapshot`
 // copies a string the render thread swapped in. A batch handler that waited on the render thread is
 // what froze the UI isolate during the 9 s decor build.
+import 'dart:async';
 import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 
 import '../ayana.dart';
 
@@ -49,11 +52,23 @@ class AyanaLatency {
 ///   {"c":"<name>","a":1,"b":2,"d":3,"s":"id"}  -> the named engine command (see ayana_cmd)
 ///   {"c":"pointer","a":x,"b":y,"d":button,"e":phase}
 class AyanaBridge {
-  AyanaBridge({AyanaCommandSink? engine}) : _engine = engine ?? Ayana.instance;
+  AyanaBridge({AyanaCommandSink? engine, this.resolve, this.variant = AyanaModelVariant.penuh})
+      : _engine = engine ?? Ayana.instance;
 
   final AyanaCommandSink _engine;
+
+  /// Where the world's assets come from once the page asks for a world (the app wires
+  /// PpkaAsetService in). Without it a `load_world` command is refused, because a world whose
+  /// terrain and models nobody answers is just a black screen.
+  final AyanaAssetResolver? resolve;
+  final AyanaModelVariant variant;
+
   final AyanaLatency latency = AyanaLatency();
+  AyanaWorldLoader? _loader;
   bool _enabled = false;
+
+  /// The loader answering asset requests for the world the page asked for (null before that).
+  AyanaWorldLoader? get loader => _loader;
 
   /// Turns the engine's per-frame snapshot on. Costs a few hundred microseconds of JSON per frame, so
   /// it stays off until a page actually asks for it.
@@ -84,6 +99,10 @@ class AyanaBridge {
         _engine.setState(s.isEmpty ? '{}' : s);
         continue;
       }
+      if (c == 'load_world') {
+        _loadWorld(raw);
+        continue;
+      }
       final double a = _num(raw['a']), b = _num(raw['b']), d = _num(raw['d']);
       if (c == 'pointer') {
         _engine.pointer(a, b, d.toInt(), _num(raw['e']).toInt());
@@ -95,6 +114,24 @@ class AyanaBridge {
     sw.stop();
     latency.add(sw.elapsedMicroseconds / 1000.0);
     return snap;
+  }
+
+  /// `{c:'load_world', s:<world>, s2:<summary>, s3:<slug>, s4:<catalog>}` — the page owns the save,
+  /// so it is the page that loads the world; the host only answers the asset requests that follow.
+  void _loadWorld(Map<dynamic, dynamic> raw) {
+    final AyanaAssetResolver? resolve = this.resolve;
+    if (resolve == null) {
+      debugPrint('[ayana] load_world diabaikan: tak ada resolver aset');
+      return;
+    }
+    final Ayana engine = _engine is Ayana ? _engine as Ayana : Ayana.instance;
+    _loader ??= AyanaWorldLoader(resolve: resolve, variant: variant, engine: engine);
+    unawaited(_loader!.load(
+      worldJson: (raw['s'] ?? '{}') as String,
+      summaryJson: (raw['s2'] ?? '{}') as String,
+      map: (raw['s3'] ?? '') as String,
+      catalogJson: (raw['s4'] ?? '{}') as String,
+    ));
   }
 
   static List<dynamic> _asList(Object? batch) {
