@@ -10,9 +10,19 @@ import 'dart:async';
 import 'dart:ffi' hide Size;
 
 import 'package:ffi/ffi.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
+import 'src/asset_request.dart';
+import 'src/engine_sink.dart';
+
+export 'src/asset_request.dart';
+export 'src/engine_sink.dart';
+export 'src/terrain_index.dart';
+export 'src/tile_urls.dart' show AyanaModelVariant, TileRef, TileComposition, SubTile, demUrls, satUrls, satComposition, modelFileName, assetPathFor, kTileBase;
+export 'src/world_loader.dart';
+export 'src/tile_http.dart' show AyanaTileFetcher;
+export 'src/gzip_bytes.dart' show looksGzipped, maybeGunzip;
 
 // ---- FFI signatures ----
 typedef _VoidF = void Function();
@@ -36,19 +46,25 @@ typedef _StatsC = Int32 Function(Pointer<Utf8>, Int32);
 typedef _Stats = int Function(Pointer<Utf8>, int);
 typedef _PollC = Int32 Function(Pointer<Utf8>, Int32, Pointer<Utf8>, Int32);
 typedef _Poll = int Function(Pointer<Utf8>, int, Pointer<Utf8>, int);
-
-/// One asset the engine asked the host for (`kind` = terrain / city / model, `path` = what to fetch).
-@immutable
-class AyanaAssetRequest {
-  const AyanaAssetRequest(this.kind, this.path);
-  final String kind;
-  final String path;
-  @override
-  String toString() => 'AyanaAssetRequest($kind, $path)';
-}
+typedef _LoadWorldC = Int32 Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
+typedef _LoadWorld = int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
+typedef _BytesC = Int32 Function(Pointer<Uint8>, Int32);
+typedef _Bytes = int Function(Pointer<Uint8>, int);
+typedef _TileRgbaC = Int32 Function(Pointer<Utf8>, Int32, Int32, Int32, Int32, Int32, Pointer<Uint8>);
+typedef _TileRgba = int Function(Pointer<Utf8>, int, int, int, int, int, Pointer<Uint8>);
+typedef _TileFailC = Void Function(Pointer<Utf8>, Int32, Int32, Int32);
+typedef _TileFail = void Function(Pointer<Utf8>, int, int, int);
+typedef _StrArgC = Void Function(Pointer<Utf8>);
+typedef _StrArg = void Function(Pointer<Utf8>);
+typedef _PointerC = Void Function(Float, Float, Int32, Int32);
+typedef _PointerFn = void Function(double, double, int, int);
+typedef _IntRetIntC = Int32 Function(Int32);
+typedef _IntRetInt = int Function(int);
+typedef _DoubleArgC = Void Function(Double);
+typedef _DoubleArg = void Function(double);
 
 /// The engine, one per process (the C ABI is a single global instance).
-class Ayana {
+class Ayana implements AyanaEngineSink {
   Ayana._();
   static final Ayana instance = Ayana._();
 
@@ -60,6 +76,7 @@ class Ayana {
 
   /// Asset requests coming out of the engine. M1 has nothing to answer them with yet (no world);
   /// M2 wires them to PpkaAsetService and the tile server.
+  @override
   Stream<AyanaAssetRequest> get assetRequests => _requests.stream;
 
   int? get textureId => _textureId;
@@ -78,6 +95,114 @@ class Ayana {
   late final _ModelBegin _modelBeginFn = _l.lookupFunction<_ModelBeginC, _ModelBegin>('ayana_model_begin');
   late final _Stats _statsFn = _l.lookupFunction<_StatsC, _Stats>('ayana_stats');
   late final _Poll _pollFn = _l.lookupFunction<_PollC, _Poll>('ayana_poll_request');
+  late final _LoadWorld _loadWorldFn = _l.lookupFunction<_LoadWorldC, _LoadWorld>('ayana_load_world');
+  late final _Bytes _terrainIndexFn = _l.lookupFunction<_BytesC, _Bytes>('ayana_terrain_index');
+  late final _TileRgba _tileRgbaFn = _l.lookupFunction<_TileRgbaC, _TileRgba>('ayana_terrain_tile_rgba');
+  late final _TileFail _tileFailFn = _l.lookupFunction<_TileFailC, _TileFail>('ayana_terrain_tile_fail');
+  late final _Bytes _cityJsonFn = _l.lookupFunction<_BytesC, _Bytes>('ayana_city_json');
+  late final _StrArg _modelFailFn = _l.lookupFunction<_StrArgC, _StrArg>('ayana_model_fail');
+  late final _StrArg _texUnavailFn = _l.lookupFunction<_StrArgC, _StrArg>('ayana_model_textures_unavailable');
+  late final _StrArg _setStateFn = _l.lookupFunction<_StrArgC, _StrArg>('ayana_set_state');
+  late final _PointerFn _pointerFn = _l.lookupFunction<_PointerC, _PointerFn>('ayana_pointer');
+  late final _Float2 _compassClickFn = _l.lookupFunction<_Float2C, _Float2>('ayana_compass_click');
+  late final _IntRetInt _cameraModeFn = _l.lookupFunction<_IntRetIntC, _IntRetInt>('ayana_camera_mode');
+  late final _IntRetInt _setQualityFn = _l.lookupFunction<_IntRetIntC, _IntRetInt>('ayana_set_quality');
+  late final _DoubleArg _setSkyTimeFn = _l.lookupFunction<_DoubleArgC, _DoubleArg>('ayana_set_sky_time');
+  late final _Stats _lastErrorFn = _l.lookupFunction<_StatsC, _Stats>('ayana_last_error');
+
+  // ---- M2: the world ----
+  // The four strings are large; they are copied once into native memory and freed as soon as the
+  // engine has parsed them (ayana_load_world blocks until the render thread is done with them).
+  @override
+  bool loadWorld({
+    required String worldJson,
+    required String summaryJson,
+    required String map,
+    required String catalogJson,
+  }) {
+    final Pointer<Utf8> w = worldJson.toNativeUtf8();
+    final Pointer<Utf8> s = summaryJson.toNativeUtf8();
+    final Pointer<Utf8> m = map.toNativeUtf8();
+    final Pointer<Utf8> c = catalogJson.toNativeUtf8();
+    try {
+      return _loadWorldFn(w, s, m, c) == 1;
+    } finally {
+      malloc.free(w);
+      malloc.free(s);
+      malloc.free(m);
+      malloc.free(c);
+    }
+  }
+
+  /// null / empty = no terrain: the world is built flat at rail height, which is not an error.
+  @override
+  int terrainIndex(Uint8List? bytes) => _withBytes(bytes, (Pointer<Uint8> p, int n) => _terrainIndexFn(p, n));
+
+  /// `rgba` is tightly packed RGBA8, row 0 = north. DEM tiles are the raw Terrarium pixels.
+  @override
+  int terrainTileRgba(String dir, int z, int x, int y, int w, int h, Uint8List rgba) {
+    final Pointer<Utf8> d = dir.toNativeUtf8();
+    final Pointer<Uint8> buf = malloc.allocate<Uint8>(rgba.length);
+    try {
+      buf.asTypedList(rgba.length).setAll(0, rgba);
+      return _tileRgbaFn(d, z, x, y, w, h, buf);
+    } finally {
+      malloc.free(buf);
+      malloc.free(d);
+    }
+  }
+
+  @override
+  void terrainTileFail(String dir, int z, int x, int y) => _withStr(dir, (Pointer<Utf8> p) => _tileFailFn(p, z, x, y));
+
+  @override
+  int cityJson(Uint8List? bytes) => _withBytes(bytes, (Pointer<Uint8> p, int n) => _cityJsonFn(p, n));
+
+  @override
+  void modelFail(String slot) => _withStr(slot, _modelFailFn);
+  void modelTexturesUnavailable(String slot) => _withStr(slot, _texUnavailFn);
+
+  /// The bridge's per-frame `step` object. Fire and forget.
+  void setState(String stepJson) => _withStr(stepJson, _setStateFn);
+
+  void pointer(double x, double y, int button, int phase) => _pointerFn(x, y, button, phase);
+  void compassClick(double x, double y) => _compassClickFn(x, y);
+  int cameraMode(int mode) => _cameraModeFn(mode);
+  int setQuality(int tier) => _setQualityFn(tier);
+  void setSkyTime(double seconds) => _setSkyTimeFn(seconds);
+
+  /// The engine's last failure message, "" when none.
+  @override
+  String lastError() {
+    const int cap = 1024;
+    final Pointer<Utf8> buf = malloc.allocate<Uint8>(cap).cast<Utf8>();
+    try {
+      final int n = _lastErrorFn(buf, cap);
+      return n <= 0 ? '' : buf.toDartString();
+    } finally {
+      malloc.free(buf);
+    }
+  }
+
+  void _withStr(String s, void Function(Pointer<Utf8>) fn) {
+    final Pointer<Utf8> p = s.toNativeUtf8();
+    try {
+      fn(p);
+    } finally {
+      malloc.free(p);
+    }
+  }
+
+  int _withBytes(Uint8List? bytes, int Function(Pointer<Uint8>, int) fn) {
+    if (bytes == null || bytes.isEmpty) return fn(nullptr, 0);
+    final Pointer<Uint8> buf = malloc.allocate<Uint8>(bytes.length);
+    try {
+      buf.asTypedList(bytes.length).setAll(0, bytes);
+      return fn(buf, bytes.length);
+    } finally {
+      malloc.free(buf);
+    }
+  }
 
   /// Creates the texture, hands its Surface to the engine and starts the render thread.
   /// The font must be installed *before* this: the engine loads it inside eng_init.
@@ -119,6 +244,7 @@ class Ayana {
   }
 
   /// Loads an `.emod` (convert --target android) into the catalog slot `slot`. Returns 1 on success.
+  @override
   int loadModel(String slot, Uint8List bytes) {
     final Pointer<Utf8> name = slot.toNativeUtf8();
     final Pointer<Uint8> buf = malloc.allocate<Uint8>(bytes.length);
@@ -136,6 +262,7 @@ class Ayana {
     return loadModel(slot, data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
   }
 
+  @override
   bool get ready => _readyFn() != 0;
   double get fps => _fpsFn();
   void orbit(double dx, double dy) => _orbitFn(dx, dy);

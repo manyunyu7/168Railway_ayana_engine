@@ -1,7 +1,7 @@
 # Flutter / Android plan — the engine inside the 168Railway app
 
-Status: **M1 done on the Mac, 2026-09-18** (everything but the pixels — no phone was available, and no
-emulator: the disk cannot hold one). M2 onwards is still plan. Each milestone ends with something visible
+Status: **M1 and M2 done on the Mac, 2026-09-18** (everything but the pixels — no phone was available,
+and no emulator: the disk cannot hold one). M3 onwards is still plan. Each milestone ends with something visible
 on a real phone; see "M1: what is proven" below for exactly where the line falls.
 
 ## Where we start from
@@ -101,7 +101,7 @@ skip loading `ayana.wasm`.
 | # | Work | Visible result |
 |---|---|---|
 | **M1** ✅ | Plugin skeleton: `flutter/ayana/` with `android/CMakeLists.txt` building the engine for arm64 (`ENG_GL_ES`, drop `window.cpp` / `sim_process.cpp` on Android, `-Werror` clean under NDK clang), `ayana_android.cpp` with EGL + render thread + queue, Kotlin `TextureRegistry` glue, `eng_init`/`eng_resize`/`eng_frame`. Font and the `ENG_SOURCE_DIR` path assumptions (`asset_catalog.cpp`, `text.cpp`) get an "bytes from the host" variant. Dev entry in the app: Profil → Aset PPKA → "Uji mesin 3D". | The engine's sky gradient + an `.emod` model (cc203) spinning in a Flutter `Texture` on Henry's phone, fps in a corner. |
-| **M2** | World load from Dart: `eng_load_world` with a bundled Mojokerto save + summary + `model.json`; asset requests answered from `PpkaAsetService` / tile server; Android-target `.emod` uploaded; `GestureDetector` → orbit/zoom/compass. | Mojokerto terrain, rails, signals, station and trees on the phone, orbit by touch. No trains yet. |
+| **M2** ✅ | World load from Dart: `eng_load_world` with a bundled Mojokerto save + summary + `model.json`; asset requests answered from `PpkaAsetService` / tile server; Android-target `.emod` uploaded; `GestureDetector` → orbit/zoom/compass. | Mojokerto terrain, rails, signals, station and trees on the phone, orbit by touch. No trains yet. |
 | **M3** | The bridge: `wadah=flutter`, snapshot proxy in `src/tiga-ayana/` (transport interface: Wasm `Module` vs Flutter), `AyanaView` under the existing `PpkaGamePage` with `transparentBackground`, per-frame batch through `callHandler`, replies as snapshots. Measure: ms per round trip, batch size, fps at 60 vs 30 Hz state. | The full PPKA meja layan on the phone: trains move in the native 3D under the DOM HUD, tap a signal → route, camera modes (kabin/samping/…), labels and bubbles anchored. |
 | **M4** | Hardening: lifecycle (pause/resume, EGL context loss, `onTrimMemory` → `eng_set_quality`), WebView crash rebuild keeping the world, DPR/quality tiers from the device, corridor prefetch of `.emod` when 3D is switched on, memory telemetry, disk cap on `pk-aset/`. | A 30-minute dinas on a 4 GB phone without a kill; Play internal test build. |
 | later | State extrapolation in the engine (vehicles carry `seg/s` + speed) so the state can go at 30 Hz; KTX2 transcoder in the plugin; iOS (Metal RHI, separate plan). | |
@@ -156,16 +156,81 @@ Note on the milestone's "spinning cc203": without `eng_load_world` the engine dr
 confirms the model entered the catalog. Geometry on screen arrives with M2's world load, which is one
 `eng_load_world` call away.
 
+## M2: what is proven, and what still waits for a phone
+
+Proven on the Mac:
+
+```
+build/mac-release/test_host_world          # the Android host path without Android
+  -> tiles 126 (0 failed), models 6, resident 100, patches 60
+     34.7 km track, 16 points, 18 signals, rails 329466 tris, 350728 trees; 140 checks, 0 failures
+cd flutter/ayana && flutter test            # 19 tests: tile math, index, Terrarium decode, routing
+cmake --build --preset android-arm64        # 27 ayana_* wrappers exported from libayana.so
+ctest --preset mac-debug                    # 15/15
+web/build-models-android.sh pohon-05 sttd-stasiun-mojokerto
+  -> stasiun 24.0 MB raw -> 5.0 MB gzipped (penuh, 1024 px) / 11.9 MB -> 3.0 MB (hemat, 512 px)
+```
+
+* **`tests/test_host_world`** is the engine-side proof and needs no Android at all: a second thread
+  loads Mojokerto through the render-thread queue exactly the way `package:ayana` does over FFI (never
+  calling `eng_*` directly) and answers the outbox from `assets/terrain/mojokerto` and
+  `build/wasm/models/*.emod`. It asserts `eng_ready()`, an empty `eng_last_error()` and that the stats
+  report resident tiles, patches and the rails.
+* **The wrappers** (`engine/api/android/ayana_android.cpp`): `load_world` (the four big strings copied
+  to the heap — never a stack buffer), `terrain_index`, `terrain_tile`, `terrain_tile_rgba`,
+  `terrain_tile_fail`, `city_json`, `model_fail`, `model_textures_unavailable`, `set_state`, `pointer`,
+  `compass_click`, `camera_mode`, `set_quality`, `set_sky_time`, `last_error`.
+* **The Dart loader** (`flutter/ayana/lib/src/`) mirrors `ppka-wannabe-2/src/tiga-ayana`: the same tile
+  proxy (`tiles.168railway.com/terrarium/{z}/{x}/{y}.png`, `/satellite/{z}/{x}/{y}.png`, with the S3 and
+  Esri fallbacks — Esri takes **z/y/x** and no extension), the same 6-deep FIFO fetch pool, and the same
+  composition arithmetic: a layer's `px` decides everything, `k = log2(px/256)`, so a 512 px layer is
+  four tiles at `zoom + 1` drawn into one image with the missing cells left `#606060`. The z in the
+  request path is ignored for `sat/<i>` — the index layer's own zoom is authoritative. DEM goes to the
+  engine as **raw Terrarium RGBA**; the engine does `R*256 + G + B/256 - 32768` itself.
+* **The plugin stays app-agnostic**: `AyanaWorldLoader(resolve: ...)` takes a callback
+  `(kind, path, assetPath) -> bytes?`. The app wires `PpkaAsetService.ambilAtauUnduh` into it, so the
+  engine's models come out of the very same disk cache the WebView uses.
+* **Model files on Android**: `web/build-models-android.sh` writes two variants, both
+  `convert --target android` with ETC2 embedded and both **gzipped on disk** (Cloudflare will not
+  compress `application/octet-stream`, so the object has to be stored compressed with
+  `Content-Encoding: gzip` — see `docs/TEXTURE-FORMAT.md`):
+  | directory | flag | atlas | station model |
+  |---|---|---|---|
+  | `ayana/models-android` (`AyanaModelVariant.penuh`, the default) | `--max-texture 512` | 1024 px | 24.0 MB -> **5.0 MB** |
+  | `ayana/models-android-hemat` (`AyanaModelVariant.hemat`) | `--max-texture 256` | 512 px | 11.9 MB -> **3.0 MB** |
+  512 px alone is visibly soft in the kabin/samping cameras, which is why `penuh` is the default and
+  `hemat` is what a low-memory device gets (the app will pick it from device memory, like the web
+  quality tiers). The real fix for "sharp near, cheap far" is **mip streaming** — uploading only the
+  mips a model's on-screen size needs and filling in the finer ones as it comes closer — and that is a
+  later milestone, not a prerequisite. The Dart loader inflates gzip itself when the HTTP stack did not,
+  so a mis-tagged object still works.
+* **The `.emod` reader is bounded now**: every u32 count must fit the bytes left in the file
+  (`engine/asset/emod.cpp`, `Reader::count`), because these files now arrive over a phone network.
+  `tests/test_gltf_emod` sweeps every u32 of a real file with `0xFFFFFFF0` and asserts nothing parses
+  into an absurd model.
+
+Still waiting for a phone: everything that needs a GPU and a network on the device — that EGL binds,
+that the tile fetches and the ETC2 uploads keep up, and what the world actually looks like. The engine
+side of all of it is exercised on the Mac by `test_host_world`.
+
 ### First run when a phone is plugged in
 
 1. `cd ~/Developer/168Railway/mobile && flutter devices` (USB debugging on).
 2. `flutter run --debug --target-platform android-arm64` — free ~2 GB first, the Gradle+NDK build needs it.
 3. In the app: Profil → **Aset PPKA** → **"Uji mesin 3D"**.
 4. Expect: a dark blue-grey `Texture` filling the page, "0 fps" turning into 55–60, and the line
-   "model cc203.emod masuk katalog" underneath.
+   "mesin hidup, cc203.emod masuk katalog" underneath.
+4b. Tap **"Muat Mojokerto"**. The status line counts assets answered / failed / in flight and flips to
+   `siap ya`; the view fills with terrain, rails, signals, the station and trees, and one-finger drag
+   orbits, two fingers zoom. **This needs the Android `.emod` files to be on R2 first** (below):
+   without them every model fails its slot and the world is rails and terrain with boxes for decor.
 5. `adb logcat -s ayana` shows `attached <w>x<h> dpr=... engine=1`. `engine=0` or `eglCreateWindowSurface
    failed` = the EGL path; `eng_init failed` = the GL context (check `ANDROID_PLATFORM`/GLES 3.0).
-6. Rotating/resizing goes through `AyanaPlugin.resize` → `setDefaultBufferSize` + `eng_resize`; leaving
+6. Before that run, Henry must upload the two model directories (`web/build-models-android.sh --all`
+   then the `aws s3 sync` lines the script prints, or two entries in ppka-wannabe-2
+   `tools/unggah-r2.mjs` next to `ayana`, **with `Content-Encoding: gzip`**). Nothing else is needed:
+   the terrain index is bundled in the plugin and the tiles come from `tiles.168railway.com`.
+7. Rotating/resizing goes through `AyanaPlugin.resize` → `setDefaultBufferSize` + `eng_resize`; leaving
    the page calls `dispose` → `nativeDetach` (blocking, on the render thread) → `nativeStop` → join.
 
 ## Shape of the code, as built
@@ -177,11 +242,19 @@ game-engine-experiment/
 │                                        + plain C for Dart FFI (ayana_*)
 ├─ engine/api/eng_export.h              ENG_EXPORT: what stays visible in libayana.so / the wasm module
 ├─ engine/render/font_bytes.{h,cpp}     the .efnt from the host instead of from a path
+├─ tests/test_host_world.cpp            the whole host path on Mojokerto, no Android needed
+├─ web/build-models-android.sh          the two gzipped ETC2 model builds
 └─ flutter/ayana/                       the plugin (path dependency of the app)
    ├─ android/CMakeLists.txt            add_subdirectory(<repo root>) -> target `ayana`
    ├─ android/src/main/kotlin/.../AyanaPlugin.kt   TextureRegistry -> SurfaceTexture -> Surface -> JNI
    ├─ lib/ayana.dart                    FFI bindings, asset-request stream, AyanaView widget
-   └─ assets/{font.efnt, cc203.emod}    cc203 = convert --target android --max-texture 128 (2.6 MB)
+   ├─ lib/src/terrain_index.dart        index.json -> the sat layers' zoom/px (authoritative)
+   ├─ lib/src/tile_urls.dart            request path -> URLs, the 2x2 composition, model variants
+   ├─ lib/src/tile_images.dart          PNG -> RGBA8 and the composition, dart:ui only
+   ├─ lib/src/tile_http.dart            6 in flight, 20 s deadline, primary + fallback URL
+   ├─ lib/src/world_loader.dart         AyanaWorldLoader: routes every request, reports progress
+   ├─ test/ayana_test.dart              19 tests, no device
+   └─ assets/                           font.efnt, cc203.emod, mojokerto/{world,summary,model,index}.json
 ```
 
 The Mac stays the fast loop: everything in `engine/api/android/` except EGL is portable, and the
