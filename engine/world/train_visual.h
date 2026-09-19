@@ -1,7 +1,7 @@
 // Train visuals: places every vehicle of every sim train per docs/world-spec.md §7.4 from the
 // bridge's per-vehicle coupler points (front/rear) with body sway (§7.5), draws GLB prototypes
 // (RollingStock) or a box fallback, scrubs door clips by the dwell timer (keretaVisual3d.ts
-// `tPintu`), and adds head/tail light coronas at night plus the Semboyan 21 tail markers on the
+// `tPintu`), and adds head/tail light coronas (day and night) plus the Semboyan 21 tail markers on the
 // last vehicle. Exposes per-train label anchors for the HUD.
 #pragma once
 #include "engine/render/mesh_builder.h"
@@ -42,7 +42,7 @@ public:
   void shutdown();
   // timeScale: session time scale (sway amplitude damping, §7.5 skalaLaju)
   void update(const SimState& st, const WorldOrigin& origin, const RailProfile* rail, double timeScale = 1);
-  // Camera data for the coronas + the night switch (lights and lanterns on; same rule as signals).
+  // Camera data for the coronas + the night switch (corona opacity 1 at night / 0.72 by day, S21 lanterns; same rule as signals).
   void setView(float fovY, int viewportH, bool night) { fovY_ = fovY; viewportH_ = viewportH; night_ = night; }
   void draw(ModelRenderer& r, const Frustum* frustum = nullptr);
   const std::vector<VehicleInstance>& vehicles() const { return vehicles_; }

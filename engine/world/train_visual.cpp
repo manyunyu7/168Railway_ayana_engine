@@ -217,8 +217,11 @@ void TrainVisuals::update(const SimState& st, const WorldOrigin& origin, const R
   doors_.swap(doors);
 }
 
+// Coronas by day too (keretaVisual3d.ts pasangLampuKA: opacity 0.72 by day, 1 at night — a running train's
+// headlight is lit around the clock; signal_visual.cpp drawCorona uses the same rule).
 void TrainVisuals::drawLights(ModelRenderer& r) {
-  if (!night_ || lights_.empty()) return;
+  if (lights_.empty()) return;
+  const float siang = night_ ? 1.f : 0.72f;
   vec3 eye = r.eye();
   float perPx = 2 * std::tan(fovY_ / 2) / (float)std::max(1, viewportH_);
   coronaPool_.clear(); coronaPool_.reserve(lights_.size());   // blended draws keep a Material pointer until flush
@@ -229,7 +232,7 @@ void TrainVisuals::drawLights(ModelRenderer& r) {
     float scale = std::max(std::min(KORONA_BAKU, KORONA_MAKS) * KORONA_LEBAR * lebih, KORONA_PX * lebih * d * perPx);
     vec3 c = hex(l.tail ? WARNA_AKHIRAN : WARNA_LAMPU_BAKU);
     coronaPool_.push_back(coronaMat_);
-    coronaPool_.back().baseColor = {c.x, c.y, c.z, 0.16f + 0.84f * al * al};
+    coronaPool_.back().baseColor = {c.x, c.y, c.z, siang * (0.16f + 0.84f * al * al)};
     vec3 pos = l.pos + toCam * (std::min(KORONA_MAJU, d * 0.5f) / d);
     r.drawMesh(billboard_, coronaPool_.back(), coronaTex_, billboard(pos, eye, scale));
   }
