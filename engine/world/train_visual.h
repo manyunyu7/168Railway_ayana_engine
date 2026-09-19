@@ -9,6 +9,7 @@
 #include "engine/world/coords.h"
 #include "engine/world/height_source.h"
 #include "engine/world/rolling_stock.h"
+#include "engine/world/train_cull.h"
 #include <map>
 #include <string>
 #include <vector>
@@ -48,6 +49,15 @@ public:
   void update(const SimState& st, const WorldOrigin& origin, const RailProfile* rail, double timeScale = 1);
   // Camera data for the coronas + the night switch (corona opacity 1 at night / 0.72 by day, S21 lanterns; same rule as signals).
   void setView(float fovY, int viewportH, bool night) { fovY_ = fovY; viewportH_ = viewportH; night_ = night; }
+  // Cull context for the next update() (train_cull.h): the camera eye (scene), the fog's far edge (<= 0 = no
+  // fog), the mode's reference distance (>= AMBANG_LOD = every train is an iconic box, the old `detail`
+  // flag), and the camera's subject train (never culled).
+  void setCull(vec3 eye, float fogFar, float refDistance, const std::string& subjectId) {
+    cullEye_ = eye; cullFogFar_ = fogFar; cullRef_ = refDistance; cullSubject_ = subjectId; cullValid_ = true;
+  }
+  struct CullCount { unsigned penuh = 0, ringan = 0, sembunyi = 0; };
+  const CullCount& cullCount() const { return cacah_; }
+  TingkatKA tier(const std::string& trainId) const { auto it = tingkat_.find(trainId); return it == tingkat_.end() ? TingkatKA::Penuh : (TingkatKA)it->second; }
   void draw(ModelRenderer& r, const Frustum* frustum = nullptr);
   const std::vector<VehicleInstance>& vehicles() const { return vehicles_; }
   const std::vector<TrainLabel>& labels() const { return labels_; }   // one per train, front vehicle centre + 4.5 m
@@ -74,6 +84,10 @@ private:
   float doorDuration_ = 2;               // max over door clips seen (keretaVisual3d.ts durasiPintu), ≥ 2 s
   double lastClock_ = -1;
   float fovY_ = 0.9f; int viewportH_ = 720; bool night_ = false;
+  // per-train cull tier of the last update (hysteresis needs the previous tier); trains gone from the state are dropped
+  std::map<std::string, int> tingkat_;
+  CullCount cacah_;
+  vec3 cullEye_; float cullFogFar_ = 0, cullRef_ = 0; std::string cullSubject_; bool cullValid_ = false;
 };
 
 } // namespace eng

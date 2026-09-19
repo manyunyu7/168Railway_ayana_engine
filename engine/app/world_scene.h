@@ -141,6 +141,9 @@ public:
   // drives the iconic rail line, the points' skalaWesel and the glow "detail" flag; cabView (kabin) hides
   // the route / occupancy / shunting ribbons; benangAlways forces the iconic line (layer "benang").
   float refDistance = 0; bool cabView = false, benangAlways = false;
+  // The camera's subject train (kabin / samping / atas / ekor; "" in bebas / jalan): never culled, and in
+  // cabView its front vehicle gets the cab material treatment (TrainVisuals).
+  std::string subjectTrainId;
 
   // Debug helper (ENG_TEST_GARIS): a synthetic platform + fence + wall along the station track.
   static void injectTestGaris(Json& hiasan, const Json& summary, vec3& stationScene, const WorldOrigin& origin, Log log);

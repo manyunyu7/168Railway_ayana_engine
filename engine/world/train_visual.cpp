@@ -118,27 +118,47 @@ void TrainVisuals::update(const SimState& st, const WorldOrigin& origin, const R
   lastClock_ = st.clock;
   const float skalaKA = sway::skalaLaju(timeScale);
   std::map<std::string, float> doors;
+  // CULLING PER TRAIN (train_cull.h): the head's distance to the camera, not one global LOD from the reference
+  // distance. Hide threshold follows the active fog. Without a cull context (tests, first frame) everything is Penuh.
+  const AmbangCullKA ambang{AMBANG_LOD, batasSembunyiKA(cullFogFar_), KA_HISTERESIS};
+  const bool pakaiModel = !cullValid_ || cullRef_ < AMBANG_LOD;   // dunia3d.ts `detail`: far reference = iconic boxes
+  std::map<std::string, int> tingkat;
+  cacah_ = {};
 
   for (const SimTrain& t : st.trains) {
+    TingkatKA tk = TingkatKA::Penuh;
+    if (cullValid_) {
+      vec3 kepala = origin.toScene(t.x, t.y, 0);
+      float jarak = std::hypot(kepala.x - cullEye_.x, kepala.z - cullEye_.z);
+      auto lalu = tingkat_.find(t.id);
+      tk = putuskanTingkatKA(jarak, lalu == tingkat_.end() ? TINGKAT_BELUM : lalu->second, ambang, !cullSubject_.empty() && t.id == cullSubject_);
+    }
+    tingkat[t.id] = (int)tk;
+    (tk == TingkatKA::Penuh ? cacah_.penuh : tk == TingkatKA::Ringan ? cacah_.ringan : cacah_.sembunyi)++;
+    const bool ringan = tk == TingkatKA::Ringan;
     // keretaVisual3d.ts: open while dwelling (unless the consist is resting), close otherwise; clamped to the clip
     const bool rehat = t.istirahat;
     float tPintu = doorTime(t.id) + (t.state == "dwell" && !rehat ? dtSim : -dtSim);
     tPintu = std::max(0.f, std::min(doorDuration_, tPintu));
-    doors[t.id] = tPintu;
+    doors[t.id] = tPintu;   // kept in step while hidden, so the doors are right when the train reappears
+    if (tk == TingkatKA::Sembunyi) continue;   // behind the fog: nothing of it is placed this frame
     std::vector<std::pair<const VehicleProto*, int>> poseCache;   // per train: proto -> scrubbed pose index
     const size_t nCars = t.vehicles.size();
     for (size_t vi = 0; vi < nCars; ++vi) {
       const SimVehicle& v = t.vehicles[vi];
       // §7.4: a = front coupler, b = rear coupler (scene XZ), heights from the rail profile.
       vec3 a0 = origin.toScene(v.x1, v.y1, 0), b0 = origin.toScene(v.x2, v.y2, 0);
+      // Ringan tier: one rail-height sample per car (pitch 0) and no track noise / sway - unreadable past AMBANG_LOD
       float hA0 = rail ? rail->railHeight(v.seg.c_str(), v.s) : 0.f;
-      float hB0 = rail ? rail->railHeight(v.seg2.c_str(), v.s2) : 0.f;
+      float hB0 = ringan ? hA0 : rail ? rail->railHeight(v.seg2.c_str(), v.s2) : 0.f;
       float dx0 = a0.x - b0.x, dz0 = a0.z - b0.z;
       float L0 = std::sqrt(dx0 * dx0 + dz0 * dz0);
       if (L0 < 1e-3f) { dx0 = std::cos(v.heading); dz0 = -std::sin(v.heading); L0 = 1; }
       // §7.5: the noise field moves the two RAIL POINTS (lift + lateral), so shared couplers stay joined
       float kx = -dz0 / L0, kz = dx0 / L0;
-      sway::Medan mA = sway::medan(a0.x, a0.z, t.speed, skalaKA), mB = sway::medan(b0.x, b0.z, t.speed, skalaKA);
+      const bool goyangAktif = skalaKA > 0 && !ringan;
+      sway::Medan mA = goyangAktif ? sway::medan(a0.x, a0.z, t.speed, skalaKA) : sway::Medan{};
+      sway::Medan mB = goyangAktif ? sway::medan(b0.x, b0.z, t.speed, skalaKA) : sway::Medan{};
       float ax = a0.x + kx * mA.geser, az = a0.z + kz * mA.geser, hA = hA0 + mA.naik;
       float bx = b0.x + kx * mB.geser, bz = b0.z + kz * mB.geser, hB = hB0 + mB.naik;
       float dx = ax - bx, dz = az - bz;
@@ -148,7 +168,7 @@ void TrainVisuals::update(const SimState& st, const WorldOrigin& origin, const R
       float yaw = std::atan2(-dz, dx), pitch = std::atan2(hA - hB, L);
       float cx = (ax + bx) / 2, cz = (az + bz) / 2;
       float kurva = sway::kurvaRel(sway::yawTiga(std::cos(v.t1), std::sin(v.t1)), sway::yawTiga(std::cos(v.t2), std::sin(v.t2)), L);
-      float roll = sway::hitungGoyang({cx, cz, t.speed, kurva, 0, skalaKA}).roll;
+      float roll = goyangAktif ? sway::hitungGoyang({cx, cz, t.speed, kurva, 0, skalaKA}).roll : 0.f;
       // §7.4: the trailing KRL cab car faces backwards (cab at the rear of the consist). The bridge sends the
       // sarana id (`krl-kuha`) when no fleet model applies, the catalog slot otherwise: compare both.
       const char* slot = AssetCatalog::saranaSlot(v.model);
@@ -158,7 +178,7 @@ void TrainVisuals::update(const SimState& st, const WorldOrigin& origin, const R
       inst.len = v.length; inst.loco = v.kind == "loco";
       inst.tembus = std::fabs(t.speed) < 0.3f;
       inst.centre = {cx, hy, cz};
-      inst.proto = stock_ ? stock_->proto(v.model) : nullptr;
+      inst.proto = stock_ && pakaiModel ? stock_->proto(v.model) : nullptr;
       // cargo pick (muatan.ts setelMuatan): keyed by the train number, the consist name when the train has none
       inst.muatan = RollingStock::cargoHash(t.no.empty() ? t.consist : t.no, vi);
       if (inst.proto && !inst.proto->textured()) inst.proto = nullptr;   // textures still streaming: sarana-coloured box, never white
@@ -216,6 +236,7 @@ void TrainVisuals::update(const SimState& st, const WorldOrigin& origin, const R
     }
   }
   doors_.swap(doors);
+  tingkat_.swap(tingkat);
 }
 
 // Coronas by day too (keretaVisual3d.ts pasangLampuKA: opacity 0.72 by day, 1 at night — a running train's

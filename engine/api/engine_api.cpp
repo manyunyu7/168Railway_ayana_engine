@@ -133,6 +133,8 @@ void updateCamera(float dt) {
   if (g->rig.mode == CamMode::Jalan || g->rig.mode == CamMode::Orang) { g->scene.collectWalkBoxes(boxes); in.boxes = &boxes; in.mesh = &g->scene.walkCollider(); }
   TrainPath tp; bool has = subjectPath(tp);
   if (has) { tp.timeScale = g->paused ? 0 : g->timeScale; }
+  const bool ikutKA = g->rig.mode == CamMode::Kabin || g->rig.mode == CamMode::Samping || g->rig.mode == CamMode::Atas || g->rig.mode == CamMode::Ekor;
+  g->scene.subjectTrainId = has && ikutKA ? tp.id : "";   // never culled; cab materials in kabin (TrainVisuals)
   if (!g->rig.step(dt, has ? &tp : nullptr, ground, in)) eng_camera_mode(0);
 }
 
