@@ -39,6 +39,18 @@ struct VehicleProto {
   std::vector<mat4> restLocal, restWorld;
   std::vector<LightPoint> lights;   // from the model's light nodes, else the synthetic fallback points
   bool lightsFromModel = false;
+  // INTERIOR meshes (node or mesh name containing `interior`) are only drawn near the camera (INTERIOR_JARAK) or
+  // from inside: keretaVisual3d.ts sakelarInterior — the CC 206 interior is a shell 5 mm inside the cab skin
+  // (428 coplanar triangle pairs, both double-sided, same atlas); past ~300 m the depth buffer no longer tells
+  // them apart and the two walls fight for pixels. `worldFar` = the rest pose with those nodes collapsed to a
+  // point (zero scale: nothing rasterises, no renderer change); empty when the body has no interior node.
+  std::vector<int> interiorNodes;
+  std::vector<mat4> worldFar;
+  // Cab view (dunia3dKonst.ts KACA_KABIN / KULIT_DUA_SISI, keretaVisual3d.ts sisiTunggal): the body's materials
+  // as seen from INSIDE — single-sided so the skin does not hide the world (unless the slot is in
+  // KULIT_DUA_SISI: a one-layer skin with outward normals would be "holed" from inside), and the glass materials
+  // that ship opaque (regex per slot) blended at KACA_OPASITAS. Same order as body->materials.
+  std::vector<Material> cabMaterials;
   // Every streamed texture of the body and the attachments arrived (GpuModel::textured); box fallback until then.
   bool textured() const {
     if (body && !body->textured()) return false;
@@ -59,6 +71,10 @@ public:
   // differ, and every machine agrees. cargoVariant() folds it onto a point's variant count (n <= 1 -> 0).
   static uint32_t cargoHash(const std::string& kunci, size_t i);
   static size_t cargoVariant(uint32_t hash, size_t n) { return n <= 1 ? 0 : hash % n; }
+  static constexpr float INTERIOR_JARAK = 80;   // m (dunia3dKonst.ts)
+  static constexpr float KACA_OPASITAS = 0.12f;
+  // Collapse the interior nodes of `pose` (a per-node world matrix set of the body) — used for a scrubbed door pose
+  static void sembunyikanInterior(const VehicleProto& p, std::vector<mat4>& pose);
 private:
   AssetCatalog* catalog_ = nullptr;
   std::map<std::string, VehicleProto> protos_;
@@ -71,5 +87,11 @@ std::string flatNodeName(const std::string& s);
 bool lightRole(const std::string& nodeName, LightRole& role);
 // Synthetic light points for a body of size `sz` (lampuKarangan): two headlights, one tail light.
 std::vector<LightPoint> fallbackLights(vec3 sz);
+// Interior node (sakelarInterior): the name contains `interior`, any case.
+bool isInteriorName(const std::string& nodeName);
+// The body's materials as seen from the cab (VehicleProto::cabMaterials) for a catalog slot (a sarana alias such as
+// `krl-kuha` resolves to its slot first): single-sided unless the slot is in KULIT_DUA_SISI, opaque glass
+// (KACA_KABIN regex on the material name) blended at KACA_OPASITAS.
+std::vector<Material> cabMaterialsFor(const std::string& slotId, const std::vector<Material>& asli);
 
 } // namespace eng

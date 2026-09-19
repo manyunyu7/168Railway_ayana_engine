@@ -21,6 +21,7 @@ engine_test(test_profile)
 engine_test(test_sway)
 engine_test(test_cargo)   # model.json `muatan` + the deterministic variant pick
 engine_test(test_train_cull)   # per-train cull tiers (train_cull.h): hysteresis, subject, fog threshold
+engine_test(test_cab)   # cab materials (single-sided skin, blended glass per slot) + interior node switch
 engine_test(test_terrain)
 engine_test(test_walk)
 engine_test(test_avatar)

@@ -31,6 +31,8 @@ struct VehicleInstance {
   // `tembus`, Henry's choice: cross to the other platform without walking round a 250 m consist); anything
   // moving stays a wall. WorldScene::collectWalkBoxes skips these.
   bool tembus = false;
+  bool kabin = false;      // the front vehicle of the cab-view subject: drawn with the proto's cab materials (single-sided skin, glass see-through)
+  bool interior = true;    // interior meshes shown (near the camera or ridden); false = drawn with the interior nodes collapsed
 };
 
 struct TrainLabel { std::string id, no, name, state; float speed = 0; vec3 anchor; vec3 dir; };   // dir = unit travel direction (scene XZ)
@@ -52,8 +54,9 @@ public:
   // Cull context for the next update() (train_cull.h): the camera eye (scene), the fog's far edge (<= 0 = no
   // fog), the mode's reference distance (>= AMBANG_LOD = every train is an iconic box, the old `detail`
   // flag), and the camera's subject train (never culled).
-  void setCull(vec3 eye, float fogFar, float refDistance, const std::string& subjectId) {
-    cullEye_ = eye; cullFogFar_ = fogFar; cullRef_ = refDistance; cullSubject_ = subjectId; cullValid_ = true;
+  // `cabView`: the camera sits in the subject's cab -> its front vehicle gets the cab treatment (VehicleInstance::kabin).
+  void setCull(vec3 eye, float fogFar, float refDistance, const std::string& subjectId, bool cabView = false) {
+    cullEye_ = eye; cullFogFar_ = fogFar; cullRef_ = refDistance; cullSubject_ = subjectId; cullValid_ = true; cabView_ = cabView;
   }
   struct CullCount { unsigned penuh = 0, ringan = 0, sembunyi = 0; };
   const CullCount& cullCount() const { return cacah_; }
@@ -87,7 +90,8 @@ private:
   // per-train cull tier of the last update (hysteresis needs the previous tier); trains gone from the state are dropped
   std::map<std::string, int> tingkat_;
   CullCount cacah_;
-  vec3 cullEye_; float cullFogFar_ = 0, cullRef_ = 0; std::string cullSubject_; bool cullValid_ = false;
+  vec3 cullEye_; float cullFogFar_ = 0, cullRef_ = 0; std::string cullSubject_; bool cullValid_ = false, cabView_ = false;
+  void drawCab(ModelRenderer& r, const VehicleInstance& v, const mat4& base, const std::vector<mat4>* pose, const Frustum* frustum);
 };
 
 } // namespace eng

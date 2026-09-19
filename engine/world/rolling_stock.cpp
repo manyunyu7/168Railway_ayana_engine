@@ -4,6 +4,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <regex>
 
 namespace eng {
 
@@ -27,6 +28,11 @@ bool lightRole(const std::string& nodeName, LightRole& role) {
 std::vector<LightPoint> fallbackLights(vec3 sz) {
   float x = sz.x / 2 * 0.97f, y = sz.y * 0.41f, z = sz.z / 2 * 0.64f;
   return {{LightRole::Sorot, 1, {x, y, z}}, {LightRole::Sorot, 1, {x, y, -z}}, {LightRole::Akhiran, -1, {-x, y, 0}}};
+}
+
+bool isInteriorName(const std::string& s) {
+  std::string k; for (unsigned char c : s) k += (char)std::tolower(c);
+  return k.find("interior") != std::string::npos;
 }
 
 namespace {
@@ -58,6 +64,15 @@ const std::string* lookupAttach(const std::map<std::string, std::string>& map, c
   return it == map.end() ? nullptr : &it->second;
 }
 
+// dunia3dKonst.ts KACA_KABIN: slots whose glass is OPAQUE in the file (dark windows from outside) and must be made
+// see-through from the cab by code; the regex matches the material name. KULIT_DUA_SISI: slots kept double-sided
+// in the cab (one-layer skin with outward normals).
+const char* kacaKabin(const std::string& slot) {
+  if (slot == "nryJr205KuhaBadan") return "^CL-Glass";
+  return nullptr;
+}
+bool kulitDuaSisi(const std::string& slot) { return slot == "nryJr205KuhaBadan"; }
+
 const std::vector<std::string>* lookupCargo(const std::map<std::string, std::vector<std::string>>& map, const std::string& nodeName) {
   // per-point entry wins over "*" even when it is the empty list (JSON null = deliberately empty)
   for (const auto& [k, v] : map) if (k != "*" && flatNodeName(k) == flatNodeName(nodeName)) return &v;
@@ -66,6 +81,24 @@ const std::vector<std::string>* lookupCargo(const std::map<std::string, std::vec
 }
 
 } // namespace
+
+std::vector<Material> cabMaterialsFor(const std::string& slotId, const std::vector<Material>& asli) {
+  const char* alias = AssetCatalog::saranaSlot(slotId);
+  const std::string slot = alias ? alias : slotId;
+  const bool duaSisi = kulitDuaSisi(slot);
+  const char* kaca = kacaKabin(slot);
+  std::regex re; if (kaca) re = std::regex(kaca);
+  std::vector<Material> out = asli;
+  for (Material& m : out) {
+    if (!duaSisi) m.doubleSided = false;
+    if (kaca && std::regex_search(m.name, re)) { m.alphaMode = AlphaMode::Blend; m.baseColor.w = RollingStock::KACA_OPASITAS; }
+  }
+  return out;
+}
+
+void RollingStock::sembunyikanInterior(const VehicleProto& p, std::vector<mat4>& pose) {
+  for (int i : p.interiorNodes) if (i >= 0 && (size_t)i < pose.size()) pose[(size_t)i] = pose[(size_t)i] * mat4::scale({0, 0, 0});
+}
 
 uint32_t RollingStock::cargoHash(const std::string& kunci, size_t i) {
   std::string s = kunci + "#" + std::to_string(i);
@@ -154,6 +187,13 @@ const VehicleProto* RollingStock::proto(const std::string& slotId) {
   p.lightsFromModel = !p.lights.empty();
   if (p.lights.empty()) p.lights = fallbackLights(p.size);
 
+  // interior nodes (sakelarInterior): by node name (the GPU model keeps no mesh names; the GLTF loader named the
+  // three.js Mesh after the node, so `SM_CC206_Interior.005` is a node name)
+  for (size_t i = 0; i < body->nodes.size(); ++i)
+    if (body->nodes[i].mesh >= 0 && isInteriorName(body->nodes[i].name)) p.interiorNodes.push_back((int)i);
+  // cab materials (sisiTunggal): the catalog slot decides (the alias `krl-kuha` -> nryJr205KuhaBadan too)
+  p.cabMaterials = cabMaterialsFor(slotId, body->materials);
+
   // clips: doors (`pintu-kiri|kanan`) are scrubbed per frame; pantographs (`panto-*`) baked folded are
   // frozen at the last frame (a KRL in service is always on the wire)
   if (!body->animations.empty()) {
@@ -165,8 +205,9 @@ const VehicleProto* RollingStock::proto(const std::string& slotId) {
     }
     computeWorld(body->nodes, body->roots, p.restLocal, p.restWorld);
   }
-  std::printf("[stock] %s: panjang %.2f m, size %.2f x %.2f x %.2f, %zu parts, %zu cargo points, %zu lights%s, %zu door clips%s\n", slotId.c_str(), p.panjang, p.size.x, p.size.y, p.size.z, p.parts.size(),
-              p.muatan.size(), p.lights.size(), p.lightsFromModel ? "" : " (synthetic)", p.doorClips.size(), p.restWorld.empty() ? "" : ", animated");
+  if (!p.interiorNodes.empty()) { p.worldFar = p.restWorld.empty() ? body->world : p.restWorld; sembunyikanInterior(p, p.worldFar); }
+  std::printf("[stock] %s: panjang %.2f m, size %.2f x %.2f x %.2f, %zu parts, %zu cargo points, %zu lights%s, %zu door clips%s, %zu interior nodes\n", slotId.c_str(), p.panjang, p.size.x, p.size.y, p.size.z, p.parts.size(),
+              p.muatan.size(), p.lights.size(), p.lightsFromModel ? "" : " (synthetic)", p.doorClips.size(), p.restWorld.empty() ? "" : ", animated", p.interiorNodes.size());
   protos_[slotId] = p;
   return &protos_[slotId];
 }

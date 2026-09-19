@@ -142,7 +142,9 @@ void TrainVisuals::update(const SimState& st, const WorldOrigin& origin, const R
     tPintu = std::max(0.f, std::min(doorDuration_, tPintu));
     doors[t.id] = tPintu;   // kept in step while hidden, so the doors are right when the train reappears
     if (tk == TingkatKA::Sembunyi) continue;   // behind the fog: nothing of it is placed this frame
-    std::vector<std::pair<const VehicleProto*, int>> poseCache;   // per train: proto -> scrubbed pose index
+    struct PoseKey { const VehicleProto* p; bool interior; int idx; };
+    std::vector<PoseKey> poseCache;   // per train: (proto, interior shown) -> scrubbed pose index
+    const bool subjek = cullValid_ && !cullSubject_.empty() && t.id == cullSubject_;
     const size_t nCars = t.vehicles.size();
     for (size_t vi = 0; vi < nCars; ++vi) {
       const SimVehicle& v = t.vehicles[vi];
@@ -183,6 +185,10 @@ void TrainVisuals::update(const SimState& st, const WorldOrigin& origin, const R
       inst.muatan = RollingStock::cargoHash(t.no.empty() ? t.consist : t.no, vi);
       if (inst.proto && !inst.proto->textured()) inst.proto = nullptr;   // textures still streaming: sarana-coloured box, never white
       inst.color = boxColor(v.sarana, inst.loco);
+      // ridden = the subject's front car in cab view (sisiTunggal); interior meshes near the camera or ridden (sakelarInterior)
+      inst.kabin = subjek && cabView_ && vi == 0 && inst.proto;
+      inst.interior = inst.kabin || !cullValid_ || !inst.proto || inst.proto->interiorNodes.empty()
+        || (cx - cullEye_.x) * (cx - cullEye_.x) + (hy - cullEye_.y) * (hy - cullEye_.y) + (cz - cullEye_.z) * (cz - cullEye_.z) < RollingStock::INTERIOR_JARAK * RollingStock::INTERIOR_JARAK;
       mat4 rot = mat4::rotationY(yawM) * rotationZ(pitchM) * mat4::rotationX(rollM);   // Euler 'YZX'
       const bool kepala = vi == 0 && !rehat, ekor = vi + 1 == nCars && !rehat;
       float k = 1, bodyL = v.length, bodyW = 3.0f;   // for the light points / tail markers
@@ -196,12 +202,13 @@ void TrainVisuals::update(const SimState& st, const WorldOrigin& origin, const R
         if (!p.restWorld.empty() && !p.doorClips.empty() && tPintu > 0) {
           if (!p.doorClips.empty()) doorDuration_ = std::max(doorDuration_, p.doorDuration);
           int idx = -1;
-          for (const auto& [pp, pi] : poseCache) if (pp == &p) idx = pi;
+          for (const PoseKey& k : poseCache) if (k.p == &p && k.interior == inst.interior) idx = k.idx;
           if (idx < 0) {   // both door clips scrubbed to the same time (sarana3d.ts setelPintu)
             std::vector<mat4> local = p.restLocal;
             for (int c : p.doorClips) scrubAnimation(p.body->nodes, p.body->animations[(size_t)c], tPintu, local);
             poses_.emplace_back(); computeWorld(p.body->nodes, p.body->roots, local, poses_.back());
-            idx = (int)poses_.size() - 1; poseCache.push_back({&p, idx});
+            if (!inst.interior) RollingStock::sembunyikanInterior(p, poses_.back());
+            idx = (int)poses_.size() - 1; poseCache.push_back({&p, inst.interior, idx});
           }
           inst.pose = idx;
         } else if (!p.doorClips.empty()) doorDuration_ = std::max(doorDuration_, p.doorDuration);
@@ -260,6 +267,26 @@ void TrainVisuals::drawLights(ModelRenderer& r) {
   }
 }
 
+// The ridden vehicle from inside (keretaVisual3d.ts sisiTunggal): every primitive of the body with the proto's cab
+// material (single-sided skin, blended glass) instead of the file's. Goes through drawMesh, which carries the base
+// colour texture only: the metal-rough / normal / emissive maps of that ONE car are dropped while it is ridden.
+void TrainVisuals::drawCab(ModelRenderer& r, const VehicleInstance& v, const mat4& base, const std::vector<mat4>* pose, const Frustum* frustum) {
+  const GpuModel& m = *v.proto->body;
+  const std::vector<mat4>& world = pose && pose->size() == m.world.size() ? *pose : m.world;
+  static const Material DEFAULT;
+  for (size_t n = 0; n < m.nodes.size(); ++n) {
+    int mi = m.nodes[n].mesh; if (mi < 0) continue;
+    mat4 w = base * world[n];
+    for (const GpuPrimitive& p : m.meshes[(size_t)mi].primitives) {
+      if (frustum && !frustum->contains(p.bounds.transformed(w))) continue;
+      const bool ada = p.material >= 0 && (size_t)p.material < v.proto->cabMaterials.size();
+      const Material& mt = ada ? v.proto->cabMaterials[(size_t)p.material] : DEFAULT;
+      rhi::Texture tex{}; if (ada && mt.baseColorTex >= 0 && (size_t)mt.baseColorTex < m.textures.size()) tex = m.textures[(size_t)mt.baseColorTex];
+      r.drawMesh(p.mesh, mt, tex, w);
+    }
+  }
+}
+
 void TrainVisuals::draw(ModelRenderer& r, const Frustum* frustum) {
   drawn = culledVehicles = 0;
   Material boxMat; boxMat.metallic = 0; boxMat.roughness = 0.8f;
@@ -268,8 +295,10 @@ void TrainVisuals::draw(ModelRenderer& r, const Frustum* frustum) {
     ++drawn;
     if (v.proto) {
       mat4 base = v.place * mat4::scale({v.scale, v.scale, v.scale});
-      const std::vector<mat4>* pose = v.pose >= 0 ? &poses_[(size_t)v.pose] : v.proto->restWorld.empty() ? nullptr : &v.proto->restWorld;
-      r.draw(*v.proto->body, base * v.proto->normalize, frustum, pose);
+      const std::vector<mat4>* pose = v.pose >= 0 ? &poses_[(size_t)v.pose]
+        : !v.interior ? &v.proto->worldFar : v.proto->restWorld.empty() ? nullptr : &v.proto->restWorld;
+      if (v.kabin) drawCab(r, v, base * v.proto->normalize, pose, frustum);
+      else r.draw(*v.proto->body, base * v.proto->normalize, frustum, pose);
       for (const Attachment& p : v.proto->parts) r.draw(*p.model, base * p.local, frustum);
       for (const CargoSlot& c : v.proto->muatan) {   // one variant per point; not resident / still streaming = bare deck
         GpuModel* m = c.varian[RollingStock::cargoVariant(v.muatan, c.varian.size())];

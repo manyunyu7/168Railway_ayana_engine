@@ -186,7 +186,7 @@ void WorldScene::draw(const mat4& viewProj, const mat4& view, vec3 eye, float fo
   // Train cull context for the next update(): the fog's far edge = where 1 - exp(-(d*D)^2) reaches 98 %
   // (the linear fog's `far` of the reference; 0 = no fog -> fixed fallback in train_cull.h)
   float fogFar = fogDensity > 0 ? std::sqrt(-std::log(0.02f)) / fogDensity : 0.f;
-  trains_.setCull(eye, fogFar, refDistance, subjectTrainId);
+  trains_.setCull(eye, fogFar, refDistance, subjectTrainId, cabView);
   sky_.draw(viewProj.inverse(), eye);
   renderer_.beginFrame(viewProj, eye, light_);
   Frustum frustum(viewProj);
