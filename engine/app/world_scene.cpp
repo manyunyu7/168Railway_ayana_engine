@@ -141,7 +141,7 @@ void WorldScene::buildDecor(const Json& world, bool testGaris, const Json* summa
   std::vector<AABB> footprints;
   for (const Placed& p : scenery_) footprints.push_back(p.bounds);
   auto t3 = clock::now();
-  trees_.build(terrain_, catalog_, footprints, decorBudgetMs);
+  trees_.build(terrain_, catalog_, footprints, decorBudgetMs, &city_);   // + jejak bangunan / hijau / pohon OSM kota
   { Json none; vegMask(const_cast<Json&>(world), world["vegMask"].isArray() ? world["vegMask"] : none); }   // player brush mask from the save
   double msTrees = since(t3);
   stock_.forget();

@@ -17,7 +17,12 @@ double acak(double x, double z, double k) {
 }
 } // namespace
 
-void Vegetation::build(const Terrain& terrain, AssetCatalog& catalog, std::span<const AABB> exclude, double budgetMs) {
+bool Vegetation::blocked(float x, float z) const {
+  for (const AABB& b : exclude_) if (x >= b.min.x && x <= b.max.x && z >= b.min.z && z <= b.max.z) return true;
+  return osm_ && osm_->insideBuilding(x, z);
+}
+
+void Vegetation::build(const Terrain& terrain, AssetCatalog& catalog, std::span<const AABB> exclude, double budgetMs, const VegetationOsm* osm) {
   auto t0 = std::chrono::steady_clock::now();
   // Which models the catalog can give us today. buildDecor is called again every time a late vegetation
   // model lands, so the usual case is "the same cells, one more model" — throwing the whole forest away
@@ -45,10 +50,24 @@ void Vegetation::build(const Terrain& terrain, AssetCatalog& catalog, std::span<
     }
   }
   exclude_.assign(exclude.begin(), exclude.end());
+  osm_ = osm;
   pendingDirty_.clear();
   stats = {};
   stats.models = (int)models_.size();
-  if (models_.empty()) { cells_.clear(); scanning_ = enumerating_ = false; scan_ = 0; return; }
+  if (models_.empty()) { cells_.clear(); fixed_.clear(); scanning_ = enumerating_ = false; scan_ = 0; return; }
+  // pohon OSM eksplisit (dunia3d.ts pohonTetapVeg): disaring ruang bebas rel & jejak, tinggi dari tanah terukir
+  fixed_.clear();
+  if (osm_) {
+    const WorldOrigin& org = terrain.origin();
+    for (const vec2 t : osm_->fixedTrees()) {
+      if (terrain.railDistance(t.x, t.y) < CLEARANCE || blocked(t.x, t.y)) continue;
+      const float k = 0.72f + (float)acak(t.x, t.y, 6) * 0.75f;
+      Tree tr{t.x, terrain.groundHeight(t.x + org.ox, t.y + org.oz), t.y, k, (float)(acak(t.x, t.y, 8) * 2 * M_PI), 0.f, (uint8_t)std::floor(acak(t.x, t.y, 9) * models_.size())};
+      tr.model = (uint8_t)std::min<size_t>(tr.model, models_.size() - 1);
+      fixed_.push_back(tr);
+    }
+  }
+  stats.fixedTrees = fixed_.size();
 
   if (cells_.empty()) {   // first build: work out which cells can hold trees at all, in slices
     const WorldOrigin& org = terrain.origin();
@@ -114,9 +133,10 @@ void Vegetation::scatter(const Terrain& terrain, Cell& cell) {
     float sum = rgb[0] + rgb[1] + rgb[2] + 1e-6f;
     float exg = (2 * rgb[1] - rgb[0] - rgb[2]) / sum, v = std::max({rgb[0], rgb[1], rgb[2]});
     float green = std::clamp((exg - EXG_MIN) / EXG_RANGE, 0.f, 1.f);
-    if (green <= 0 && mask_.empty()) continue;
+    if (green <= 0 && mask_.empty() && !osm_) continue;
     float dark = std::clamp((meanV + DARK_OFFSET - v) / DARK_RANGE, 0.f, 1.f);
     float p = green * (BASE_WEIGHT + (1 - BASE_WEIGHT) * dark);
+    if (osm_ && osm_->insideGreen((float)x, (float)z)) p = std::max(p, GREEN_OSM);   // poligon hijau OSM menguatkan citra
     if (!mask_.empty()) {   // player brush wins over the imagery (vegetasi.ts tebarSel vegMask)
       int vm = maskAt(wx, wy);
       if (vm < 0) continue;
@@ -124,9 +144,7 @@ void Vegetation::scatter(const Terrain& terrain, Cell& cell) {
     }
     if (p <= 0 || acak(x, z, 5) >= p) continue;
     if (terrain.railDistance((float)x, (float)z) < CLEARANCE) continue;
-    bool blocked = false;
-    for (const AABB& b : exclude_) if (x >= b.min.x && x <= b.max.x && z >= b.min.z && z <= b.max.z) { blocked = true; break; }
-    if (blocked) continue;
+    if (blocked((float)x, (float)z)) continue;   // hiasan box or OSM building footprint
     float y = terrain.groundHeight(wx, wy);
     float k = 0.72f + (float)acak(x, z, 6) * 0.75f;
     Tree t{(float)x, y, (float)z, k, (float)(acak(x, z, 8) * 2 * M_PI), (float)acak(x, z, 10), (uint8_t)(std::floor(acak(x, z, 9) * models_.size()))};
@@ -204,7 +222,7 @@ void Vegetation::update(const Terrain& terrain, int maxCells, double budgetMs) {
 
 void Vegetation::draw(ModelRenderer& r, vec3 eye, const Frustum* frustum) {
   stats.drawn = stats.cellsDrawn = 0;
-  if (models_.empty() || cells_.empty()) return;
+  if (models_.empty() || (cells_.empty() && fixed_.empty())) return;
   for (ModelSlot& m : models_) m.mats.clear();
   // cells by distance from the eye to the cell box (selSekitar), nearest first
   struct Near { float d; const Cell* c; };
@@ -232,6 +250,16 @@ void Vegetation::draw(ModelRenderer& r, vec3 eye, const Frustum* frustum) {
     }
     if (total >= (unsigned)INSTANCE_CAP) break;
   }
+  // pohon OSM eksplisit: tak lewat sel, tetap tunduk jarak pandang (vegetasi3d.ts pohonTetapVeg)
+  for (const Tree& t : fixed_) {
+    if (total >= (unsigned)INSTANCE_CAP) break;
+    const float dx = t.x - eye.x, dz = t.z - eye.z;
+    if (dx * dx + dz * dz > viewRadius * viewRadius) continue;
+    ModelSlot& m = models_[t.model];
+    const float s = TREE_HEIGHT * t.scale;
+    m.mats.push_back(mat4::translation({t.x, t.y, t.z}) * mat4::rotationY(t.rot) * mat4::scale({s, s, s}) * m.norm);
+    ++total;
+  }
   for (ModelSlot& m : models_) {
     if (m.mats.empty()) continue;
     rhi::updateBuffer(m.instances, std::as_bytes(std::span(m.mats)));
@@ -243,7 +271,7 @@ void Vegetation::draw(ModelRenderer& r, vec3 eye, const Frustum* frustum) {
 
 void Vegetation::destroy() {
   for (ModelSlot& m : models_) rhi::destroyBuffer(m.instances);
-  models_.clear(); cells_.clear(); exclude_.clear(); scanning_ = false; enumerating_ = false; scan_ = 0; pendingDirty_.clear();
+  models_.clear(); cells_.clear(); fixed_.clear(); exclude_.clear(); osm_ = nullptr; scanning_ = false; enumerating_ = false; scan_ = 0; pendingDirty_.clear();
 }
 
 } // namespace eng

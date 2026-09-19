@@ -17,6 +17,17 @@ namespace eng {
 class AssetCatalog;
 class Terrain;
 
+// Data tanah OSM dari kota panggangan (CityVisuals; kota3d.ts adaBangunan / hijauOSM / pohonTetap).
+// Koordinat SCENE xz. insideBuilding = pohon tak tumbuh menembus rumah (jejak OSM + tapak kit);
+// insideGreen = poligon hijau OSM menaikkan peluang tanam ke 0,85 (lebih tepercaya daripada warna);
+// fixedTrees = pohon OSM eksplisit, ditanam tanpa lewat masker (tetap tunduk ruang bebas rel & jejak).
+struct VegetationOsm {
+  virtual ~VegetationOsm() = default;
+  virtual bool insideBuilding(float x, float z) const = 0;
+  virtual bool insideGreen(float x, float z) const = 0;
+  virtual std::span<const vec2> fixedTrees() const = 0;
+};
+
 namespace vegetation {
 constexpr float CELL = 192;                 // SEL_VEG
 constexpr float SPACING_BASE = 11;          // JARAK_BASIS (m at density 1)
@@ -28,18 +39,22 @@ constexpr float TREE_HEIGHT = 9;            // POHON_TINGGI (m at scale 1)
 constexpr float EXG_MIN = 0.05f, EXG_RANGE = 0.18f, DARK_OFFSET = 0.06f, DARK_RANGE = 0.16f, BASE_WEIGHT = 0.35f;
 constexpr float MASK_RADIUS = 4;            // half-window (m) of the imagery average per candidate
 constexpr float SCATTER_MARGIN = 2200;      // cells farther than this from any rail are not scattered
+constexpr float GREEN_OSM = 0.85f;          // peluang tanam di dalam poligon hijau OSM (vegetasi.ts hijauOSM)
+constexpr float ROW_SPACING = 8;            // jarak pohon dalam deret tree_row OSM (kota3d.ts)
 constexpr int INSTANCE_CAP = 20000;
 } // namespace vegetation
 
 class Vegetation {
 public:
-  struct Stats { size_t trees = 0; int cells = 0, models = 0; double buildMs = 0; unsigned drawn = 0, cellsDrawn = 0; };
+  struct Stats { size_t trees = 0, fixedTrees = 0; int cells = 0, models = 0; double buildMs = 0; unsigned drawn = 0, cellsDrawn = 0; };
 
   // Scatters trees. terrain must be loaded with rails registered; exclude = scene-space footprints
   // (xz used) such as station buildings. Tree models = catalog `objek` entries with kategori 'vegetasi'.
   // `budgetMs` > 0 scatters only what fits in that many milliseconds and leaves the rest to update():
   // the world draws (without those trees) between the slices instead of freezing for seconds on a phone.
-  void build(const Terrain& terrain, AssetCatalog& catalog, std::span<const AABB> exclude = {}, double budgetMs = 0);
+  // `osm` (optional, must outlive the scatter) = building footprints / green polygons / explicit trees
+  // of the baked city; nullptr = imagery and footprints only.
+  void build(const Terrain& terrain, AssetCatalog& catalog, std::span<const AABB> exclude = {}, double budgetMs = 0, const VegetationOsm* osm = nullptr);
   // Follows the streamed imagery: cells whose finest resident tile changed are re-scattered, at most
   // `maxCells` per call (0 = all) and at most `budgetMs` of work (0 = no time limit; a cell is never
   // split, so one slow cell may overshoot). Cheap when nothing changed (imageryVersion check).
@@ -70,6 +85,9 @@ private:
   std::vector<Cell> cells_;
   std::vector<ModelSlot> models_;
   std::vector<AABB> exclude_;
+  const VegetationOsm* osm_ = nullptr;
+  std::vector<Tree> fixed_;           // pohon OSM eksplisit: bukan per sel, selalu tampil dalam viewRadius
+  bool blocked(float x, float z) const;   // inside a footprint (exclude_ box or OSM building)
   std::vector<Stamp> mask_;
   std::vector<Stamp> pendingDirty_;   // stamps whose cells are re-scattered on the next update()
   int maskAt(double wx, double wy) const;
