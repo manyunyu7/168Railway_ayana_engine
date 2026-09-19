@@ -4,6 +4,7 @@
 #pragma once
 #include "engine/math/geometry.h"
 #include "engine/world/asset_catalog.h"
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -11,6 +12,11 @@
 namespace eng {
 
 struct Attachment { GpuModel* model; mat4 local; };   // local = normalised-body space
+
+// Cargo point (`a.muatan<n>`, model.json `muatan`, the old src/tiga/muatan.ts): every listed variant, in catalog
+// order, so the pick (pilihMuatan) is stable; a variant not (yet) resident is nullptr and simply not drawn. The
+// point sits on the deck surface and the cargo models have their origin at bottom-centre: no offset, no flip.
+struct CargoSlot { mat4 local; std::vector<GpuModel*> varian; };
 
 // Light attach points (§7.3, dunia3dKonst.ts peranLampu / lampuKarangan): `sorot` = headlight,
 // `muka` = ditch light, `akhiran` = tail light. `end` = which end of the body (+1 = +X, the front).
@@ -21,6 +27,7 @@ struct VehicleProto {
   GpuModel* body = nullptr;
   float panjang = 1;            // coupler-to-coupler length of the model (m)
   std::vector<Attachment> parts;
+  std::vector<CargoSlot> muatan;   // empty for every passenger car and for a flat wagon whose catalog says nothing
   mat4 normalize;               // raw model space -> normalised body space
   AABB bounds;                  // in normalised body space, body + parts
   vec3 size;                    // body bbox size after normalisation
@@ -48,6 +55,10 @@ public:
   void forget() { protos_.clear(); }   // streamed models: rebuild the prototypes after a model arrived
   // Normalisation of a raw model (also usable for scenery: steps 1-2 of §10.3).
   static mat4 normalizeTransform(const GpuModel& m, bool dropToGround, vec3* sizeOut = nullptr);
+  // FNV-1a of "<kunci>#<i>" (muatan.ts pilihMuatan): the same train always shows the same containers, two trains
+  // differ, and every machine agrees. cargoVariant() folds it onto a point's variant count (n <= 1 -> 0).
+  static uint32_t cargoHash(const std::string& kunci, size_t i);
+  static size_t cargoVariant(uint32_t hash, size_t n) { return n <= 1 ? 0 : hash % n; }
 private:
   AssetCatalog* catalog_ = nullptr;
   std::map<std::string, VehicleProto> protos_;

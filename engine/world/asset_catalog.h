@@ -17,6 +17,10 @@ namespace eng {
 struct CatalogEntry {
   std::string id, berkas, nama, kategori;
   std::map<std::string, std::string> bogie, kopling;   // attach node name (or "*") -> slot id
+  // Cargo (model.json `muatan`, the old src/tiga/muatan.ts): attach node `a.muatan<n>` (or "*") -> candidate slot
+  // ids; one is picked per vehicle from the train number + car index (RollingStock::pilihMuatan). JSON `null` is
+  // kept as an EMPTY list = "this point is deliberately empty", distinct from an absent key (= fall back to "*").
+  std::map<std::string, std::vector<std::string>> muatan;
   bool pilot = false, prosedural = false;
   bool sarana = false;   // rolling-stock slot (model.json `sarana`): no collision geometry kept for it
   std::vector<std::string> lod;   // coarser versions, nearest first (model.json `_kit.lod1`, `_kit.lod2` or `lod: [...]`);

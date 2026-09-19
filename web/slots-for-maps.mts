@@ -1,5 +1,5 @@
 // Lists the catalog slots (model.json ids) the given maps can need in the web client: every vehicle model any
-// fleet (armada) may resolve for the consists in the GAPEKA (+ their bogie / coupling attachments), the
+// fleet (armada) may resolve for the consists in the GAPEKA (+ their bogie / coupling / cargo attachments), the
 // hiasan objects, the garis classes and the `vegetasi` category. One id per line: "<id> <berkas>".
 // Run from the PPKA root:  cd ../ppka-wannabe-2 && npx tsx ../game-engine-experiment/web/slots-for-maps.mts mojokerto bks
 import fs from 'node:fs';
@@ -24,6 +24,8 @@ const addSarana = (id: string) => {
   if (!e) return;
   add(id, e.pilotBerkas ?? e.berkas);
   for (const att of [e.bogie, e.kopling]) for (const v of Object.values(att ?? {})) if (typeof v === 'string') addSarana(v);
+  // cargo (`muatan`): string | string[] | null per attach point — every listed variant can be picked by some train
+  for (const v of Object.values(e.muatan ?? {})) for (const id of typeof v === 'string' ? [v] : Array.isArray(v) ? v : []) if (typeof id === 'string') addSarana(id);
 };
 for (const map of process.argv.slice(2)) {
   const data = JSON.parse(fs.readFileSync(path.join(PPKA, 'src/data', map.endsWith('.json') ? map : `${map}.json`), 'utf8'));

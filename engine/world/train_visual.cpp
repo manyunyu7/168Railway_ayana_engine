@@ -158,6 +158,8 @@ void TrainVisuals::update(const SimState& st, const WorldOrigin& origin, const R
       inst.len = v.length; inst.loco = v.kind == "loco";
       inst.centre = {cx, hy, cz};
       inst.proto = stock_ ? stock_->proto(v.model) : nullptr;
+      // cargo pick (muatan.ts setelMuatan): keyed by the train number, the consist name when the train has none
+      inst.muatan = RollingStock::cargoHash(t.no.empty() ? t.consist : t.no, vi);
       if (inst.proto && !inst.proto->textured()) inst.proto = nullptr;   // textures still streaming: sarana-coloured box, never white
       inst.color = boxColor(v.sarana, inst.loco);
       mat4 rot = mat4::rotationY(yawM) * rotationZ(pitchM) * mat4::rotationX(rollM);   // Euler 'YZX'
@@ -244,6 +246,10 @@ void TrainVisuals::draw(ModelRenderer& r, const Frustum* frustum) {
       const std::vector<mat4>* pose = v.pose >= 0 ? &poses_[(size_t)v.pose] : v.proto->restWorld.empty() ? nullptr : &v.proto->restWorld;
       r.draw(*v.proto->body, base * v.proto->normalize, frustum, pose);
       for (const Attachment& p : v.proto->parts) r.draw(*p.model, base * p.local, frustum);
+      for (const CargoSlot& c : v.proto->muatan) {   // one variant per point; not resident / still streaming = bare deck
+        GpuModel* m = c.varian[RollingStock::cargoVariant(v.muatan, c.varian.size())];
+        if (m && m->textured()) r.draw(*m, base * c.local, frustum);
+      }
     } else {
       float h = v.loco ? 4.0f : 3.7f;
       boxMat.baseColor = {v.color.x, v.color.y, v.color.z, 1};

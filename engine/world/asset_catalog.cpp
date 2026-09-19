@@ -2,6 +2,7 @@
 #include "engine/asset/gltf.h"
 #include "engine/asset/emod.h"
 #include "engine/core/json.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -28,6 +29,19 @@ void readAttach(const Json& j, std::map<std::string, std::string>& out) {
   for (const auto& [k, v] : j.obj) if (v.isString()) out[k] = v.str;
 }
 
+// `muatan`: string | string[] | null per key. Duplicates are dropped (a livery listed twice would just show up
+// twice as often - a typo, not a choice); null -> empty list (see CatalogEntry::muatan).
+void readMuatan(const Json& j, std::map<std::string, std::vector<std::string>>& out) {
+  for (const auto& [k, v] : j.obj) {
+    std::vector<std::string> ids;
+    auto add = [&](const std::string& s) { if (!s.empty() && std::find(ids.begin(), ids.end(), s) == ids.end()) ids.push_back(s); };
+    if (v.isString()) add(v.str);
+    else if (v.isArray()) { for (const Json& x : v.arr) if (x.isString()) add(x.str); }
+    else if (!v.isNull()) continue;
+    out[k] = ids;
+  }
+}
+
 CatalogEntry entryFrom(const std::string& id, const Json& j) {
   CatalogEntry e;
   e.id = id;
@@ -38,6 +52,7 @@ CatalogEntry entryFrom(const std::string& id, const Json& j) {
   e.prosedural = j.has("prosedural");
   readAttach(j["bogie"], e.bogie);
   readAttach(j["kopling"], e.kopling);
+  readMuatan(j["muatan"], e.muatan);
   for (const Json& l : j["lod"].arr) if (l.isString() && !l.str.empty()) e.lod.push_back(l.str);
   if (e.lod.empty()) for (int n = 1; n <= 4; ++n) {   // the kit convention: _kit.lod1, _kit.lod2 (contiguous)
     std::string f = j["_kit"]["lod" + std::to_string(n)].stringOr(j["lod" + std::to_string(n)].stringOr(""));

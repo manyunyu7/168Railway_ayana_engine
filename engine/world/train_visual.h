@@ -25,6 +25,7 @@ struct VehicleInstance {
   vec3 centre;         // scene position of the car centre on the rail head
   AABB bounds;         // scene-space, for culling
   int pose = -1;       // index into TrainVisuals' per-frame node poses (door clips scrubbed); -1 = proto rest pose
+  uint32_t muatan = 0; // RollingStock::cargoHash(train no, car index): which cargo variant this car shows
 };
 
 struct TrainLabel { std::string id, no, name, state; float speed = 0; vec3 anchor; vec3 dir; };   // dir = unit travel direction (scene XZ)

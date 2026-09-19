@@ -58,7 +58,21 @@ const std::string* lookupAttach(const std::map<std::string, std::string>& map, c
   return it == map.end() ? nullptr : &it->second;
 }
 
+const std::vector<std::string>* lookupCargo(const std::map<std::string, std::vector<std::string>>& map, const std::string& nodeName) {
+  // per-point entry wins over "*" even when it is the empty list (JSON null = deliberately empty)
+  for (const auto& [k, v] : map) if (k != "*" && flatNodeName(k) == flatNodeName(nodeName)) return &v;
+  auto it = map.find("*");
+  return it == map.end() ? nullptr : &it->second;
+}
+
 } // namespace
+
+uint32_t RollingStock::cargoHash(const std::string& kunci, size_t i) {
+  std::string s = kunci + "#" + std::to_string(i);
+  uint32_t h = 2166136261u;
+  for (unsigned char c : s) { h ^= c; h *= 16777619u; }
+  return h;
+}
 
 mat4 RollingStock::normalizeTransform(const GpuModel& m, bool dropToGround, vec3* sizeOut) {
   AABB bb = m.bounds;
@@ -105,6 +119,18 @@ const VehicleProto* RollingStock::proto(const std::string& slotId) {
     int idx = 0; const std::string* id = nullptr; bool flip = false;
     if (isAttachName(flat, "abog", idx)) id = lookupAttach(entry->bogie, n.name);
     else if (isAttachName(flat, "akopling", idx)) { id = lookupAttach(entry->kopling, n.name); flip = idx % 2 == 1; }
+    if (isAttachName(flat, "amuatan", idx)) {   // cargo: every variant kept, one shown per vehicle (train_visual)
+      const std::vector<std::string>* ids = lookupCargo(entry->muatan, n.name);
+      if (!ids || ids->empty()) continue;
+      CargoSlot slot; slot.local = p.normalize * body->world[i];
+      for (const std::string& mid : *ids) {
+        GpuModel* part = catalog_->model(mid);
+        slot.varian.push_back(part);
+        if (part) p.bounds.expand(transformedBounds(part->bounds, slot.local));
+      }
+      p.muatan.push_back(std::move(slot));
+      continue;
+    }
     if (!id || id->empty()) continue;
     GpuModel* part = catalog_->model(*id);
     if (!part) continue;
@@ -139,8 +165,8 @@ const VehicleProto* RollingStock::proto(const std::string& slotId) {
     }
     computeWorld(body->nodes, body->roots, p.restLocal, p.restWorld);
   }
-  std::printf("[stock] %s: panjang %.2f m, size %.2f x %.2f x %.2f, %zu parts, %zu lights%s, %zu door clips%s\n", slotId.c_str(), p.panjang, p.size.x, p.size.y, p.size.z, p.parts.size(),
-              p.lights.size(), p.lightsFromModel ? "" : " (synthetic)", p.doorClips.size(), p.restWorld.empty() ? "" : ", animated");
+  std::printf("[stock] %s: panjang %.2f m, size %.2f x %.2f x %.2f, %zu parts, %zu cargo points, %zu lights%s, %zu door clips%s\n", slotId.c_str(), p.panjang, p.size.x, p.size.y, p.size.z, p.parts.size(),
+              p.muatan.size(), p.lights.size(), p.lightsFromModel ? "" : " (synthetic)", p.doorClips.size(), p.restWorld.empty() ? "" : ", animated");
   protos_[slotId] = p;
   return &protos_[slotId];
 }
