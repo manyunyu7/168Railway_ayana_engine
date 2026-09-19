@@ -26,7 +26,7 @@ std::string shellQuote(const std::string& s) {
 }
 
 void readAttach(const Json& j, std::map<std::string, std::string>& out) {
-  for (const auto& [k, v] : j.obj) if (v.isString()) out[k] = v.str;
+  for (const auto& [k, v] : j.obj) { if (v.isString()) out[k] = v.str; else if (v.isNull()) out[k] = ""; }   // null = emptied point
 }
 
 // `muatan`: string | string[] | null per key. Duplicates are dropped (a livery listed twice would just show up
@@ -53,6 +53,7 @@ CatalogEntry entryFrom(const std::string& id, const Json& j) {
   readAttach(j["bogie"], e.bogie);
   readAttach(j["kopling"], e.kopling);
   readMuatan(j["muatan"], e.muatan);
+  e.kuid = j["kuid"].stringOr(j["kuidTrainz"].stringOr(""));
   for (const Json& l : j["lod"].arr) if (l.isString() && !l.str.empty()) e.lod.push_back(l.str);
   if (e.lod.empty()) for (int n = 1; n <= 4; ++n) {   // the kit convention: _kit.lod1, _kit.lod2 (contiguous)
     std::string f = j["_kit"]["lod" + std::to_string(n)].stringOr(j["lod" + std::to_string(n)].stringOr(""));
@@ -88,8 +89,11 @@ bool AssetCatalog::loadFromText(const std::string& modelJson, RequestFn request)
 bool AssetCatalog::parseCatalog(const std::string& text) {
   std::string jerr; Json doc = Json::parse(text, &jerr);
   if (!jerr.empty()) { err_ = "model.json: " + jerr; return false; }
-  entries_.clear();
+  entries_.clear(); kuid_.clear();
   for (const auto& [id, j] : doc["sarana"].obj) if (j.isObject()) { entries_[id] = entryFrom(id, j); entries_[id].sarana = true; }
+  // kuid index. bogie.ts let a duplicate kuid resolve to the LATER entry; our Json keeps objects as std::map, so a
+  // duplicate resolves to the last id in ID order instead - the catalog has none (19 distinct kuids), documented here.
+  for (const auto& [id, e] : entries_) if (e.sarana && !e.kuid.empty()) kuid_[e.kuid] = id;
   for (const Json& j : doc["objek"].arr) {
     std::string id = j["id"].stringOr("");
     if (id.empty() || entries_.count(id)) continue;

@@ -88,7 +88,8 @@ TEST_MAIN({
   CHECK(root.name == "root" && root.mesh == -1 && root.parent == -1 && root.children.size() == 1 && root.children[0] == 1);
   CHECK(leaf.name == "leaf" && leaf.mesh == 0 && leaf.parent == 0 && leaf.children.empty());
   CHECK(root.local.m[3][0] == 1 && root.local.m[3][1] == 2 && root.local.m[3][2] == 3);
-  CHECK(root.extras.size() == 4);   // arrays dropped
+  CHECK(root.extras.size() == 5);   // arrays kept as JSON text (the im2glb `extras.bogie` manifest)
+  CHECK(root.extras.at("ignored") == "[1,2]");
   CHECK(root.extraNumber("kelas", -1) == 3); CHECK(root.extraNumber("ratio", -1) == 0.5f);
   CHECK(root.extras.at("nama") == "bogie"); CHECK(root.extras.at("flip") == "true");
   CHECK(root.extraNumber("nama", -1) == -1); CHECK(root.extraNumber("absent", 7) == 7);

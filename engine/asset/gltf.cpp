@@ -283,10 +283,11 @@ bool loadGlb(std::span<const uint8_t> bytes, Model& out, std::string& err) {
   for (size_t i = 0; i < nodes.size(); ++i) {
     const Json& n = nodes[i]; Node& node = out.nodes[i];
     node.name = n["name"].stringOr(""); node.mesh = n["mesh"].intOr(-1); node.skin = n["skin"].intOr(-1); nodeTransform(n, node);
-    for (const auto& [k, v] : n["extras"].obj) {   // scalars only; arrays/objects are dropped
+    for (const auto& [k, v] : n["extras"].obj) {   // scalars as text; arrays/objects as compact JSON text (extras.bogie manifest)
       if (v.isNumber()) { char buf[32]; std::snprintf(buf, sizeof buf, "%.9g", v.num); node.extras[k] = buf; }
       else if (v.isString()) node.extras[k] = v.str;
       else if (v.type == Json::Type::Bool) node.extras[k] = v.b ? "true" : "false";
+      else if (v.isArray() || v.isObject()) node.extras[k] = v.dump();
     }
     for (const Json& c : n["children"].arr) { int ci = c.intOr(-1); if (ci >= 0 && ci < (int)nodes.size()) { node.children.push_back(ci); out.nodes[(size_t)ci].parent = (int)i; } }
   }

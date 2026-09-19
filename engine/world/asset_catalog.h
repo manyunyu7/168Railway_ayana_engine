@@ -16,7 +16,11 @@ namespace eng {
 
 struct CatalogEntry {
   std::string id, berkas, nama, kategori;
-  std::map<std::string, std::string> bogie, kopling;   // attach node name (or "*") -> slot id
+  // attach node name (or "*") -> slot id. JSON `null` is kept as "" = "this point is deliberately empty" (bogie.ts:
+  // distinct from an absent key, which falls back to "*" and then to the body's own extras.bogie manifest).
+  std::map<std::string, std::string> bogie, kopling;
+  std::string kuid;   // Trainz asset kuid of a bogie/coupling entry (model.json `kuid` / `kuidTrainz`): the key the
+                      // im2glb manifest `extras.bogie` of a body names its bogies by
   // Cargo (model.json `muatan`, the old src/tiga/muatan.ts): attach node `a.muatan<n>` (or "*") -> candidate slot
   // ids; one is picked per vehicle from the train number + car index (RollingStock::pilihMuatan). JSON `null` is
   // kept as an EMPTY list = "this point is deliberately empty", distinct from an absent key (= fall back to "*").
@@ -78,6 +82,9 @@ public:
   const Options& options() const { return opt_; }
 
   const CatalogEntry* find(const std::string& id) const;
+  // Catalog id of the entry declaring this Trainz kuid (bogie.ts indeksKuid: the LAST entry wins = the newest
+  // addition); "" when no entry claims it.
+  std::string idByKuid(const std::string& kuid) const { auto it = kuid_.find(kuid); return it == kuid_.end() ? std::string() : it->second; }
   // §7.2 MODEL_SARANA: catalog slot a bridge sarana id (`krl-kuha`, `cc206`, `k1`, ...) falls back to; nullptr when
   // the id is not a sarana alias. The bridge sends the sarana id when no fleet model applies (KRL, lokos).
   static const char* saranaSlot(const std::string& id);
@@ -101,6 +108,7 @@ private:
   Options opt_;
   std::string err_;
   std::map<std::string, CatalogEntry> entries_;
+  std::map<std::string, std::string> kuid_;   // kuid -> catalog id
   std::vector<GarisEntry> garis_;
   std::vector<AvatarPiece> avatar_;
   std::map<std::string, std::unique_ptr<GpuModel>> models_;   // nullptr = known missing

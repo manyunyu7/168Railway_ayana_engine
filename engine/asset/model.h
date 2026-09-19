@@ -78,7 +78,7 @@ struct Node {
   mat4 local;                       // TRS baked into a matrix
   vec3 translation{0, 0, 0}; quat rotation; vec3 scale{1, 1, 1};   // the same TRS split (animation targets replace
                                     // one component and rebuild `local`); a matrix-form node is decomposed
-  std::map<std::string, std::string> extras;   // scalar glTF node extras (numbers/bools/strings as text)
+  std::map<std::string, std::string> extras;   // glTF node extras: scalars as text, arrays/objects as compact JSON text
   float extraNumber(const std::string& key, float d) const {
     auto it = extras.find(key); if (it == extras.end()) return d;
     char* e = nullptr; float v = std::strtof(it->second.c_str(), &e); return e && *e == 0 ? v : d;

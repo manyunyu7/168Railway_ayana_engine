@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <regex>
+#include "engine/core/json.h"
 
 namespace eng {
 
@@ -63,6 +64,25 @@ const std::string* lookupAttach(const std::map<std::string, std::string>& map, c
   auto it = map.find("*");
   return it == map.end() ? nullptr : &it->second;
 }
+
+} // namespace
+
+std::vector<ManifesBogie> bacaManifesBogie(const GpuModel& body) {
+  std::vector<ManifesBogie> out;
+  for (const Node& n : body.nodes) {
+    auto it = n.extras.find("bogie"); if (it == n.extras.end()) continue;
+    std::string err; Json j = Json::parse(it->second, &err);
+    if (!err.empty() || !j.isArray()) continue;
+    for (const Json& m : j.arr) {
+      ManifesBogie b; b.titik = m["titik"].stringOr(""); b.kuid = m["kuid"].stringOr(""); b.balik = m["balik"].boolOr(false);
+      if (!b.titik.empty()) out.push_back(b);
+    }
+    if (!out.empty()) return out;
+  }
+  return out;
+}
+
+namespace {
 
 // dunia3dKonst.ts KACA_KABIN: slots whose glass is OPAQUE in the file (dark windows from outside) and must be made
 // see-through from the cab by code; the regex matches the material name. KULIT_DUA_SISI: slots kept double-sided
@@ -145,12 +165,22 @@ const VehicleProto* RollingStock::proto(const std::string& slotId) {
   }
   if (!hasExtra && hasFront && hasBack && std::fabs(limFront - limBack) > 1) p.panjang = std::fabs(limFront - limBack);
 
-  // attachments: bogies (never flipped: synthetic manifests) and couplings (odd ends rotated pi)
+  // attachments: bogies and couplings (odd coupling ends rotated pi). Bogie precedence (bogie.ts rencanaBogie):
+  // catalog per-point -> catalog "*" -> the body's own extras.bogie manifest (kuid -> catalog entry declaring that
+  // kuid; `balik` = Trainz `reversed`, a half turn about the vertical axis). A manifest kuid nobody declares, or a
+  // point the catalog emptied with null, stays empty: a car without bogies still reads as a car.
+  const std::vector<ManifesBogie> manifes = bacaManifesBogie(*body);
   for (size_t i = 0; i < body->nodes.size(); ++i) {
     const Node& n = body->nodes[i];
     std::string flat = flatNodeName(n.name);
-    int idx = 0; const std::string* id = nullptr; bool flip = false;
-    if (isAttachName(flat, "abog", idx)) id = lookupAttach(entry->bogie, n.name);
+    int idx = 0; const std::string* id = nullptr; bool flip = false; std::string dariManifes;
+    if (isAttachName(flat, "abog", idx)) {
+      id = lookupAttach(entry->bogie, n.name);
+      if (!id) for (const ManifesBogie& m : manifes) if (flatNodeName(m.titik) == flat) {
+        dariManifes = catalog_->idByKuid(m.kuid); if (!dariManifes.empty()) { id = &dariManifes; flip = m.balik; }
+        break;
+      }
+    }
     else if (isAttachName(flat, "akopling", idx)) { id = lookupAttach(entry->kopling, n.name); flip = idx % 2 == 1; }
     if (isAttachName(flat, "amuatan", idx)) {   // cargo: every variant kept, one shown per vehicle (train_visual)
       const std::vector<std::string>* ids = lookupCargo(entry->muatan, n.name);

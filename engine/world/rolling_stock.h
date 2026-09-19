@@ -87,6 +87,11 @@ std::string flatNodeName(const std::string& s);
 bool lightRole(const std::string& nodeName, LightRole& role);
 // Synthetic light points for a body of size `sz` (lampuKarangan): two headlights, one tail light.
 std::vector<LightPoint> fallbackLights(vec3 sz);
+// im2glb `extras.bogie` manifest of a body (bogie.ts ManifesBogie): per attach point the Trainz kuid of the bogie
+// and the `reversed` flag (`balik`). Written to the root node; the first node carrying a non-empty list is read
+// (gltf.cpp keeps array extras as JSON text). Empty for bodies we build ourselves (Blender: `a.bog*` nodes only).
+struct ManifesBogie { std::string titik, kuid; bool balik = false; };
+std::vector<ManifesBogie> bacaManifesBogie(const GpuModel& body);
 // Interior node (sakelarInterior): the name contains `interior`, any case.
 bool isInteriorName(const std::string& nodeName);
 // The body's materials as seen from the cab (VehicleProto::cabMaterials) for a catalog slot (a sarana alias such as
