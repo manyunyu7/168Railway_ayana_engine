@@ -96,7 +96,7 @@ public:
 
   // Walk-mode collision (CameraRig WalkInput): the scenery triangles (hiasan station models: walls, floors,
   // ceilings, `peron`-named materials flagged as platforms; garis platforms/roads/decks: floors) built with the
-  // decor, and the train vehicles as boxes (walls, collected per step since they move).
+  // decor, and the MOVING train vehicles as boxes (collected per step since they move; a standing train is walk-through).
   const WalkCollider& walkCollider() const { if (walkDirty_) buildWalkCollider(); return walk_; }
   void collectWalkBoxes(std::vector<WalkBox>& out) const;
   float groundHeight(double wx, double wy) const { return terrain_.groundHeight(wx, wy); }

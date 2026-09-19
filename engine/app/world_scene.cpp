@@ -303,7 +303,8 @@ void WorldScene::buildWalkCollider() const {
 }
 
 void WorldScene::collectWalkBoxes(std::vector<WalkBox>& out) const {
-  for (const VehicleInstance& v : trains_.vehicles()) if (v.bounds.valid()) out.push_back({v.bounds, true});
+  // a standing train is no wall (VehicleInstance::tembus): the walker passes through it
+  for (const VehicleInstance& v : trains_.vehicles()) if (v.bounds.valid() && !v.tembus) out.push_back({v.bounds, true});
 }
 
 void WorldScene::pickAt(float px, float py, int w, int h, const mat4& viewProj, vec3 eye, std::string& sigId, std::string& ptId) const {

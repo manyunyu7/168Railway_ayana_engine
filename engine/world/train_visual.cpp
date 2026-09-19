@@ -156,6 +156,7 @@ void TrainVisuals::update(const SimState& st, const WorldOrigin& origin, const R
       float yawM = yaw + (balik ? PI : 0), pitchM = balik ? -pitch : pitch, rollM = balik ? -roll : roll;
       VehicleInstance inst;
       inst.len = v.length; inst.loco = v.kind == "loco";
+      inst.tembus = std::fabs(t.speed) < 0.3f;
       inst.centre = {cx, hy, cz};
       inst.proto = stock_ ? stock_->proto(v.model) : nullptr;
       // cargo pick (muatan.ts setelMuatan): keyed by the train number, the consist name when the train has none

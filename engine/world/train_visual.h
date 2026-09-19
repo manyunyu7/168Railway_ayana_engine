@@ -26,6 +26,10 @@ struct VehicleInstance {
   AABB bounds;         // scene-space, for culling
   int pose = -1;       // index into TrainVisuals' per-frame node poses (door clips scrubbed); -1 = proto rest pose
   uint32_t muatan = 0; // RollingStock::cargoHash(train no, car index): which cargo variant this car shows
+  // A standing / crawling train (< 0.3 m/s) is walk-through for the pedestrian camera (keretaVisual3d.ts
+  // `tembus`, Henry's choice: cross to the other platform without walking round a 250 m consist); anything
+  // moving stays a wall. WorldScene::collectWalkBoxes skips these.
+  bool tembus = false;
 };
 
 struct TrainLabel { std::string id, no, name, state; float speed = 0; vec3 anchor; vec3 dir; };   // dir = unit travel direction (scene XZ)
