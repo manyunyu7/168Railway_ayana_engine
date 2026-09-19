@@ -20,7 +20,7 @@ and `mejaApungAyana.ts` (`MejaApung3D` reused as-is); the surveyor phase 2 tools
 `kuasAyana.ts`, `objekRelAyana.ts`, `ukurAyana.ts`, `tinggiAyana.ts` over `engine_api_edit` / `engine_api_markers`); the
 engine got container loads (1bc02ce), day-time coronas (ff9ba35), walk-through standing trains (e53ef3b), train cull tiers
 (fc44607) and OSM footprints / green polygons / explicit trees in the vegetation. Still being ported on 2026-09-19 (other
-agents, rows marked "sedang diport"): bogie by kuid, clicks on the in-world meja board, the initial camera overview
+agents): bogie by kuid, clicks on the in-world meja board, the initial camera overview — all landed the same day (6e4799c, 1c40a35, 4ea1c5d)
 (cab glass / interior > 80 m landed as 6baa648 meanwhile).
 
 Sources read: `duniaAyana.ts` (592 lines), `src/main.ts` (`// AYANA:` dispatch, `KonteksDunia3D` wiring at 289-398),
@@ -65,7 +65,7 @@ Two facts shape most rows:
 | Route/occupancy ribbons | green locked route, red occupied section; layer `pita` (default **off**), hidden in kabin | present (toggle `eng_set_layer("pita")`, default off) | eng `route_visual.cpp`; three default off | S | add the toggle (see §2) |
 | Langsir plan ribbons | yellow dashed ribbons per leg of `session.putarLok.overlay()`, active leg bright | present | eng `route_visual.cpp` (langsir ribbons from `simState.langsir`) | — | |
 | Floating meja layan (`MejaApung3D`) | `🗺 Meja M` button / pil (code + aspect lamps + `N tugas`) / window (station select, S/M/L, dock, opacity, zoom; **click signal/wesel = route/toggle**); `M` key; persisted `ppka-meja-apung`; hidden ≤ 560 px short side | present (`mejaApungAyana.ts`: `MejaApung3D` used as-is, nearest station from `eng_camera_json`, `M` key, kabin hides it) | ref `mejaApung3d.ts`, `dunia3d.ts:1269-1273,1452-1462` | — | pure DOM/2D canvas; needs `ctx3.stasiunPemain/tugasJml/klikSinyal/klikWesel` (all in the context) and the camera focus for "nearest station" (`eng_camera_json` has it) |
-| In-world meja layan board (`mejaLayan3d.ts`) + `⤴ Angkat meja` | schematic drawn on the station GLB desk, clickable within 40 m, `⤴ Angkat meja` ≤ 8 m | board present; click / `⤴ Angkat` sedang diport 2026-09-19 (`eng_pick` names the signal / point under the cursor on the board — `meja:<code>\|signal:<id>` —, `eng_meja_nearest` feeds the adapter's `#meja-angkat` button) | eng `meja_board` pick/nearest, `eng_set_panel`; adapter `duniaAyana.ts klikDi/hoverDi/segarkanAngkat` | — | |
+| In-world meja layan board (`mejaLayan3d.ts`) + `⤴ Angkat meja` | schematic drawn on the station GLB desk, clickable within 40 m, `⤴ Angkat meja` ≤ 8 m | present (1c40a35 + adapter 76d5f57; `eng_pick` names the signal / point under the cursor on the board — `meja:<code>\|signal:<id>` —, `eng_meja_nearest` feeds the adapter's `#meja-angkat` button) | eng `meja_board` pick/nearest, `eng_set_panel`; adapter `duniaAyana.ts klikDi/hoverDi/segarkanAngkat` | — | |
 | Status toasts | `3D siap — klik label KA…`, `Belum ada KA di lintas`, mode hints on `setModeKam`, `Subjek kamera: KA n`, wheel readout in locked modes | present (except the wheel readout) | ref `dunia3d.ts:1229,1620,1848,1881-1886,2260`; adapter :196,:493 | S | |
 | Loading progress + per-file drawer | stage texts + `Mengunduh model sarana n/N — X MB` | present | adapter `muat()` uses `progres`/`berkas` | — | texts differ; fine |
 | Compass readout `#kompas-koord` | `fokus X Z · arah NNN°` bottom-left in bebas | present | adapter `gambarKoord()` (`#kompas-koord`, mode bebas) | — | `eng_camera_json.look` + `azimuth` |
@@ -118,7 +118,7 @@ else in the drawer is gone.
 | Cab shake (`goyangKabin`) | | present | eng `camera_rig` sway (`goyangSkala`, `engine/world/sway.h`) | — | |
 | Walk mode: collision (`RabaTiga`), jump (Space), head bob | | present | eng `camera_rig` + `engine/world/walk_collision` (scenery triangle mesh: walls/floors/ceilings, platform kerb 1.1 m; vehicles AABB — a standing / crawling train < 0.3 m/s is walked through, e53ef3b), `engine_api` passes `WalkInput.mesh` + `boxes` and Space | — | |
 | Orbit limits | `maxPolarAngle = π/2 − 0.03`, damping 0.08, no min/max distance, no target clamp | present (engine's own limits) | ref `dunia3d.ts:941-945`; eng `orbit_camera.h` | — | verify pitch floor matches (three allows ~1.7° above horizon) |
-| Initial view | corridor overview: target = bbox centre, `d = clamp(0.75 × max(bbox), 600, 22000)`, camera `(0.35d, 0.62d, 0.72d)`, mode bebas | present | ref `dunia3d.ts:2252-2258`, `IKHTISAR_MAKS` `dunia3dKonst.ts:270`; eng `buildStaticWorld()` sets the same overview orbit (yaw 25.9°, pitch 37.8°) — sedang diport 2026-09-19 (ikhtisar kamera awal being reworked) | — | |
+| Initial view | corridor overview: target = bbox centre, `d = clamp(0.75 × max(bbox), 600, 22000)`, camera `(0.35d, 0.62d, 0.72d)`, mode bebas | present | ref `dunia3d.ts:2252-2258`, `IKHTISAR_MAKS` `dunia3dKonst.ts:270`; eng `buildStaticWorld()` sets the same overview orbit (yaw 25.9°, pitch 37.8°) (4ea1c5d) | — | |
 | Right-click compass: tap = fly (0.55 s, ≤ 4× distance), hold = glide, Ctrl+arrows slide, arrows yaw/pitch | | present | adapter pointer button 1 + `eng_key` Control/Arrows; eng `compass.cpp` | — | |
 | Fly-to station (bubble click) | | present | `gelembungAyana.ts` (`eng_look_at` + `eng_set_view`) | — | |
 | Leaving jalan pushes the orbit target 60 m ahead | | present | eng `eng_camera_mode` | — | |
@@ -146,7 +146,7 @@ web-specific:
 | In-world meja board (`mejaLayan3d.ts`) | station GLB `mejalayan` quad shows the live panel | present (`eng_set_panel(json)`: the adapter serialises `PanelLayout.build(world)` with `sim-state.ts panelLayoutJson` — the same JSON as the bridge `panel` command, parsed by `sim_state.cpp parsePanelLayout`) | eng `MejaBoard` | — | |
 | Cab interior meshes only in kabin, single-sided skin + translucent glass | | present (6baa648: `KACA_KABIN`, `KULIT_DUA_SISI`, `interior` hidden > 80 m; `tests/test_cab`) | ref `keretaVisual3d.ts:380-395`; eng `train_visual.cpp` | — | |
 | Train cull tiers by distance/fog (`cullKA.ts`) | | present | eng `engine/world/train_cull.h` (fc44607: penuh/ringan/sembunyi, hysteresis 8 %, hide = fog × 1.2, subject never culled), `tests/test_train_cull` | — | |
-| Bogie model by kuid | | sedang diport 2026-09-19 | eng `rolling_stock.cpp` | S | |
+| Bogie model by kuid | `extras.bogie` manifest → catalog `kuid`/`kuidTrainz`, `balik` flag | present (6e4799c) | eng `rolling_stock.cpp`, `asset_catalog.cpp idByKuid` | — | |
 | Lights dimmer by day, tunnel switch | | partial (day coronas present since ff9ba35: 0.72 day / 1 night; tunnel switch missing) | PARITY | S | |
 | Container load on flat wagons (`a.muatan<n>`) | | present | eng `rolling_stock` / `train_visual` (1bc02ce), `tests/test_cargo` | — | |
 | Trees vs OSM city: no trees inside buildings, `hijau` polygons, explicit `pohon`/`baris` | `kota3d.ts adaBangunan/hijauOSM/pohonTetap` | present | eng `city_visual` → `VegetationOsm` → `vegetation.cpp` (`tests/test_city`) | — | kit instance rectangles block too |
@@ -226,5 +226,5 @@ edits made while the view is closed still reload on the next `tampil(true)` (`ta
 14. ✅ In-world meja board (`eng_set_panel` with `panelLayoutJson` from `sim-state.ts`) and walk collision (walk boxes + Space in `eng_frame`/`eng_key`); cab shake done earlier.
 
 Items 6–12 ✅ (see §1–2). Still open from the tables: two-finger pan on ROTATE, wheel readout in locked modes, tunnel light
-switch, linear corridor fog; sedang diport 2026-09-19: bogie by kuid, clicks on the in-world meja board, initial camera
+switch, linear corridor fog; landed 2026-09-19: bogie by kuid, clicks on the in-world meja board, initial camera
 overview.
