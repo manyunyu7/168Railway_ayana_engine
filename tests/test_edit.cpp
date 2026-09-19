@@ -72,8 +72,13 @@ int main() {
   EngEditCtx c; CHECK(eng_edit_ctx(c) && c.ready && c.viewValid);
   WorldScene& scene = *c.scene;
   const TrackGraph& g = scene.graph();
+  // The first view is the corridor overview (kilometres up); the edit checks below want the old station view
+  // (160 m, 18°/35°): fly there (compass jump, 0.55 s) and settle.
+  { vec3 sp = scene.stationScene(); double wx, wy; scene.origin().toWorld(sp, wx, wy);
+    eng_look_at(wx, wy); eng_set_view(160, radians(35), radians(18));
+    for (int i = 0; i < 60; ++i) eng_frame(0.016f); }
 
-  // ---- picking: the centre of the default view hits the ground near the station
+  // ---- picking: the centre of the station view hits the ground near the station
   std::string gp = eng_pick_ground(320, 200);
   CHECK_MSG(!gp.empty(), "pick_ground at the view centre");
   std::vector<double> ground = nums(gp); CHECK(ground.size() == 3);

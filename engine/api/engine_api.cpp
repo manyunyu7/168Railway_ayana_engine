@@ -149,7 +149,12 @@ void buildStaticWorld() {
     setError("world build failed"); return;
   }
   vec3 st = g->scene.stationScene();
-  g->orbit.target = st; g->orbit.distance = 160; g->orbit.pitch = radians(18); g->orbit.yaw = radians(35);
+  // First view = the corridor overview (dunia3d.ts "kamera awal: ikhtisar koridor"): target = bbox centre (the scene
+  // origin) on the ground, eye at (0.35d, 0.62d, 0.72d) with d = clamp(0.75 × max(bbox), 600, IKHTISAR_MAKS 22000).
+  { float w = g->scene.worldWidth(), d = std::fmin(std::fmax(600.f, w * 0.75f), 22000.f);
+    vec3 target{0, g->scene.groundScene(0, 0), 0}, off{0.35f * d, 0.62f * d, 0.72f * d};
+    g->orbit.target = target; g->orbit.distance = length(off);
+    g->orbit.yaw = std::atan2(off.x, off.z); g->orbit.pitch = std::asin(off.y / length(off)); }
   g->orbit.near = 1; g->orbit.far = 40000; g->orbit.fovY = radians(52);
   g->compass.init([](float x, float z) { return g->scene.groundScene(x, z); });
   g->ready = true;
