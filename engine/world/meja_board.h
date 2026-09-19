@@ -7,8 +7,15 @@
 // MejaBoard: finds `mejalayan` meshes (node or material name) in the placed hiasan models, owns one RGBA
 // texture per board (1024x256), redraws only the nearest board within JANGKAU_GAMBAR 45 m of the eye, at
 // most every JEDA_GAMBAR_MS 120 ms (every frame under JARAK_LAJU_PENUH 8 m), and draws the quad unlit over
-// the model's own (a self-lit screen: readable at night). No click mapping yet.
+// the model's own (a self-lit screen: readable at night).
+//
+// Click mapping (mejaLayan3d.ts kena/klik): a pixel ray is intersected with the board triangles (the scenery
+// CPU copy carries positions + UVs), the hit UV becomes a canvas pixel (u flipped back on a mirrored board, as
+// the picture is), and panelPick names the signal / point under it — the same PanelLayout hit-test as the screen
+// overlay. The engine only NAMES the object; the host runs the same trySetRoute / balikWesel as a world click.
+// Readable within JANGKAU_KLIK 40 m; the host's "⤴ Angkat meja" button asks nearest() (≤ 8 m in the host).
 #pragma once
+#include "engine/math/geometry.h"
 #include "engine/render/model_renderer.h"
 #include "engine/sim/sim_process.h"
 #include "engine/world/coords.h"
@@ -48,7 +55,10 @@ void panelDraw(PanelCanvas& c, const PanelLayout& L, const SimState& st, const P
 class MejaBoard {
 public:
   static constexpr int TEX_W = 1024, TEX_H = 256;
-  static constexpr float JANGKAU_GAMBAR = 45, JARAK_LAJU_PENUH = 8; static constexpr double JEDA_GAMBAR_MS = 120;
+  static constexpr float JANGKAU_GAMBAR = 45, JARAK_LAJU_PENUH = 8, JANGKAU_KLIK = 40; static constexpr double JEDA_GAMBAR_MS = 120;
+  // A ray hit on a board: `code` = the owning station, `dist` m along the ray, `hit` = what lies under the cursor
+  // on the schematic (both ids empty = the board's blank face; the host still consumes the click).
+  struct RayHit { std::string code; float dist = 0; PanelHit hit; };
   struct Placed { const GpuModel* model; mat4 xf; };
   struct Station { std::string code; double wx, wy; };
   void setLayout(const PanelLayout* L) { layout_ = L; for (Board& b : boards_) { b.cam = {}; b.fingerprint.clear(); } }
@@ -61,15 +71,22 @@ public:
   // Draws the quads 3 mm toward `eye` over the model's own (same geometry: the offset beats the depth tie).
   void draw(ModelRenderer& r, vec3 eye) const;
   size_t count() const { return boards_.size(); }
+  // Ray vs the boards' triangles (nearest wins); false = no board under the ray.
+  bool pick(const Ray& ray, RayHit& out) const;
+  // The board nearest `eye`: its station code, centre (scene) and distance; false = none.
+  bool nearest(vec3 eye, std::string& code, vec3& centre, float& dist) const;
+  // Object id ("" = none) drawn with the selection ring on the boards; a change forces a redraw.
+  void setHover(const std::string& id) { if (id != hover_) { hover_ = id; for (Board& b : boards_) b.drawnMs = -1e9; } }
   void destroy();
 
 private:
   struct Board {
-    const rhi::Mesh* mesh = nullptr; mat4 xf; vec3 centre, normal; bool mirrored = false;   // normal = the quad's thin axis (scene)
+    const rhi::Mesh* mesh = nullptr; const GpuPrimitive* prim = nullptr; mat4 xf; vec3 centre, normal; bool mirrored = false;   // normal = the quad's thin axis (scene)
     std::string code; PanelCamera cam; rhi::Texture tex{}; double drawnMs = -1e9, liveUntil = 0; std::string fingerprint;
   };
   std::vector<Board> boards_;
   const PanelLayout* layout_ = nullptr;
+  std::string hover_;
   BitmapFont font_;
   Material mat_;
   PixelCanvas canvas_;

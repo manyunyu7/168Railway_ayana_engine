@@ -27,7 +27,8 @@ struct SkinnedVertex { vec3 pos; vec3 normal; vec2 uv; uint8_t joints[4]; float 
 
 // collisionPos/Idx: a CPU copy of the geometry (positions only) kept when uploaded with keepGeometry — the walk
 // collider (engine/world/walk_collision.h) reads scenery models from it; vehicles do not pay for it.
-struct GpuPrimitive { rhi::Mesh mesh; int material; AABB bounds; std::vector<vec3> collisionPos; std::vector<uint32_t> collisionIdx; bool skinned = false; };
+// collisionPos/Idx/Uv: CPU copy kept for scenery (walk collider, editor raycasts, meja board UV lookup); empty otherwise.
+struct GpuPrimitive { rhi::Mesh mesh; int material; AABB bounds; std::vector<vec3> collisionPos; std::vector<uint32_t> collisionIdx; std::vector<vec2> collisionUv; bool skinned = false; };
 struct GpuMesh { std::vector<GpuPrimitive> primitives; };
 
 struct GpuModel {

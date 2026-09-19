@@ -235,7 +235,7 @@ void MejaBoard::scan(const std::vector<Placed>& placed, const std::vector<Statio
         bool named = n.name == "mejalayan" || n.name.rfind("mejalayan", 0) == 0;
         bool byMat = prim.material >= 0 && prim.material < (int)m.materials.size() && m.materials[(size_t)prim.material].name == "mejalayan";
         if (!named && !byMat) continue;
-        Board b; b.mesh = &prim.mesh; b.xf = p.xf * m.world[ni];
+        Board b; b.mesh = &prim.mesh; b.prim = &prim; b.xf = p.xf * m.world[ni];
         b.centre = b.xf.transformPoint((prim.bounds.min + prim.bounds.max) * 0.5f);
         { vec3 e = prim.bounds.max - prim.bounds.min; vec3 axis = e.x <= e.y && e.x <= e.z ? vec3{1, 0, 0} : e.y <= e.z ? vec3{0, 1, 0} : vec3{0, 0, 1};
           vec3 nw = b.xf.transformPoint(axis) - b.xf.transformPoint({0, 0, 0}); float l = length(nw); b.normal = l > 1e-6f ? nw / l : vec3{0, 1, 0}; }
@@ -266,7 +266,7 @@ void MejaBoard::update(const SimState& st, vec3 eye, double nowMs) {
   canvas_.reset(TEX_W, TEX_H);
   canvas_.fill(0x0a0e13);
   CanvasTarget target(canvas_, font_);
-  panelDraw(target, *layout_, st, b.cam, frame, "", {}, "", nullptr);
+  panelDraw(target, *layout_, st, b.cam, frame, hover_, {}, "", nullptr);
   if (b.mirrored) for (int y = 0; y < TEX_H; ++y) for (int x = 0; x < TEX_W / 2; ++x) {   // the mesh is mirrored: flip the picture back
     uint8_t* a = &canvas_.px[((size_t)y * TEX_W + (size_t)x) * 4]; uint8_t* c = &canvas_.px[((size_t)y * TEX_W + (size_t)(TEX_W - 1 - x)) * 4];
     for (int k = 0; k < 4; ++k) std::swap(a[k], c[k]);
@@ -280,6 +280,45 @@ void MejaBoard::draw(ModelRenderer& r, vec3 eye) const {
     float side = dot(b.normal, eye - b.centre) >= 0 ? 1.f : -1.f;
     r.drawMesh(*b.mesh, mat_, b.tex, mat4::translation(b.normal * (0.003f * side)) * b.xf);
   }
+}
+
+bool MejaBoard::pick(const Ray& ray, RayHit& out) const {
+  const Board* best = nullptr; float bt = 1e30f, bu = 0, bv = 0;
+  for (const Board& b : boards_) {
+    if (!b.prim) continue;
+    float t; if (!intersect(ray, b.prim->bounds.transformed(b.xf), t) || t >= bt) continue;
+    const std::vector<vec3>& P = b.prim->collisionPos; const std::vector<uint32_t>& I = b.prim->collisionIdx; const std::vector<vec2>& U = b.prim->collisionUv;
+    if (U.size() != P.size()) continue;   // no CPU copy (sarana model?) — the board cannot be read
+    for (size_t i = 0; i + 2 < I.size(); i += 3) {
+      uint32_t i0 = I[i], i1 = I[i + 1], i2 = I[i + 2];
+      if (i0 >= P.size() || i1 >= P.size() || i2 >= P.size()) continue;
+      vec3 a = b.xf.transformPoint(P[i0]), c1 = b.xf.transformPoint(P[i1]), c2 = b.xf.transformPoint(P[i2]);
+      if (!intersect(ray, a, c1, c2, t) || t >= bt) continue;
+      // barycentric weights of the hit for the UV (Möller–Trumbore answered only t)
+      vec3 h = ray.at(t), e1 = c1 - a, e2 = c2 - a, w = h - a;
+      float d11 = dot(e1, e1), d12 = dot(e1, e2), d22 = dot(e2, e2), dw1 = dot(w, e1), dw2 = dot(w, e2);
+      float den = d11 * d22 - d12 * d12; if (std::fabs(den) < 1e-12f) continue;
+      float wb = (d22 * dw1 - d12 * dw2) / den, wc = (d11 * dw2 - d12 * dw1) / den, wa = 1 - wb - wc;
+      bt = t; best = &b;
+      bu = wa * U[i0].x + wb * U[i1].x + wc * U[i2].x; bv = wa * U[i0].y + wb * U[i1].y + wc * U[i2].y;
+    }
+  }
+  if (!best) return false;
+  if (best->mirrored) bu = 1 - bu;   // the picture was flipped back (update): flip the click the same way
+  out.code = best->code; out.dist = bt; out.hit = {};
+  if (layout_) {
+    const PanelFrame frame{0, 0, (float)TEX_W, (float)TEX_H};
+    PanelCamera cam = best->cam; if (!cam.fitted) panelFitStation(*layout_, best->code, frame, cam);   // not drawn yet
+    out.hit = panelPick(*layout_, cam, frame, bu * TEX_W, bv * TEX_H);
+  }
+  return true;
+}
+
+bool MejaBoard::nearest(vec3 eye, std::string& code, vec3& centre, float& dist) const {
+  const Board* best = nullptr; float bd = 1e30f;
+  for (const Board& b : boards_) { float d = length(b.centre - eye); if (d < bd) { bd = d; best = &b; } }
+  if (!best) return false;
+  code = best->code; centre = best->centre; dist = bd; return true;
 }
 
 void MejaBoard::destroy() {

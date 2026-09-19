@@ -59,10 +59,11 @@ void GpuModel::upload(const Model& m, bool keepGeometry) {
         }
         mesh = rhi::createMesh(std::as_bytes(std::span(sv)), skinLayout, p.indices);
       } else mesh = rhi::createMesh(std::as_bytes(std::span(p.vertices)), layout, p.indices);
-      GpuPrimitive gp{mesh, p.material, AABB{p.boundsMin, p.boundsMax}, {}, {}, skinned};
+      GpuPrimitive gp{mesh, p.material, AABB{p.boundsMin, p.boundsMax}, {}, {}, {}, skinned};
       if (keepGeometry) {
         gp.collisionPos.reserve(p.vertices.size());
-        for (const Vertex& v : p.vertices) gp.collisionPos.push_back(v.pos);
+        gp.collisionUv.reserve(p.vertices.size());
+        for (const Vertex& v : p.vertices) { gp.collisionPos.push_back(v.pos); gp.collisionUv.push_back(v.uv); }
         gp.collisionIdx = p.indices;
       }
       gm.primitives.push_back(std::move(gp));

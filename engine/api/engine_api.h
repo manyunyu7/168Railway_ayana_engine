@@ -112,8 +112,17 @@ void eng_pointer(float x, float y, int button, int phase);   // css px; phase 0 
 const char* eng_camera_json(void);                   // {mode, eye:[x,y,z], look:[...], distance, yaw, pitch, fov, azimuth, subject}
                                                      // subject = followed train id ("" in bebas without an explicit follow)
 
-// picking / hover (css px). Returns "signal:<id>" | "point:<id>" | "".
+// picking / hover (css px). Returns "signal:<id>" | "point:<id>" | "meja:<code>|signal:<id>" | "meja:<code>|point:<id>"
+// | "meja:<code>|" | "meja-jauh:<code>" | "". A meja board (station GLB `mejalayan` quad, engine/world/meja_board)
+// under the pixel wins over the world objects: within 40 m the signal / point drawn under the cursor is named after
+// the board's station code (the host runs the same route / point handlers as for a world click and puts its tip at
+// the cursor), "meja:<code>|" = its blank face (the host consumes the click), "meja-jauh:<code>" = a board too far
+// to read (the host says so).
 const char* eng_pick(float x, float y);
+// The meja board nearest the eye: JSON {code, dist, x, y, visible, wx, wy, h} (x/y css px of its centre; visible = in
+// front of the camera and inside the viewport; wx/wy world XY, h scene height), "" = none. The host's "⤴ Angkat meja"
+// button (≤ 8 m).
+const char* eng_meja_nearest(void);
 void eng_hover(const char* id);                      // "" = none; ring drawn on the object
 const char* eng_object_screen(const char* id);       // "x,y" css px of the object's label anchor, "" when off screen
 int eng_set_preview(const char* json);               // {"path":[segId...],"dead":bool} or "" / "null" to clear

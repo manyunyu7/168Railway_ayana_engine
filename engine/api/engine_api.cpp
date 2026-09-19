@@ -625,6 +625,15 @@ KEEP const char* eng_camera_json(void) {
 // ---- picking ----
 KEEP const char* eng_pick(float x, float y) {
   if (!g || !g->ready || !g->viewValid) return "";
+  if (g->scene.meja().count() && g->w > 0 && g->h > 0) {   // a board under the cursor beats the world objects (mejaLayan3d kena)
+    MejaBoard::RayHit mh;
+    if (g->scene.meja().pick(screenRay(x / (float)g->w, y / (float)g->h, g->viewProj.inverse()), mh)) {
+      if (mh.dist > MejaBoard::JANGKAU_KLIK) return ret("meja-jauh:" + mh.code);
+      std::string r = "meja:" + mh.code + "|";
+      if (!mh.hit.signalId.empty()) r += "signal:" + mh.hit.signalId; else if (!mh.hit.pointId.empty()) r += "point:" + mh.hit.pointId;
+      return ret(r);
+    }
+  }
   std::string sig, pt;
   g->scene.pickAt(x * g->dpr, y * g->dpr, (int)(g->w * g->dpr), (int)(g->h * g->dpr), g->viewProj, camEye(), sig, pt);
   if (!sig.empty()) return ret("signal:" + sig);
@@ -638,6 +647,19 @@ KEEP void eng_hover(const char* id) {
   else if (s.rfind("point:", 0) == 0) { g->hoverId = s.substr(6); g->hoverSignal = false; }
   else { g->hoverId = s; g->hoverSignal = g->ready && g->scene.signals().indexOf(s) >= 0; }
   if (g->hoverId.empty()) g->scene.routes().clearPreview();
+  if (g->ready) g->scene.meja().setHover(g->hoverId);   // the ring on the board picture too
+}
+KEEP const char* eng_meja_nearest(void) {
+  if (!g || !g->ready || !g->viewValid) return "";
+  std::string code; vec3 c; float d;
+  if (!g->scene.meja().nearest(camEye(), code, c, d)) return "";
+  vec4 p = g->viewProj * vec4(c, 1);
+  bool front = p.w > 0; float sx = 0, sy = 0;
+  if (front) { sx = (p.x / p.w * 0.5f + 0.5f) * g->w; sy = (1 - (p.y / p.w * 0.5f + 0.5f)) * g->h; }
+  bool vis = front && sx >= -0.1f * g->w && sx <= 1.1f * g->w && sy >= -0.1f * g->h && sy <= 1.1f * g->h;
+  double wx, wy; g->scene.origin().toWorld(c, wx, wy);
+  char b[320]; std::snprintf(b, sizeof b, "{\"code\":\"%s\",\"dist\":%.2f,\"x\":%.1f,\"y\":%.1f,\"visible\":%s,\"wx\":%.2f,\"wy\":%.2f,\"h\":%.2f}", code.c_str(), d, sx, sy, vis ? "true" : "false", wx, wy, c.y);
+  return ret(b);
 }
 KEEP const char* eng_object_screen(const char* id) {
   if (!g || !g->ready || !g->viewValid || !id) return "";
