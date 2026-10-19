@@ -16,6 +16,7 @@ struct SimVehicle {
   double x1 = 0, y1 = 0, x2 = 0, y2 = 0;   // front / rear coupler (world XY)
   float heading = 0, length = 0, s = 0, s2 = 0;
   float t1 = 0, t2 = 0;           // track tangent angle (world XY) at the front / rear coupler
+  bool balik = false;             // facing-sensitive loco (CC 201/203) running reversed: model turned 180°
 };
 struct SimTrain {
   std::string id, no, name, consist, state, hold, seg;
@@ -37,6 +38,7 @@ struct SimRoute {
 // Shunting plan (putarLok overlay): the legs a detached loco will run; `kendali` "auto" (legIdx = the active leg) or "manual".
 struct SimLangsir { std::string lok, kendali; int legIdx = 0; std::vector<std::vector<std::string>> legs; };
 struct SimJpl { std::string id; bool closed = false; };   // level crossing barrier state (World.jplClosed)
+struct SimMeja { std::string id; float angle = 0; };     // turntable bridge angle 0…π while turning (engine/mejaPutar.ts)
 struct SimOccupancy { struct Interval { std::string train; float a = 0, b = 0; }; std::string seg; std::vector<Interval> intervals; };
 
 struct SimState {
@@ -48,6 +50,7 @@ struct SimState {
   std::vector<SimOccupancy> occupancy;   // only segments with an interval
   std::vector<SimLangsir> langsir;       // live shunting plans (yellow dashed ribbons)
   std::vector<SimJpl> jpl;               // every scenery `jpl`, re-evaluated by the bridge every 0.25 s of sim time
+  std::vector<SimMeja> meja;             // every scenery `mejaPutar` (turntable)
   std::vector<SimLogLine> log;       // only lines new since the previous step
 };
 

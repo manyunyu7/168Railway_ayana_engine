@@ -8,6 +8,8 @@
 #include "engine/rhi/rhi.h"
 #include "engine/world/height_source.h"
 #include "engine/world/track_graph.h"
+#include <set>
+#include <string>
 #include <vector>
 
 namespace eng {
@@ -31,6 +33,8 @@ public:
   // Meshed sleepers are OFF by default: the boxes do not blend with the painted sleepers of the photo atlas
   // (different pitch / look). Set before build() to lay them (also lowers the crib and lays the turnout's long ones).
   bool meshedSleepers = false;
+  // Segment ids whose rails are NOT built here: a turntable bridge (meja_putar_visual) draws and turns its own.
+  std::set<std::string> skipSegs;
 
   // ground (optional) is used only for bridge shape / piers (raw DEM; demBase subtracted). Bridge shape:
   // `jenisJembatan` override, else bentukJembatan(span, height) — viaduct (twin columns) when the deck is

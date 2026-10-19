@@ -263,6 +263,7 @@ double WorldScene::railsRebuild(const Json& world, const std::string& fontPath) 
     if (sc["kind"].stringOr("") == "station") stations.push_back({sc["pos"]["x"].numberOr(0), sc["pos"]["y"].numberOr(0), 160});
   const float demBase = terrain_.dem().demBase;
   profile_.build(graph_, terrain_.dem(), stations, demBase);
+  rails_.skipSegs = MejaPutarVisuals::bridgeSegments(graph_, world);
   rails_.build(graph_, profile_, &terrain_.dem(), demBase);
   terrain_.setRails(rails_.samples());   // marks the built tiles dirty: re-cut under the per-frame budget
   signals_.build(graph_, profile_, world["trackside"], fontPath);
@@ -271,6 +272,7 @@ double WorldScene::railsRebuild(const Json& world, const std::string& fontPath) 
   auto ground = [this](double wx, double wy) { return terrain_.groundHeight(wx, wy); };
   boards_.build(graph_, profile_, world, origin_, ground, fontPath);
   jpl_.build(graph_, world, origin_, ground);
+  mejaPutar_.build(graph_, profile_, world);
   if (decor_) hiasanRefresh(world);
   ov_.segMeshId.clear();   // the highlight ribbon follows the new profile
   applyState(state_, 1);

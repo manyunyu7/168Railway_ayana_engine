@@ -16,6 +16,7 @@
 #include "engine/world/coords.h"
 #include "engine/world/garis_visual.h"
 #include "engine/world/jpl_visual.h"
+#include "engine/world/meja_putar_visual.h"
 #include "engine/app/camera_rig.h"
 #include "engine/world/meja_board.h"
 #include "engine/world/name_board.h"
@@ -235,7 +236,7 @@ private:
   ModelRenderer renderer_; Sky sky_; Lighting light_;
   TrackGraph graph_; Terrain terrain_; VerticalProfile profile_; RailBuilder rails_;
   SignalVisuals signals_; PointVisuals points_; RouteVisuals routes_;
-  TracksideBoards boards_; JplVisuals jpl_; CityVisuals city_; GarisVisuals garis_; CloudVisual clouds_;
+  TracksideBoards boards_; JplVisuals jpl_; MejaPutarVisuals mejaPutar_; CityVisuals city_; GarisVisuals garis_; CloudVisual clouds_;
   AssetCatalog catalog_; RollingStock stock_; TrainVisuals trains_;
   // model: the full version (collision, picking, boards); lod[n]: the coarser `<id>:lod<n+1>` catalog models,
   // nullptr while missing / not streamed yet (re-resolved each frame until they arrive). objIndex: world.hiasan.objek[]

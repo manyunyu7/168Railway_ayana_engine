@@ -73,7 +73,9 @@ Response = the **dynamic state**:
     hold, holdSignal, delay (s), nextStop (trackmark name),
     istirahat,               parked consist waiting for a later departure (train.ts istirahat: lights off)
     vehicles: [{model, sarana, kind:"loco"|"car", len, x, y, heading, seg, s,
-                x1, y1, x2, y2, seg2, s2, t1, t2}]                                front to rear
+                x1, y1, x2, y2, seg2, s2, t1, t2, balik?}]                        front to rear;
+                             balik = facing-sensitive loco (CC 201/203) running reversed: model turned 180°.
+                             While a turntable turns the train, x/y/x1../heading are already rotated about its pivot
   }],
   points:  [{id, setting:0|1, locked:<routeId>|null}],
   signals: [{id, aspect:"red"|"yellow"|"green"}],
@@ -82,6 +84,8 @@ Response = the **dynamic state**:
   langsir: [{lok, kendali:"auto"|"manual", legIdx, legs:[[segId,...],...]}],   live shunting plans (putarLok.overlay)
   jpl:     [{id, closed}],                                 every scenery `jpl`; World.jplClosed (train within 350 m on
                                                            any track within 25 m), re-evaluated every 0.25 s of sim time
+  meja:    [{id, angle}],                                  every scenery `mejaPutar` (turntable): bridge angle 0…π
+                                                           while turning (3 min of sim time), 0 at rest
   log:     [{t, kind:"info"|"good"|"bad", text}]           only lines NEW since the previous step/state
 }
 ```

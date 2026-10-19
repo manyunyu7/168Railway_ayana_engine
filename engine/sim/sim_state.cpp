@@ -29,6 +29,7 @@ SimState parseSimState(const Json& j) {
       vh.x1 = v["x1"].numberOr(vh.x); vh.y1 = v["y1"].numberOr(vh.y);
       vh.x2 = v["x2"].numberOr(vh.x); vh.y2 = v["y2"].numberOr(vh.y);
       vh.t1 = (float)v["t1"].numberOr(vh.heading); vh.t2 = (float)v["t2"].numberOr(vh.heading);
+      vh.balik = v["balik"].boolOr(false);
       tr.vehicles.push_back(std::move(vh));
     }
     st.trains.push_back(std::move(tr));
@@ -56,6 +57,7 @@ SimState parseSimState(const Json& j) {
     st.langsir.push_back(std::move(lg));
   }
   for (const Json& o : j["jpl"].arr) st.jpl.push_back({o["id"].stringOr(""), o["closed"].boolOr(false)});
+  for (const Json& o : j["meja"].arr) st.meja.push_back({o["id"].stringOr(""), (float)o["angle"].numberOr(0)});
   for (const Json& l : j["log"].arr)
     st.log.push_back({l["t"].numberOr(0), l["kind"].stringOr(""), l["text"].stringOr("")});
   return st;

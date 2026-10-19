@@ -10,6 +10,8 @@ export interface SimStateDeps {
   kelasKA: (trainNo: string) => number;                   // engine/kelasKA.ts
   armadaUntuk?: ((no: string, paksa?: string) => any) | null;      // tiga/armada.ts (fleet by train number)
   modelArmada?: ((armada: any, sarana: string) => string | undefined) | null;
+  /** engine/sarana.ts kabinTunggal: the vehicle's facing matters (CC 201/203, steam). Absent = never flipped. */
+  kabinTunggal?: ((sarana?: string) => boolean) | null;
 }
 
 export const r3 = (v: number) => Math.round(v * 1000) / 1000;
@@ -73,15 +75,34 @@ export function modelFor(deps: SimStateDeps, t: any, car: any): string {
   return car.sarana ?? (car.kind === 'loco' ? 'loko' : 'kereta');
 }
 
+/** Turntable (engine/mejaPutar.ts) currently turning train `t`: its pivot and angle (0…π) — the train's
+ *  sim position only flips at the end, so the renderer turns its vehicles about the pivot meanwhile. */
+function putaranMeja(world: any, session: any, t: any): { cx: number; cy: number; cos: number; sin: number } | null {
+  const pu = session.mejaPutar?.putaranKa?.(t.id);
+  if (!pu || !(pu.sudut > 0)) return null;
+  const j = session.mejaPutar.jembatan(pu.meja);
+  if (!j) return null;
+  const c = world.graph.pointAt(j.segId, j.L / 2);
+  return { cx: c.x, cy: c.y, cos: Math.cos(pu.sudut), sin: Math.sin(pu.sudut) };
+}
+
 export function trainState(deps: SimStateDeps, world: any, session: any, t: any) {
   const cars = t.consist?.cars ?? [];
   const vehicles: any[] = [];
+  const meja = putaranMeja(world, session, t);
+  // world XY rotation about the turntable pivot (same sense as the engine's turntable bridge)
+  const putar = (p: any) => (meja
+    ? { x: meja.cx + (p.x - meja.cx) * meja.cos - (p.y - meja.cy) * meja.sin,
+        y: meja.cy + (p.x - meja.cx) * meja.sin + (p.y - meja.cy) * meja.cos }
+    : p);
   let d = 0;
   for (const car of cars) {
-    const a = t.pointBehind(world, d);
-    const b = t.pointBehind(world, d + car.length);
+    const a0 = t.pointBehind(world, d);
+    const b0 = t.pointBehind(world, d + car.length);
     d += car.length + deps.GAP;
-    if (!a || !b) continue;
+    if (!a0 || !b0) continue;
+    const a = meja ? { ...a0, p: putar(a0.p) } : a0;
+    const b = meja ? { ...b0, p: putar(b0.p) } : b0;
     const dx = a.p.x - b.p.x, dy = a.p.y - b.p.y;
     vehicles.push({
       model: modelFor(deps, t, car), sarana: car.sarana ?? null, kind: car.kind, len: r2(car.length),
@@ -93,6 +114,8 @@ export function trainState(deps: SimStateDeps, world: any, session: any, t: any)
       seg2: b.segId, s2: r3(b.s),                 // rear coupler on the track
       t1: r3(Math.atan2(a.tan.y, a.tan.x)),        // track tangent angle at each coupler (sway curvature, §7.5)
       t2: r3(Math.atan2(b.tan.y, b.tan.x)),
+      // facing-sensitive loco running reversed ("short hood"): the model turns 180° about its centre
+      ...(car.kind === 'loco' && car.balik && deps.kabinTunggal?.(car.sarana) ? { balik: true } : {}),
     });
   }
   const sm = world.graph.sampleAt(t.front.segId, t.front.s);
@@ -238,7 +261,10 @@ export class SimStateBuilder {
       clock: r2(session.clock), score: session.score, violations: session.violations,
       pending: session.pending.length, timeScale: session.timeScale,
       trains: session.trains.map((t: any) => trainState(this.deps, world, session, t)),
-      points, signals, occupancy, routes, langsir, jpl: this.jplState(world, session), log: fresh,
+      points, signals, occupancy, routes, langsir, jpl: this.jplState(world, session),
+      // turntables (scenery `mejaPutar`): bridge angle 0…π while turning a loco (engine/mejaPutar.ts sudut)
+      meja: (session.mejaPutar?.daftar?.() ?? []).map((o: any) => ({ id: o.id, angle: r3(session.mejaPutar.sudut(o.id)) })),
+      log: fresh,
     };
   }
 }

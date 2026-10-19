@@ -26,6 +26,7 @@ engine_test(test_cab)   # cab materials (single-sided skin, blended glass per sl
 engine_test(test_terrain)
 engine_test(test_walk)
 engine_test(test_avatar)
+engine_test(test_meja_putar)   # turntable bridge segment + `meja`/`balik` step state (no GL)
 engine_test(test_bridge)
 set_tests_properties(test_bridge PROPERTIES LABELS "node")
 # Editing ABI through the real C entry points (engine/api compiled natively here; a hidden GLFW window for GL,

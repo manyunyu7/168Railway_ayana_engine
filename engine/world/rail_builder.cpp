@@ -591,7 +591,7 @@ void RailBuilder::build(const TrackGraph& g, const RailProfile& profile, const H
   for (size_t si = 0; si < g.segments.size(); ++si) {
     const TrackSegment& seg = g.segments[si];
     const double L = seg.length;
-    if (L <= 0) continue;
+    if (L <= 0 || skipSegs.count(seg.id)) continue;
     const std::vector<Pt>& pts = allPts[si];
     // Per-ring context: neighbours, tunnel darkness (interior distance to the nearest portal), and whether
     // the section wobbles / spills (open ground only: on a deck or tunnel floor the stone is contained).

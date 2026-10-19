@@ -87,6 +87,7 @@ bool WorldScene::buildStatic(const Json& world, const std::string& mapSlug, cons
     if (sc["kind"].stringOr("") == "station") stations.push_back({sc["pos"]["x"].numberOr(0), sc["pos"]["y"].numberOr(0), 160});
   const float demBase = terrain_.dem().demBase;
   profile_.build(graph_, terrain_.dem(), stations, demBase);
+  rails_.skipSegs = MejaPutarVisuals::bridgeSegments(graph_, world);   // turntable bridges carry their own rails
   rails_.build(graph_, profile_, &terrain_.dem(), demBase);
   terrain_.setBrushDeltas(world["tanah"]);
   terrain_.setRails(rails_.samples());
@@ -98,6 +99,7 @@ bool WorldScene::buildStatic(const Json& world, const std::string& mapSlug, cons
   auto ground = [this](double wx, double wy) { return terrain_.groundHeight(wx, wy); };
   boards_.build(graph_, profile_, world, origin_, ground, fontPath);
   jpl_.build(graph_, world, origin_, ground);
+  mejaPutar_.build(graph_, profile_, world);
   if (!cityPath.empty()) city_.build(cityPath, origin_, graph_, ground, catalog_);
   stock_.init(catalog_); trains_.init(stock_);
   if (!fontPath.empty()) { meja_.setFont(fontPath); papan_.setFont(fontPath); }
@@ -175,6 +177,7 @@ void WorldScene::applyState(const SimState& st, double timeScale) {
   routes_.update(st);
   trains_.update(st, origin_, &profile_, timeScale);
   jpl_.setState(st.jpl);
+  mejaPutar_.setState(st.meja);
   state_ = st;
 }
 
@@ -203,6 +206,7 @@ void WorldScene::draw(const mat4& viewProj, const mat4& view, vec3 eye, float fo
   boards_.draw(renderer_, &frustum);
   jpl_.animate(dt * (float)std::fmax(1.0, timeScale));
   jpl_.draw(renderer_, &frustum);
+  mejaPutar_.draw(renderer_, &frustum);
   if (layers.kota) city_.draw(renderer_, &frustum);
   if (layers.awan) clouds_.draw(viewProj, view, eye, sky_, light_, dt);
   garis_.draw(renderer_, &frustum);
@@ -252,7 +256,7 @@ void WorldScene::drawScenery(const Frustum& frustum) {
 void WorldScene::destroy() {
   for (auto& [m, g] : hiasanGroups_) if (g.buf.id) rhi::destroyBuffer(g.buf);
   hiasanGroups_.clear();
-  trains_.shutdown(); trees_.destroy(); garis_.destroy(); clouds_.destroy(); boards_.destroy(); jpl_.destroy(); city_.destroy();
+  trains_.shutdown(); trees_.destroy(); garis_.destroy(); clouds_.destroy(); boards_.destroy(); jpl_.destroy(); mejaPutar_.destroy(); city_.destroy();
   meja_.destroy(); papan_.destroy(); catalog_.destroy(); rails_.destroy(); terrain_.destroy(); signals_.destroy(); points_.destroy(); routes_.destroy();
   scenery_.clear(); walk_.clear(); walkDirty_ = false;
   destroyOverlays();
