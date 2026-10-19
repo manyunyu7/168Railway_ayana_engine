@@ -139,7 +139,9 @@ bool AssetCatalog::parseCatalog(const std::string& text) {
 // §7.2 MODEL_SARANA: sarana ids the bridge falls back to when no fleet model applies.
 const char* AssetCatalog::saranaSlot(const std::string& id) {
   static const std::pair<const char*, const char*> table[] = {
-    {"cc201", "loko201"}, {"cc203", "loko203"}, {"cc206", "loko206"},
+    {"cc201", "loko201"}, {"cc203", "loko203"},
+    {"cc204", "loko203"},  // CC 204 belum punya model: pinjam CC 203 (bodi GE sekeluarga)
+    {"cc206", "loko206"},
     {"krl-kuha", "nryJr205KuhaBadan"}, {"krl-moha", "nryJr205MohaBadan"}, {"krl-moha-p", "nryJr205MpBadan"},
     {"k1", "kereta"}, {"k3", "kereta"}, {"m1", "makan"}, {"p", "pembangkit"}, {"gd", "gerbong"}, {"d14", "atpD14Jaladara"}};
   for (const auto& [k, v] : table) if (id == k) return v;
